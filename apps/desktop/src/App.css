@@ -12,6 +12,8 @@
   --bad-text: #9b1c1c;
   --neutral-bg: #eceef2;
   --neutral-text: #3b414d;
+  --attention-bg: #fff1d6;
+  --attention-text: #7a4b00;
 
   font-family: "Segoe UI", system-ui, sans-serif;
   font-size: 15px;
@@ -35,6 +37,8 @@
     --bad-text: #ffb1b1;
     --neutral-bg: #2a2e36;
     --neutral-text: #d3d7df;
+    --attention-bg: #3d2f12;
+    --attention-text: #ffd38a;
   }
 }
 
@@ -155,4 +159,104 @@ button:focus-visible {
 .note {
   margin-top: 16px;
   font-size: 0.9rem;
+}
+
+.card + .card {
+  margin-top: 14px;
+}
+
+.card h3 {
+  margin: 14px 0 6px;
+  font-size: 0.95rem;
+}
+
+.badge-attention {
+  background: var(--attention-bg);
+  color: var(--attention-text);
+}
+
+.note-form {
+  display: grid;
+  gap: 10px;
+}
+
+.note-form label {
+  display: grid;
+  gap: 4px;
+  font-weight: 600;
+}
+
+input,
+textarea {
+  font: inherit;
+  font-weight: normal;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  resize: vertical;
+}
+
+input:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.runs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.run-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  text-align: left;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.run-row.selected {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.run-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--accent);
+}
+
+.content {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 0.9rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.path,
+.hash {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
 }

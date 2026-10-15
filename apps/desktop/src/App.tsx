@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import type { HostStatus } from "@nexus/contracts";
+import { api, describeError } from "./api";
+import { NotesPanel } from "./Notes";
 import "./App.css";
 
 const POLL_MS = 3000;
@@ -29,10 +30,10 @@ function App() {
     if (inFlight.current) return;
     inFlight.current = true;
     try {
-      const status = await invoke<HostStatus>("host_status");
+      const status = await api.hostStatus();
       setView({ kind: "status", status });
     } catch (err) {
-      setView({ kind: "bridgeError", message: String(err) });
+      setView({ kind: "bridgeError", message: describeError(err) });
     } finally {
       inFlight.current = false;
     }
@@ -50,10 +51,10 @@ function App() {
     setStarting(true);
     setStartError(null);
     try {
-      await invoke("start_host");
+      await api.startHost();
       window.setTimeout(() => void refresh(), 500);
     } catch (err) {
-      setStartError(String(err));
+      setStartError(describeError(err));
     } finally {
       setStarting(false);
     }
@@ -95,6 +96,8 @@ function App() {
           </p>
         )}
       </section>
+
+      {view.kind === "status" && view.status.state === "Connected" && <NotesPanel />}
 
       <p className="note">
         Închiderea acestei ferestre nu oprește Hostul și nici sarcinile acceptate.

@@ -6,7 +6,7 @@ Platformă AI personală pentru Windows, proiectată pentru extindere. Nexus va 
 
 ## Starea curentă
 
-M0 este în lucru: Host-ul Rust separat, IPC pe named pipe și dashboardul Tauri care se conectează la el funcționează și sunt probate. Circuitul complet cu note aprobate (M1) nu există încă.
+M0 e închis. M1 e în lucru: în dashboard scrii o notă, vezi exact ce se va scrie și unde, aprobi sau refuzi, iar Nexus creează fișierul și îl verifică prin hash. Sarcinile supraviețuiesc închiderii ferestrei și căderii Host-ului, fără să se dubleze. Backup-ul și restaurarea nu există încă.
 
 **Planul și starea implementării au o singură sursă:** [PLAN_NEXUS_RO.md](docs/PLAN_NEXUS_RO.md).
 
@@ -34,7 +34,12 @@ pnpm --filter @nexus/desktop tauri build --no-bundle
 
 # Verificare independentă a unui Host pornit
 cargo run -p nexus-client --example health
+
+# Fluxul M1 prin fereastra reală, într-un profil temporar (după build-ul release)
+powershell -ExecutionPolicy Bypass -File scripts\m1-ui-check.ps1
 ```
+
+`NEXUS_PROFILE_DIR` mută profilul (bază de date, note, token, log) într-un alt director, cu propriul pipe. Așa nu se atinge `%LOCALAPPDATA%\Nexus`. Testele și scriptul de mai sus îl folosesc.
 
 Tipurile TypeScript din `packages/contracts` sunt generate din Rust. După o schimbare de contract: `$env:NEXUS_UPDATE_BINDINGS="1"; cargo test -p desktop`. Testul eșuează dacă fișierul generat a rămas în urmă.
 

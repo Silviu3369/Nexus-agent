@@ -7,10 +7,48 @@ use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use nexus_client::{ConnectError, NexusClient};
-use nexus_protocol::{HandshakeResponse, NexusError};
+use nexus_client::{CallError, ConnectError, NexusClient};
+use nexus_protocol::{ErrorCode, HandshakeResponse, NexusError};
 use serde::Serialize;
 use tauri::async_runtime::Mutex;
+
+/// What a bridge command reports to the webview: the host's stable code when
+/// the host refused, none when the call never got an answer.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct BridgeError {
+    pub code: Option<ErrorCode>,
+    pub message: String,
+}
+
+impl From<CallError> for BridgeError {
+    fn from(err: CallError) -> Self {
+        match err {
+            CallError::Host(e) => Self {
+                code: Some(e.code),
+                message: e.message,
+            },
+            CallError::Transport(e) => Self {
+                code: None,
+                message: e.to_string(),
+            },
+        }
+    }
+}
+
+impl From<ConnectError> for BridgeError {
+    fn from(err: ConnectError) -> Self {
+        match err {
+            ConnectError::HandshakeRejected(e) => Self {
+                code: Some(e.code),
+                message: e.message,
+            },
+            other => Self {
+                code: None,
+                message: other.to_string(),
+            },
+        }
+    }
+}
 
 const CLIENT_NAME: &str = "nexus-desktop";
 const HOST_EXE: &str = "nexus-host.exe";
@@ -47,6 +85,30 @@ struct Session {
 
 #[derive(Default)]
 pub struct HostConnection(Mutex<Option<Session>>);
+
+impl HostConnection {
+    /// Runs one host call on the live session, connecting first if needed.
+    /// A transport failure drops the session so the next call reconnects;
+    /// a host refusal keeps it (the connection itself is fine).
+    pub async fn call<T>(
+        &self,
+        f: impl AsyncFnOnce(&NexusClient) -> Result<T, CallError>,
+    ) -> Result<T, BridgeError> {
+        let mut session = self.0.lock().await;
+        if session.is_none() {
+            let (client, handshake) = NexusClient::connect(CLIENT_NAME).await?;
+            *session = Some(Session { client, handshake });
+        }
+        let live = session.as_ref().expect("session was just ensured");
+        match f(&live.client).await {
+            Err(CallError::Transport(err)) => {
+                *session = None;
+                Err(CallError::Transport(err).into())
+            }
+            other => other.map_err(BridgeError::from),
+        }
+    }
+}
 
 #[tauri::command]
 pub async fn host_status(

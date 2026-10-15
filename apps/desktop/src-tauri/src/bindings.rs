@@ -7,7 +7,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use specta::ts::{self, ExportConfiguration};
+    use specta::ts::{self, BigIntExportBehavior, ExportConfiguration};
 
     const HEADER: &str = "// Generated from Rust by `NEXUS_UPDATE_BINDINGS=1 cargo test -p desktop`. Do not edit.\n\n";
 
@@ -17,13 +17,29 @@ mod tests {
     }
 
     fn render() -> String {
-        let conf = ExportConfiguration::default();
+        // i64 fields crossing to the webview are unix-ms times, revisions and
+        // event sequence numbers, all far below 2^53 (see nexus_protocol::runs);
+        // identifiers and hashes are strings, so `number` is exact here.
+        let conf = ExportConfiguration::default().bigint(BigIntExportBehavior::Number);
         let types = [
             ts::export::<nexus_protocol::RequestId>(&conf),
             ts::export::<nexus_protocol::OperationId>(&conf),
+            ts::export::<nexus_protocol::TaskId>(&conf),
+            ts::export::<nexus_protocol::RunId>(&conf),
+            ts::export::<nexus_protocol::ApprovalId>(&conf),
+            ts::export::<nexus_protocol::ArtifactId>(&conf),
             ts::export::<nexus_protocol::ErrorCode>(&conf),
             ts::export::<nexus_protocol::NexusError>(&conf),
             ts::export::<crate::host::HostStatus>(&conf),
+            ts::export::<crate::host::BridgeError>(&conf),
+            ts::export::<nexus_protocol::RunStatus>(&conf),
+            ts::export::<nexus_protocol::NotePreview>(&conf),
+            ts::export::<nexus_protocol::PendingApproval>(&conf),
+            ts::export::<nexus_protocol::ArtifactSummary>(&conf),
+            ts::export::<nexus_protocol::RunFailure>(&conf),
+            ts::export::<nexus_protocol::RunView>(&conf),
+            ts::export::<nexus_protocol::Snapshot>(&conf),
+            ts::export::<nexus_protocol::SubmitNoteResponse>(&conf),
         ];
         let mut out = String::from(HEADER);
         for exported in types {

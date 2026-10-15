@@ -4,6 +4,14 @@ export type RequestId = string
 
 export type OperationId = string
 
+export type TaskId = string
+
+export type RunId = string
+
+export type ApprovalId = string
+
+export type ArtifactId = string
+
 /**
  * Stable error codes from `CONTRACTE_NEXUS_RO.md` §9. The code is what
  * callers branch on; `message` is user-facing text, never a stack trace.
@@ -22,4 +30,33 @@ export type NexusError = { code: ErrorCode; message: string; request_id: Request
  * real connection attempt; there is no optimistic or cached "connected".
  */
 export type HostStatus = { state: "Connected"; host_identity: string; protocol_version: number; uptime_seconds: number } | { state: "NotRunning" } | { state: "Unreachable"; reason: string } | { state: "Rejected"; error: NexusError } | { state: "Untrusted"; reason: string }
+
+/**
+ * What a bridge command reports to the webview: the host's stable code when
+ * the host refused, none when the call never got an answer.
+ */
+export type BridgeError = { code: ErrorCode | null; message: string }
+
+/**
+ * Mirrors `nexus_core::RunState`; the host converts with an exhaustive match.
+ */
+export type RunStatus = "Queued" | "Running" | "AwaitingApproval" | "Verifying" | "CancellationRequested" | "NeedsReconciliation" | "NeedsReview" | "Succeeded" | "Failed" | "Cancelled" | "Denied"
+
+/**
+ * Exactly what will be written and where. Built by the host from the same
+ * manifest the approval is bound to.
+ */
+export type NotePreview = { destination: string; content: string; size_bytes: number; sha256: string }
+
+export type PendingApproval = { approval_id: ApprovalId; manifest_sha256: string; expires_at_ms: number; preview: NotePreview | null }
+
+export type ArtifactSummary = { artifact_id: ArtifactId; path: string; sha256: string; size_bytes: number; created_at_ms: number }
+
+export type RunFailure = { code: string; message: string }
+
+export type RunView = { run_id: RunId; title: string; status: RunStatus; revision: number; failure: RunFailure | null; pending_approval: PendingApproval | null; artifact: ArtifactSummary | null; created_at_ms: number; updated_at_ms: number }
+
+export type Snapshot = { runs: RunView[]; watermark: number }
+
+export type SubmitNoteResponse = { task_id: TaskId; run_id: RunId; created: boolean }
 

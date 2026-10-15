@@ -1,0 +1,181 @@
+﻿<#
+.SYNOPSIS
+  End-to-end check of the M1 note flow through the real release window.
+
+.DESCRIPTION
+  Drives target\release\desktop.exe through Windows UI Automation (the
+  interface screen readers use) in an isolated temporary profile, so it never
+  touches %LOCALAPPDATA%\Nexus. Covers RUN-01 through the UI, UI-02 (inert
+  content), LIFE-01 with a pending task, and a denial. Exits 1 on the first
+  failed check. Build first:
+    cargo build -p nexus-host --release --locked
+    pnpm --filter @nexus/desktop tauri build --no-bundle
+#>
+param([string]$Root = (Resolve-Path "$PSScriptRoot\..").Path)
+
+$ErrorActionPreference = "Stop"
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+$A = [System.Windows.Automation.AutomationElement]
+$S = [System.Windows.Automation.TreeScope]
+$True_ = [System.Windows.Automation.Condition]::TrueCondition
+
+$exe = Join-Path $Root "target\release\desktop.exe"
+$hostExe = Join-Path $Root "target\release\nexus-host.exe"
+foreach ($f in $exe, $hostExe) { if (-not (Test-Path $f)) { throw "missing $f - build the release first" } }
+
+$profileDir = Join-Path $env:TEMP ("nexus-ui-check-" + [guid]::NewGuid())
+New-Item -ItemType Directory $profileDir | Out-Null
+# Inherited by desktop.exe and by the host it launches: both use this profile
+# and its own pipe name, never the user's real one.
+$env:NEXUS_PROFILE_DIR = $profileDir
+
+$hostile = '<script>alert(1)</script> <img src="https://example.com/x.png"> [x](javascript:alert(1))'
+$failures = 0
+
+function Check([bool]$ok, [string]$what) {
+  if ($ok) { Write-Output "PASS  $what" } else { Write-Output "FAIL  $what"; $script:failures++ }
+}
+
+function Get-Window([int]$procId) {
+  $cond = New-Object System.Windows.Automation.PropertyCondition($A::ProcessIdProperty, $procId)
+  for ($i = 0; $i -lt 50; $i++) {
+    $w = $A::RootElement.FindFirst($S::Children, $cond)
+    if ($w) { return $w }
+    Start-Sleep -Milliseconds 200
+  }
+  throw "window for pid $procId did not appear"
+}
+
+function Get-Names($win) {
+  $win.FindAll($S::Descendants, $True_) | ForEach-Object { $_.Current.Name } | Where-Object { $_ }
+}
+
+function Wait-Text($win, [string]$text, [int]$seconds = 15) {
+  $deadline = (Get-Date).AddSeconds($seconds)
+  while ((Get-Date) -lt $deadline) {
+    if ((Get-Names $win) -contains $text) { return $true }
+    Start-Sleep -Milliseconds 250
+  }
+  return $false
+}
+
+function Find-Named($win, [string]$name, $type) {
+  $byName = New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, $name)
+  $byType = New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, $type)
+  $win.FindFirst($S::Descendants, (New-Object System.Windows.Automation.AndCondition($byName, $byType)))
+}
+
+function Invoke-Element($element) {
+  $pattern = $null
+  if ($element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) {
+    $pattern.Invoke()
+  } elseif ($element.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$pattern)) {
+    $pattern.Toggle()
+  } else {
+    throw "element '$($element.Current.Name)' cannot be activated"
+  }
+}
+
+function Click-Button($win, [string]$name) {
+  $deadline = (Get-Date).AddSeconds(10)
+  while ((Get-Date) -lt $deadline) {
+    $b = Find-Named $win $name ([System.Windows.Automation.ControlType]::Button)
+    if ($b -and $b.Current.IsEnabled) {
+      Invoke-Element $b
+      return
+    }
+    Start-Sleep -Milliseconds 200
+  }
+  throw "button '$name' not found or never enabled"
+}
+
+function Set-Field($win, [string]$label, [string]$value) {
+  $e = Find-Named $win $label ([System.Windows.Automation.ControlType]::Edit)
+  if (-not $e) { throw "field '$label' not found" }
+  $e.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($value)
+}
+
+function Note-Files { @(Get-ChildItem -Path (Join-Path $profileDir "artifacts") -Recurse -Filter *.md -ErrorAction SilentlyContinue | Where-Object { $_.DirectoryName -notlike "*\.staging" }) }
+
+function Wait-Files([int]$count, [int]$seconds = 15) {
+  $deadline = (Get-Date).AddSeconds($seconds)
+  while ((Get-Date) -lt $deadline) { if ((Note-Files).Count -eq $count) { return $true }; Start-Sleep -Milliseconds 250 }
+  return $false
+}
+
+function New-Note($win, [string]$title, [string]$body) {
+  Set-Field $win "Titlu" $title
+  Set-Field $win "Conținut" $body
+  Click-Button $win "Pregătește nota"
+}
+
+$ui = $null
+$started = Get-Date
+try {
+  # --- start the host from the UI ---
+  $ui = Start-Process $exe -PassThru
+  $win = Get-Window $ui.Id
+  Check (Wait-Text $win "Pornește Hostul") "fresh profile shows the host as stopped"
+  Click-Button $win "Pornește Hostul"
+  Check (Wait-Text $win "Conectat") "the UI launched the host and connected"
+  Check (Wait-Text $win "Nicio notă încă.") "empty activity state is shown"
+
+  # --- RUN-01 + UI-02 through the window ---
+  New-Note $win "Notă de test" $hostile
+  Check (Wait-Text $win "Ce se va scrie") "an exact preview is shown before anything is written"
+  $expected = "# Notă de test`n`n$hostile`n"
+  Check (@(Get-Names $win | Where-Object { $_.Contains($hostile) }).Count -gt 0) "hostile markup appears as literal text in the preview"
+  Check ((Note-Files).Count -eq 0) "no file exists before approval"
+  Click-Button $win "Aprobă și creează"
+  Check (Wait-Files 1) "approving creates exactly one note"
+  $file = (Note-Files)[0].FullName
+  Check ([System.IO.File]::ReadAllText($file, [System.Text.UTF8Encoding]::new($false)) -ceq $expected) "the file holds exactly the approved bytes"
+  Check ($file.StartsWith($profileDir)) "the note is inside the isolated profile"
+  Click-Button $win "Arată conținutul"
+  Check (Wait-Text $win "Conținutul verificat al notei") "verified content can be shown"
+
+  # --- LIFE-01: close the UI while a task waits, reopen, finish it ---
+  New-Note $win "A doua notă" "conținut 2"
+  Check (Wait-Text $win "Așteaptă aprobarea ta") "second note waits for approval"
+  $hostProc = Get-Process nexus-host | Where-Object { $_.Path -eq $hostExe -and $_.StartTime -ge $started } | Select-Object -First 1
+  $ui.CloseMainWindow() | Out-Null
+  $ui.WaitForExit(10000) | Out-Null
+  Start-Sleep -Seconds 2
+  Check ($ui.HasExited) "the window closed"
+  Check (-not (Get-Process -Id $hostProc.Id -ErrorAction SilentlyContinue).HasExited) "the host survived closing the UI with a pending task"
+
+  $ui = Start-Process $exe -PassThru
+  $win = Get-Window $ui.Id
+  Check (Wait-Text $win "Conectat") "the reopened UI reconnected"
+  $row = $null
+  $deadline = (Get-Date).AddSeconds(10)
+  while (-not $row -and (Get-Date) -lt $deadline) {
+    $row = $win.FindAll($S::Descendants, $True_) | Where-Object { $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $_.Current.Name -like "*A doua notă*" } | Select-Object -First 1
+    if (-not $row) { Start-Sleep -Milliseconds 250 }
+  }
+  Check ($null -ne $row) "the pending task is still listed after reopening"
+  Check ($row.Current.Name -like "*Așteaptă aprobarea ta*") "its state was recovered, not reset"
+  Invoke-Element $row
+  Check (Wait-Text $win "Ce se va scrie") "its exact preview is shown again"
+  Click-Button $win "Aprobă și creează"
+  Check (Wait-Files 2) "approving after reopening creates exactly the second note"
+  Check ((Get-Process nexus-host | Where-Object { $_.Path -eq $hostExe -and $_.StartTime -ge $started }).Count -eq 1) "still a single host instance"
+
+  # --- denial writes nothing ---
+  New-Note $win "A treia notă" "nu o vreau"
+  Check (Wait-Text $win "Ce se va scrie") "third note shows its preview"
+  Click-Button $win "Refuză"
+  Check (Wait-Text $win "Refuzată") "denial is shown"
+  Start-Sleep -Seconds 1
+  Check ((Note-Files).Count -eq 2) "denial wrote no file"
+}
+finally {
+  if ($ui -and -not $ui.HasExited) { $ui.CloseMainWindow() | Out-Null; $ui.WaitForExit(10000) | Out-Null }
+  Get-Process nexus-host -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $hostExe -and $_.StartTime -ge $started } | Stop-Process -Force
+  Start-Sleep -Milliseconds 500
+  Remove-Item -Recurse -Force $profileDir -ErrorAction SilentlyContinue
+  Remove-Item Env:NEXUS_PROFILE_DIR -ErrorAction SilentlyContinue
+}
+
+if ($failures -gt 0) { Write-Output "$failures check(s) failed"; exit 1 }
+Write-Output "all checks passed"
