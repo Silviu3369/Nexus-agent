@@ -186,6 +186,10 @@ impl NexusClient {
             .await??)
     }
 
+    pub async fn create_backup(&self) -> Result<nexus_protocol::BackupSummary, CallError> {
+        Ok(self.client.create_backup(context::current()).await??)
+    }
+
     pub async fn stop_host(&self) -> Result<(), CallError> {
         Ok(self.client.stop_host(context::current()).await??)
     }

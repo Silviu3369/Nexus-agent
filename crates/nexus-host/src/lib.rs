@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod fault;
 pub mod runtime;
 pub mod server;

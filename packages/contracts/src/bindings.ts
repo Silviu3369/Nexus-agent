@@ -29,7 +29,7 @@ export type NexusError = { code: ErrorCode; message: string; request_id: Request
  * What the dashboard may show about the host. Every variant comes from a
  * real connection attempt; there is no optimistic or cached "connected".
  */
-export type HostStatus = { state: "Connected"; host_identity: string; protocol_version: number; uptime_seconds: number } | { state: "NotRunning" } | { state: "Unreachable"; reason: string } | { state: "Rejected"; error: NexusError } | { state: "Untrusted"; reason: string }
+export type HostStatus = { state: "Connected"; host_identity: string; protocol_version: number; uptime_seconds: number; paused: boolean } | { state: "NotRunning" } | { state: "Unreachable"; reason: string } | { state: "Rejected"; error: NexusError } | { state: "Untrusted"; reason: string }
 
 /**
  * What a bridge command reports to the webview: the host's stable code when
@@ -59,4 +59,6 @@ export type RunView = { run_id: RunId; title: string; status: RunStatus; revisio
 export type Snapshot = { runs: RunView[]; watermark: number }
 
 export type SubmitNoteResponse = { task_id: TaskId; run_id: RunId; created: boolean }
+
+export type BackupSummary = { path: string; created_at_ms: number; artifacts: number; unmatched_artifacts: number; database_sha256: string }
 

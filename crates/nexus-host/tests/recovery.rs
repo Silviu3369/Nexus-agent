@@ -6,48 +6,15 @@
 mod support;
 
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use nexus_client::NexusClient;
-use nexus_protocol::pairing::{self, PROFILE_DIR_ENV};
 use nexus_protocol::{
     ApprovalDecision, DecideApprovalRequest, RunId, RunStatus, RunView, SubmitNoteRequest,
 };
-use support::TempProfile;
+use support::{TempProfile, connect, spawn_host, wait_exit};
 
 const CONTENT: &str = "# Recuperare\n\npasul 1\n";
-
-fn spawn_host(profile: &Path, fault: Option<&str>) -> Child {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_nexus-host"));
-    cmd.env(PROFILE_DIR_ENV, profile)
-        .env_remove(nexus_host::fault::FAULT_POINT_ENV)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    if let Some(point) = fault {
-        cmd.env(nexus_host::fault::FAULT_POINT_ENV, point);
-    }
-    cmd.spawn().expect("nexus-host binary must start")
-}
-
-async fn connect(profile: &Path) -> NexusClient {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
-    loop {
-        if let Ok(token) = pairing::read_token_in(profile)
-            && let Ok((client, _)) =
-                NexusClient::connect_with(&pairing::pipe_name_for(profile), token, "recovery-test")
-                    .await
-        {
-            return client;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "host did not come up"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
 
 async fn wait_status(client: &NexusClient, run: RunId, wanted: RunStatus) -> RunView {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
@@ -62,17 +29,6 @@ async fn wait_status(client: &NexusClient, run: RunId, wanted: RunStatus) -> Run
             view.status
         );
         tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-}
-
-fn wait_exit(child: &mut Child) -> std::process::ExitStatus {
-    let deadline = std::time::Instant::now() + Duration::from_secs(15);
-    loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            return status;
-        }
-        assert!(std::time::Instant::now() < deadline, "host did not exit");
-        std::thread::sleep(Duration::from_millis(25));
     }
 }
 

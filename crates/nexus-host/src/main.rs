@@ -9,6 +9,11 @@ const MAX_LOG_BYTES: u64 = 10 * 1024 * 1024;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("restore") {
+        return restore(&args[1..]);
+    }
+
     let profile = nexus_protocol::pairing::profile_dir();
     init_logging(&profile)?;
 
@@ -32,6 +37,22 @@ async fn main() -> anyhow::Result<()> {
     // Let the step in progress finish and record its outcome before exiting.
     executor.await?;
     tracing::info!(pid = std::process::id(), "nexus-host stopped");
+    Ok(())
+}
+
+/// `nexus-host restore <backup-dir> <new-profile-dir>`: offline, never touches
+/// a running host or an existing profile.
+fn restore(args: &[String]) -> anyhow::Result<()> {
+    let [backup_dir, new_profile] = args else {
+        anyhow::bail!("usage: nexus-host restore <backup-dir> <new-profile-dir>");
+    };
+    let report = nexus_host::backup::restore(Path::new(backup_dir), Path::new(new_profile))?;
+    println!(
+        "restored {} note(s) into {}; execution stays paused until {} is removed from that profile",
+        report.manifest.artifacts.len(),
+        report.profile.display(),
+        nexus_host::backup::RESTORED_MARKER
+    );
     Ok(())
 }
 

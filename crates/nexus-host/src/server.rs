@@ -6,9 +6,9 @@ use std::time::Instant;
 use futures::StreamExt;
 use nexus_protocol::service::NexusService;
 use nexus_protocol::{
-    ArtifactId, DecideApprovalRequest, ErrorCode, EventsPage, GetHealthResponse, HandshakeRequest,
-    HandshakeResponse, HealthStatus, NexusError, PROTOCOL_VERSION, RunId, RunView, Snapshot,
-    SubmitNoteRequest, SubmitNoteResponse,
+    ArtifactId, BackupSummary, DecideApprovalRequest, ErrorCode, EventsPage, GetHealthResponse,
+    HandshakeRequest, HandshakeResponse, HealthStatus, NexusError, PROTOCOL_VERSION, RunId,
+    RunView, Snapshot, SubmitNoteRequest, SubmitNoteResponse,
 };
 use tarpc::context::Context;
 use tarpc::server::{BaseChannel, Channel};
@@ -117,7 +117,11 @@ impl NexusService for HostServer {
     async fn get_health(self, _ctx: Context) -> Result<GetHealthResponse, NexusError> {
         self.require_session()?;
         Ok(GetHealthResponse {
-            status: HealthStatus::Ok,
+            status: if self.runtime.is_paused() {
+                HealthStatus::Paused
+            } else {
+                HealthStatus::Ok
+            },
             uptime_seconds: u32::try_from(self.started_at.elapsed().as_secs()).unwrap_or(u32::MAX),
         })
     }
@@ -172,6 +176,11 @@ impl NexusService for HostServer {
     ) -> Result<String, NexusError> {
         self.require_session()?;
         self.runtime.artifact_content(artifact_id).await
+    }
+
+    async fn create_backup(self, _ctx: Context) -> Result<BackupSummary, NexusError> {
+        self.require_session()?;
+        self.runtime.create_backup().await
     }
 
     async fn stop_host(self, _ctx: Context) -> Result<(), NexusError> {

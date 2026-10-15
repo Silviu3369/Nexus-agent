@@ -12,8 +12,8 @@ pub mod service;
 pub mod version;
 
 pub use runs::{
-    ApprovalDecision, ArtifactSummary, DecideApprovalRequest, EventView, EventsPage, NotePreview,
-    PendingApproval, RunFailure, RunStatus, RunView, Snapshot, SubmitNoteRequest,
+    ApprovalDecision, ArtifactSummary, BackupSummary, DecideApprovalRequest, EventView, EventsPage,
+    NotePreview, PendingApproval, RunFailure, RunStatus, RunView, Snapshot, SubmitNoteRequest,
     SubmitNoteResponse,
 };
 

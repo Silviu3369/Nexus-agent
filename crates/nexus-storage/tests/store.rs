@@ -255,6 +255,129 @@ async fn approval_cannot_be_consumed_without_an_approved_decision() {
     );
 }
 
+#[tokio::test]
+async fn data02_full_database_refuses_the_write_and_keeps_state_consistent() {
+    let dir = TempDir::new();
+    let store = Store::open(&dir.db()).unwrap();
+    let project = store.ensure_default_project(0).await.unwrap();
+    // SQLITE_FULL is what a full disk produces; cap the file to provoke it
+    // without needing a size-limited volume.
+    store
+        .call(|conn| {
+            let pages: i64 = conn.query_row("PRAGMA page_count", [], |r| r.get(0))?;
+            conn.query_row(
+                &format!("PRAGMA max_page_count = {}", pages + 2),
+                [],
+                |_| Ok(()),
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    let big = format!("{{\"body\":\"{}\"}}", "x".repeat(64 * 1024));
+    let result = store
+        .submit_task(project, "k".to_string(), big, "h".to_string(), 1)
+        .await;
+    match result {
+        Err(StorageError::Sqlite(rusqlite::Error::SqliteFailure(e, _))) => {
+            assert_eq!(e.code, rusqlite::ErrorCode::DiskFull);
+        }
+        other => panic!("expected a disk-full error, got {other:?}"),
+    }
+    let (tasks, runs, events_for_task): (i64, i64, i64) = store
+        .call(|c| {
+            Ok((
+                c.query_row("SELECT count(*) FROM tasks", [], |r| r.get(0))?,
+                c.query_row("SELECT count(*) FROM runs", [], |r| r.get(0))?,
+                c.query_row(
+                    "SELECT count(*) FROM events WHERE kind = 'RunCreated'",
+                    [],
+                    |r| r.get(0),
+                )?,
+            ))
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        (tasks, runs, events_for_task),
+        (0, 0, 0),
+        "nothing partial may remain"
+    );
+    assert_eq!(store.integrity_check().await.unwrap(), "ok");
+}
+
+#[tokio::test]
+async fn data02_busy_database_returns_an_explicit_error_then_recovers() {
+    let dir = TempDir::new();
+    let store = Store::open(&dir.db()).unwrap();
+    let project = store.ensure_default_project(0).await.unwrap();
+
+    // Another process holding an exclusive lock on the same file.
+    let other = rusqlite::Connection::open(dir.db()).unwrap();
+    other.execute_batch("BEGIN EXCLUSIVE").unwrap();
+
+    let blocked = store
+        .submit_task(
+            project,
+            "k".to_string(),
+            "{}".to_string(),
+            "h".to_string(),
+            1,
+        )
+        .await;
+    match blocked {
+        Err(StorageError::Sqlite(rusqlite::Error::SqliteFailure(e, _))) => {
+            assert!(
+                matches!(
+                    e.code,
+                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                ),
+                "unexpected code {:?}",
+                e.code
+            );
+        }
+        other => panic!("expected busy/locked, got {other:?}"),
+    }
+
+    other.execute_batch("ROLLBACK").unwrap();
+    drop(other);
+    store
+        .submit_task(
+            project,
+            "k".to_string(),
+            "{}".to_string(),
+            "h".to_string(),
+            2,
+        )
+        .await
+        .expect("the store must work again once the lock is released");
+}
+
+#[test]
+fn data02_corrupt_database_is_refused_and_preserved_for_diagnosis() {
+    let dir = TempDir::new();
+    {
+        let conn = rusqlite::Connection::open(dir.db()).unwrap();
+        conn.execute_batch("CREATE TABLE t (x); INSERT INTO t VALUES (1);")
+            .unwrap();
+    }
+    // Damage the 100-byte header's magic string.
+    let mut bytes = std::fs::read(dir.db()).unwrap();
+    bytes[..16].copy_from_slice(b"NOT A SQLITE DB!");
+    std::fs::write(dir.db(), &bytes).unwrap();
+
+    assert!(
+        Store::open(&dir.db()).is_err(),
+        "a corrupt database must not open"
+    );
+    assert_eq!(
+        std::fs::read(dir.db()).unwrap(),
+        bytes,
+        "the damaged file must be left exactly as found, not deleted or reinitialised"
+    );
+}
+
 #[test]
 fn network_share_path_is_refused() {
     match Store::open(std::path::Path::new(r"\\fileserver\share\nexus.db")) {

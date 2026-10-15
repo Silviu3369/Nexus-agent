@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { HostStatus } from "@nexus/contracts";
+import type { BackupSummary, HostStatus } from "@nexus/contracts";
 import { api, describeError } from "./api";
 import { NotesPanel } from "./Notes";
 import "./App.css";
@@ -97,12 +97,67 @@ function App() {
         )}
       </section>
 
-      {view.kind === "status" && view.status.state === "Connected" && <NotesPanel />}
+      {view.kind === "status" && view.status.state === "Connected" && (
+        <>
+          <NotesPanel />
+          <BackupCard />
+        </>
+      )}
 
       <p className="note">
         Închiderea acestei ferestre nu oprește Hostul și nici sarcinile acceptate.
       </p>
     </main>
+  );
+}
+
+function BackupCard() {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<BackupSummary | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function backup() {
+    setBusy(true);
+    setError(null);
+    try {
+      setResult(await api.createBackup());
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="card" aria-labelledby="backup-heading">
+      <h2 id="backup-heading">Date</h2>
+      <p className="muted">
+        Backup-ul copiază baza de date și notele verificate, cu un manifest de hash-uri. Se poate
+        restaura doar într-un profil nou, unde nimic nu se execută automat.
+      </p>
+      <div className="actions">
+        <button type="button" onClick={backup} disabled={busy}>
+          {busy ? "Se face backup…" : "Fă backup"}
+        </button>
+      </div>
+      {result && (
+        <div role="status">
+          <p>{`Backup creat: ${result.artifacts} ${result.artifacts === 1 ? "notă" : "note"}.`}</p>
+          <p className="path">{result.path}</p>
+          {result.unmatched_artifacts > 0 && (
+            <p className="error">
+              {result.unmatched_artifacts} notă/note fuseseră modificate în afara Nexus și au fost
+              copiate așa cum erau.
+            </p>
+          )}
+        </div>
+      )}
+      {error && (
+        <p className="error" role="alert">
+          Backup-ul a eșuat: {error}
+        </p>
+      )}
+    </section>
   );
 }
 
@@ -133,6 +188,12 @@ function HostView({ view }: { view: View }) {
             <dt>Rulează de</dt>
             <dd>{formatUptime(status.uptime_seconds)}</dd>
           </dl>
+          {status.paused && (
+            <p className="error">
+              Profil restaurat dintr-un backup: cererile se înregistrează, dar nimic nu se execută până
+              nu verifici profilul și ștergi fișierul restored.json din el.
+            </p>
+          )}
         </>
       );
     case "NotRunning":

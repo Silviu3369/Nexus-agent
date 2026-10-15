@@ -5,8 +5,8 @@ use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 
 use nexus_protocol::{
-    ApprovalDecision, ApprovalId, ArtifactId, DecideApprovalRequest, RunId, RunStatus, RunView,
-    Snapshot, SubmitNoteRequest, SubmitNoteResponse,
+    ApprovalDecision, ApprovalId, ArtifactId, BackupSummary, DecideApprovalRequest, RunId,
+    RunStatus, RunView, Snapshot, SubmitNoteRequest, SubmitNoteResponse,
 };
 
 use crate::host::{BridgeError, HostConnection};
@@ -85,6 +85,13 @@ pub async fn artifact_content(
     connection
         .call(async |c| c.artifact_content(artifact_id).await)
         .await
+}
+
+/// Consistent backup of the profile's database and notes (BACKUP-01). The
+/// host chooses the location inside the profile; nothing comes from JS.
+#[tauri::command]
+pub async fn create_backup(connection: State<'_>) -> Result<BackupSummary, BridgeError> {
+    connection.call(async |c| c.create_backup().await).await
 }
 
 /// Shows a succeeded run's note selected in File Explorer. Nothing is

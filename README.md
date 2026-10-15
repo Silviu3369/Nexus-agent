@@ -6,7 +6,7 @@ Platformă AI personală pentru Windows, proiectată pentru extindere. Nexus va 
 
 ## Starea curentă
 
-M0 e închis. M1 e în lucru: în dashboard scrii o notă, vezi exact ce se va scrie și unde, aprobi sau refuzi, iar Nexus creează fișierul și îl verifică prin hash. Sarcinile supraviețuiesc închiderii ferestrei și căderii Host-ului, fără să se dubleze. Backup-ul și restaurarea nu există încă.
+M0 e închis, iar M1 e complet tehnic. În dashboard scrii o notă, vezi exact ce se va scrie și unde, aprobi sau refuzi, iar Nexus creează fișierul și îl verifică prin hash. Sarcinile supraviețuiesc închiderii ferestrei și căderii Host-ului, fără să se dubleze. Butonul „Fă backup" face o copie consistentă. Ea se poate restaura doar într-un profil nou, unde nimic nu se execută automat. Modelele AI vin în M2.
 
 **Planul și starea implementării au o singură sursă:** [PLAN_NEXUS_RO.md](docs/PLAN_NEXUS_RO.md).
 
@@ -37,7 +37,12 @@ cargo run -p nexus-client --example health
 
 # Fluxul M1 prin fereastra reală, într-un profil temporar (după build-ul release)
 powershell -ExecutionPolicy Bypass -File scripts\m1-ui-check.ps1
+
+# Restaurarea unui backup într-un profil NOU (offline; nu atinge profilul curent)
+target\release\nexus-host.exe restore <dosar-backup> <dosar-profil-nou>
 ```
+
+Un profil restaurat pornește în pauză: vezi istoricul, dar nimic nu se execută. Ca să-l activezi după ce l-ai verificat, șterge `restored.json` din el.
 
 `NEXUS_PROFILE_DIR` mută profilul (bază de date, note, token, log) într-un alt director, cu propriul pipe. Așa nu se atinge `%LOCALAPPDATA%\Nexus`. Testele și scriptul de mai sus îl folosesc.
 

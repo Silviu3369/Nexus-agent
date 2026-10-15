@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   ApprovalId,
   ArtifactId,
+  BackupSummary,
   BridgeError,
   ErrorCode,
   HostStatus,
@@ -23,6 +24,7 @@ export const api = {
   cancelRun: (runId: RunId) => invoke<RunView>("cancel_run", { runId }),
   artifactContent: (artifactId: ArtifactId) => invoke<string>("artifact_content", { artifactId }),
   revealArtifact: (runId: RunId) => invoke<null>("reveal_artifact", { runId }),
+  createBackup: () => invoke<BackupSummary>("create_backup"),
 };
 
 const CODE_TEXT: Partial<Record<ErrorCode, string>> = {

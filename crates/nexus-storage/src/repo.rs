@@ -3,6 +3,8 @@
 //! (`ARHITECTURA_NEXUS_RO.md` §7). Every state change goes through the
 //! `nexus-core` transition tables. Time is passed in so tests control expiry.
 
+use std::path::PathBuf;
+
 use nexus_core::{ActionState, OperationState, RunState};
 use nexus_protocol::{
     ActionId, ApprovalId, ArtifactId, EventId, OperationId, ProjectId, RunId, TaskId,
@@ -883,6 +885,52 @@ impl Store {
             .ok_or(StorageError::NotFound("artifact"))?
         })
         .await
+    }
+
+    /// BACKUP-01: copies the database with SQLite's online backup API while
+    /// this thread holds the only connection, then hands `during` the
+    /// artifact rows *before* releasing it — no write can land between the
+    /// database copy and whatever `during` copies alongside it.
+    pub async fn backup_consistent<T, F>(
+        &self,
+        dest_db: PathBuf,
+        during: F,
+    ) -> Result<T, StorageError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&[ArtifactRow]) -> Result<T, StorageError> + Send + 'static,
+    {
+        self.call(move |conn| {
+            if dest_db.exists() {
+                return Err(StorageError::Io(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    format!("{} already exists", dest_db.display()),
+                )));
+            }
+            {
+                let mut dst = rusqlite::Connection::open(&dest_db)?;
+                let backup = rusqlite::backup::Backup::new(conn, &mut dst)?;
+                backup.run_to_completion(256, std::time::Duration::ZERO, None)?;
+            }
+            let artifacts: Vec<ArtifactRow> = {
+                let mut stmt = conn.prepare(
+                    "SELECT id, operation_id, project_id, relpath, sha256, size_bytes, created_at_ms
+                     FROM artifacts ORDER BY created_at_ms, id",
+                )?;
+                stmt.query_map([], artifact_from_row)?
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .collect::<Result<_, _>>()?
+            };
+            during(&artifacts)
+        })
+        .await
+    }
+
+    /// `PRAGMA integrity_check`: "ok", or SQLite's description of the damage.
+    pub async fn integrity_check(&self) -> Result<String, StorageError> {
+        self.call(|conn| Ok(conn.query_row("PRAGMA integrity_check", [], |r| r.get(0))?))
+            .await
     }
 }
 

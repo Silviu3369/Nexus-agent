@@ -40,6 +40,7 @@ mod tests {
             ts::export::<nexus_protocol::RunView>(&conf),
             ts::export::<nexus_protocol::Snapshot>(&conf),
             ts::export::<nexus_protocol::SubmitNoteResponse>(&conf),
+            ts::export::<nexus_protocol::BackupSummary>(&conf),
         ];
         let mut out = String::from(HEADER);
         for exported in types {

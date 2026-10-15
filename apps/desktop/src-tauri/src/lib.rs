@@ -17,6 +17,7 @@ pub fn run() {
             runs::cancel_run,
             runs::artifact_content,
             runs::reveal_artifact,
+            runs::create_backup,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

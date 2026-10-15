@@ -6,7 +6,8 @@ use crate::error::NexusError;
 use crate::handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse};
 use crate::ids::{ArtifactId, RunId};
 use crate::runs::{
-    DecideApprovalRequest, EventsPage, RunView, Snapshot, SubmitNoteRequest, SubmitNoteResponse,
+    BackupSummary, DecideApprovalRequest, EventsPage, RunView, Snapshot, SubmitNoteRequest,
+    SubmitNoteResponse,
 };
 
 #[tarpc::service]
@@ -35,6 +36,10 @@ pub trait NexusService {
 
     /// Content of a verified artifact, re-checked against its recorded hash.
     async fn get_artifact_content(artifact_id: ArtifactId) -> Result<String, NexusError>;
+
+    /// Consistent snapshot of the database and the notes it references,
+    /// with a manifest of hashes (BACKUP-01). Writes wait while it runs.
+    async fn create_backup() -> Result<BackupSummary, NexusError>;
 
     /// Explicit stop: no new work is taken, the current step finishes,
     /// uncertain effects stay recorded for reconciliation on next start.

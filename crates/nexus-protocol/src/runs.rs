@@ -120,6 +120,17 @@ pub struct EventView {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct BackupSummary {
+    pub path: String,
+    pub created_at_ms: i64,
+    pub artifacts: u32,
+    /// Notes whose file no longer matched the hash recorded at creation
+    /// (edited outside Nexus); they are backed up as found and flagged.
+    pub unmatched_artifacts: u32,
+    pub database_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct EventsPage {
     pub events: Vec<EventView>,
     /// Pass back as `after` for the next page.

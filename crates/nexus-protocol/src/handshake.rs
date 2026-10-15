@@ -29,6 +29,9 @@ pub struct HandshakeResponse {
 pub enum HealthStatus {
     Ok,
     Degraded,
+    /// A restored profile: requests are stored but nothing executes until a
+    /// person reviews the restore (`PLAN_NEXUS_RO.md` M1 §9).
+    Paused,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]

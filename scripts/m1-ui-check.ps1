@@ -59,6 +59,16 @@ function Wait-Text($win, [string]$text, [int]$seconds = 15) {
   return $false
 }
 
+function Wait-Contains($win, [string]$fragment, [int]$seconds = 15) {
+  $deadline = (Get-Date).AddSeconds($seconds)
+  while ((Get-Date) -lt $deadline) {
+    $hit = Get-Names $win | Where-Object { $_.Contains($fragment) } | Select-Object -First 1
+    if ($hit) { return $hit }
+    Start-Sleep -Milliseconds 250
+  }
+  return $null
+}
+
 function Find-Named($win, [string]$name, $type) {
   $byName = New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, $name)
   $byType = New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, $type)
@@ -168,12 +178,41 @@ try {
   Check (Wait-Text $win "Refuzată") "denial is shown"
   Start-Sleep -Seconds 1
   Check ((Note-Files).Count -eq 2) "denial wrote no file"
+
+  # --- BACKUP-01 through the UI and the real restore command ---
+  Click-Button $win "Fă backup"
+  Check ($null -ne (Wait-Contains $win "Backup creat: 2 note")) "the UI reports a backup of both notes"
+  $backupPath = Wait-Contains $win (Join-Path $profileDir "backups")
+  Check ($null -ne $backupPath -and (Test-Path (Join-Path $backupPath "manifest.json"))) "the backup and its manifest exist inside the profile"
+  $manifest = Get-Content -Raw -Encoding UTF8 (Join-Path $backupPath "manifest.json") | ConvertFrom-Json
+  Check (@($manifest.artifacts).Count -eq 2) "the manifest lists both notes with their hashes"
+
+  $restoredDir = Join-Path $env:TEMP ("nexus-ui-restored-" + [guid]::NewGuid())
+  $script:restoredDir = $restoredDir
+  & $hostExe restore $backupPath $restoredDir | Out-Null
+  Check ($LASTEXITCODE -eq 0) "nexus-host restore into a new profile succeeded"
+  Check ((Test-Path (Join-Path $restoredDir "restored.json")) -and @(Get-ChildItem (Join-Path $restoredDir "artifacts") -Recurse -Filter *.md).Count -eq 2) "the restored profile holds both notes and is marked restored"
+
+  $ui.CloseMainWindow() | Out-Null; $ui.WaitForExit(10000) | Out-Null
+  Get-Process nexus-host -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $hostExe -and $_.StartTime -ge $started } | Stop-Process -Force
+  Start-Sleep -Milliseconds 500
+
+  $env:NEXUS_PROFILE_DIR = $restoredDir
+  $restoreStart = Get-Date
+  $ui = Start-Process $exe -PassThru
+  $win = Get-Window $ui.Id
+  Check (Wait-Text $win "Pornește Hostul") "the restored profile has no host running yet"
+  Click-Button $win "Pornește Hostul"
+  Check ($null -ne (Wait-Contains $win "Profil restaurat dintr-un backup")) "the UI states that the restored profile executes nothing"
+  Check ($null -ne (Wait-Contains $win "A treia notă")) "the restored history is visible"
+  Check ($null -ne (Wait-Contains $win "Refuzată")) "restored runs keep their states"
 }
 finally {
   if ($ui -and -not $ui.HasExited) { $ui.CloseMainWindow() | Out-Null; $ui.WaitForExit(10000) | Out-Null }
   Get-Process nexus-host -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $hostExe -and $_.StartTime -ge $started } | Stop-Process -Force
   Start-Sleep -Milliseconds 500
   Remove-Item -Recurse -Force $profileDir -ErrorAction SilentlyContinue
+  if ($script:restoredDir) { Remove-Item -Recurse -Force $script:restoredDir -ErrorAction SilentlyContinue }
   Remove-Item Env:NEXUS_PROFILE_DIR -ErrorAction SilentlyContinue
 }
 

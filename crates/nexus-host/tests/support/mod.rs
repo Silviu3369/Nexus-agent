@@ -4,10 +4,58 @@
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
+use nexus_client::NexusClient;
 use nexus_host::Runtime;
+use nexus_protocol::pairing::{self, PROFILE_DIR_ENV};
+
+/// Starts the real `nexus-host` binary on `profile` (its own pipe), optionally
+/// set to abort at a fault point (debug builds only).
+pub fn spawn_host(profile: &Path, fault: Option<&str>) -> Child {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_nexus-host"));
+    cmd.env(PROFILE_DIR_ENV, profile)
+        .env_remove(nexus_host::fault::FAULT_POINT_ENV)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Some(point) = fault {
+        cmd.env(nexus_host::fault::FAULT_POINT_ENV, point);
+    }
+    cmd.spawn().expect("nexus-host binary must start")
+}
+
+/// Connects to the real host on `profile` once it is up.
+pub async fn connect(profile: &Path) -> NexusClient {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        if let Ok(token) = pairing::read_token_in(profile)
+            && let Ok((client, _)) =
+                NexusClient::connect_with(&pairing::pipe_name_for(profile), token, "real-host-test")
+                    .await
+        {
+            return client;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "host did not come up"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+pub fn wait_exit(child: &mut Child) -> std::process::ExitStatus {
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            return status;
+        }
+        assert!(std::time::Instant::now() < deadline, "host did not exit");
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
 
 pub struct TempProfile(PathBuf);
 
@@ -83,9 +131,12 @@ impl TestHost {
             .0
     }
 
-    pub async fn shutdown(self) {
+    /// Stops the host; the profile is returned so a test can keep inspecting
+    /// it (e.g. a backup inside it) — it is deleted when dropped.
+    pub async fn shutdown(self) -> TempProfile {
         self.runtime.request_stop();
         let _ = self.serve.await;
         let _ = self.executor.await;
+        self.profile
     }
 }

@@ -8,9 +8,9 @@ use std::time::Duration;
 
 use nexus_core::{ActionState, OperationState, RunState};
 use nexus_protocol::{
-    ApprovalDecision, ArtifactId, ArtifactSummary, DecideApprovalRequest, ErrorCode, EventView,
-    EventsPage, NexusError, NotePreview, OperationId, PendingApproval, RunFailure, RunId,
-    RunStatus, RunView, Snapshot, SubmitNoteRequest, SubmitNoteResponse,
+    ApprovalDecision, ArtifactId, ArtifactSummary, BackupSummary, DecideApprovalRequest, ErrorCode,
+    EventView, EventsPage, NexusError, NotePreview, OperationId, PendingApproval, RunFailure,
+    RunId, RunStatus, RunView, Snapshot, SubmitNoteRequest, SubmitNoteResponse,
 };
 use nexus_storage::{
     Decision, NewAction, NewOperation, RunDetail, RunError, StorageError, Store, SubmitOutcome,
@@ -19,6 +19,7 @@ use nexus_storage::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Notify, watch};
 
+use crate::backup;
 use crate::fault;
 use crate::tools::markdown_artifact::{self as note_tool, ArtifactPaths, NoteContent, Observed};
 
@@ -66,8 +67,12 @@ struct ManifestCheck {
 
 pub struct Runtime {
     store: Store,
+    profile: PathBuf,
     artifact_root: PathBuf,
     approval_ttl_ms: i64,
+    /// A restored profile: no reconciliation and no execution until a
+    /// person removes the restore marker (BACKUP-01, "nicio execuție reluată").
+    paused: bool,
     wake: Notify,
     stop: watch::Sender<bool>,
 }
@@ -76,18 +81,33 @@ impl Runtime {
     /// Opens the profile's database and reconciles interrupted runs *before*
     /// the executor or any client can act on them.
     pub async fn open(profile: &Path, approval_ttl: Duration) -> anyhow::Result<Arc<Self>> {
-        let store = Store::open(&profile.join("nexus.db"))?;
+        let store = Store::open(&profile.join(backup::DATABASE_FILE))?;
         store.ensure_default_project(now_ms()).await?;
+        let paused = backup::is_restored_profile(profile);
         let (stop, _) = watch::channel(false);
         let runtime = Arc::new(Self {
             store,
+            profile: profile.to_path_buf(),
             artifact_root: profile.join("artifacts"),
             approval_ttl_ms: i64::try_from(approval_ttl.as_millis()).unwrap_or(i64::MAX),
+            paused,
             wake: Notify::new(),
             stop,
         });
-        runtime.reconcile_interrupted().await?;
+        if paused {
+            tracing::warn!(
+                profile = %profile.display(),
+                "restored profile: reconciliation and execution are paused until {} is removed",
+                backup::RESTORED_MARKER
+            );
+        } else {
+            runtime.reconcile_interrupted().await?;
+        }
         Ok(runtime)
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused
     }
 
     pub fn stop_signal(&self) -> watch::Receiver<bool> {
@@ -102,6 +122,16 @@ impl Runtime {
     /// One run at a time, in order (`PLAN_NEXUS_RO.md` M1 §3).
     pub async fn run_executor(self: Arc<Self>) {
         let mut stop = self.stop.subscribe();
+        if self.paused {
+            // Nothing runs, not even approval expiry: a restored profile is
+            // inspected as it was, not advanced.
+            while !*stop.borrow() {
+                if stop.changed().await.is_err() {
+                    break;
+                }
+            }
+            return;
+        }
         loop {
             if *stop.borrow() {
                 break;
@@ -560,6 +590,27 @@ impl Runtime {
                 })
                 .collect(),
             next_after,
+        })
+    }
+
+    pub async fn create_backup(&self) -> Result<BackupSummary, NexusError> {
+        let (dir, manifest) = backup::create(
+            &self.store,
+            &self.artifact_root,
+            &self.profile.join("backups"),
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "backup failed");
+            NexusError::new(ErrorCode::InternalFailure, format!("backup failed: {e}"))
+        })?;
+        tracing::info!(path = %dir.display(), artifacts = manifest.artifacts.len(), "backup created");
+        Ok(BackupSummary {
+            path: dir.display().to_string(),
+            created_at_ms: manifest.created_at_ms,
+            artifacts: manifest.artifacts.len() as u32,
+            unmatched_artifacts: manifest.unmatched_artifacts() as u32,
+            database_sha256: manifest.database_sha256,
         })
     }
 

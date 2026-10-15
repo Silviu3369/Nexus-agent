@@ -8,7 +8,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use nexus_client::{CallError, ConnectError, NexusClient};
-use nexus_protocol::{ErrorCode, HandshakeResponse, NexusError};
+use nexus_protocol::{ErrorCode, GetHealthResponse, HandshakeResponse, HealthStatus, NexusError};
 use serde::Serialize;
 use tauri::async_runtime::Mutex;
 
@@ -66,6 +66,8 @@ pub enum HostStatus {
         host_identity: String,
         protocol_version: u32,
         uptime_seconds: u32,
+        /// A restored profile: requests are recorded but nothing executes.
+        paused: bool,
     },
     /// No host listens for this profile (or it has never run).
     NotRunning,
@@ -118,7 +120,7 @@ pub async fn host_status(
 
     if let Some(existing) = session.as_ref() {
         match existing.client.get_health().await {
-            Ok(Ok(health)) => return Ok(connected(&existing.handshake, health.uptime_seconds)),
+            Ok(Ok(health)) => return Ok(connected(&existing.handshake, &health)),
             Ok(Err(error)) => {
                 *session = None;
                 return Ok(HostStatus::Rejected { error });
@@ -135,7 +137,7 @@ pub async fn host_status(
     };
 
     let status = match client.get_health().await {
-        Ok(Ok(health)) => connected(&handshake, health.uptime_seconds),
+        Ok(Ok(health)) => connected(&handshake, &health),
         Ok(Err(error)) => return Ok(HostStatus::Rejected { error }),
         Err(err) => {
             return Ok(HostStatus::Unreachable {
@@ -160,11 +162,12 @@ pub fn start_host() -> Result<(), String> {
     spawn_detached(&host).map_err(|e| format!("cannot start {HOST_EXE}: {e}"))
 }
 
-fn connected(handshake: &HandshakeResponse, uptime_seconds: u32) -> HostStatus {
+fn connected(handshake: &HandshakeResponse, health: &GetHealthResponse) -> HostStatus {
     HostStatus::Connected {
         host_identity: handshake.host_identity.clone(),
         protocol_version: handshake.server_protocol_version,
-        uptime_seconds,
+        uptime_seconds: health.uptime_seconds,
+        paused: health.status == HealthStatus::Paused,
     }
 }
 
