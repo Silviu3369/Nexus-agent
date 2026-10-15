@@ -2351,7 +2351,9 @@ name = "nexus-storage"
 version = "0.1.0"
 dependencies = [
  "nexus-core",
+ "nexus-protocol",
  "rusqlite",
+ "serde_json",
  "thiserror 2.0.21",
  "tokio",
  "uuid",

@@ -2,7 +2,13 @@
 //! and runs every read and write in order, so writes are serialised without
 //! locks in the callers (`ARHITECTURA_NEXUS_RO.md` §5, §7).
 
+mod repo;
 mod schema;
+
+pub use repo::{
+    ActionRow, ApprovalRow, ArtifactRow, Decision, EventRow, NewAction, NewOperation, OperationRow,
+    RunDetail, RunError, RunRow, SubmitOutcome, TaskRow,
+};
 
 use std::path::Path;
 use std::thread::JoinHandle;
@@ -32,6 +38,22 @@ pub enum StorageError {
     Closed,
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
+    #[error("stored data is inconsistent: {0}")]
+    Corrupt(String),
+    #[error("{0} not found")]
+    NotFound(&'static str),
+    #[error("{0}")]
+    IllegalTransition(#[from] nexus_core::IllegalTransition),
+    #[error("{0} changed concurrently")]
+    RevisionConflict(&'static str),
+    #[error("idempotency key {0:?} was already used with a different request")]
+    IdempotencyConflict(String),
+    #[error("approval already decided")]
+    ApprovalAlreadyDecided,
+    #[error("approval expired")]
+    ApprovalExpired,
+    #[error("approval invalidated: {0}")]
+    ApprovalInvalidated(String),
 }
 
 type Job = Box<dyn FnOnce(&mut Connection) + Send>;
