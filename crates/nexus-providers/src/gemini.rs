@@ -240,6 +240,17 @@ fn checked_model_id(model: &str) -> Result<&str, ProviderError> {
     }
 }
 
+/// Best-effort major-version read from the model id (`gemini-3.8-flash` ->
+/// 3, `gemini-2.5-flash` -> 2). An id that does not parse is treated as
+/// pre-3, so it never gets a generationConfig field it might reject.
+fn is_gemini_3_or_later(model: &str) -> bool {
+    model
+        .strip_prefix("gemini-")
+        .and_then(|rest| rest.split(['.', '-']).next())
+        .and_then(|major| major.parse::<u32>().ok())
+        .is_some_and(|major| major >= 3)
+}
+
 fn handle_chunk(data: &str, on_event: &mut impl FnMut(ProviderEvent)) -> Result<(), ProviderError> {
     let chunk: GenerateResponse = serde_json::from_str(data)
         .map_err(|e| ProviderError::InvalidResponse(format!("stream chunk: {e}")))?;
@@ -299,9 +310,21 @@ fn request_body(request: &ProviderRequest) -> Value {
             })
         })
         .collect();
+    let mut generation_config = serde_json::json!({ "maxOutputTokens": request.max_output_tokens });
+    // Gemini 3.x models think by default (confirmed against ai.google.dev,
+    // 2026-10-15: "medium" unless set otherwise); the user chooses the
+    // level (speed vs. reasoning quality) per connection. 2.x models use a
+    // different field (thinkingBudget) with no evidence of the same
+    // default-latency issue, so they are left alone rather than guessed at.
+    if let Some(level) = request.thinking_level
+        && is_gemini_3_or_later(&request.model)
+    {
+        generation_config["thinkingConfig"] =
+            serde_json::json!({ "thinkingLevel": level.as_str() });
+    }
     let mut body = serde_json::json!({
         "contents": contents,
-        "generationConfig": { "maxOutputTokens": request.max_output_tokens },
+        "generationConfig": generation_config,
     });
     if !request.system_instruction.is_empty() {
         body["systemInstruction"] =
@@ -458,6 +481,27 @@ mod tests {
             "http://127.0.0.1:",
         ] {
             assert!(allowed_base_url(bad).is_err(), "{bad} must be refused");
+        }
+    }
+
+    #[test]
+    fn gemini_3_generation_is_detected_from_the_model_id() {
+        for yes in ["gemini-3.8-flash", "gemini-3-pro-preview", "gemini-30-x"] {
+            assert!(is_gemini_3_or_later(yes), "{yes} should be 3.x or later");
+        }
+        for no in [
+            "gemini-2.5-flash",
+            "gemini-2.0-pro",
+            "gemini-1.5-flash",
+            "gpt-4",
+            "",
+            "gemini-",
+            "gemini-flash",
+        ] {
+            assert!(
+                !is_gemini_3_or_later(no),
+                "{no} should not be treated as 3.x"
+            );
         }
     }
 

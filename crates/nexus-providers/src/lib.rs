@@ -106,6 +106,31 @@ pub struct ProviderRequest {
     pub max_output_tokens: u32,
     /// Whole call, from sending the request to the last event.
     pub deadline: Duration,
+    /// The user's speed/quality choice. Only applied to models that
+    /// support it (Gemini 3.x, checked by id — `gemini.rs`); harmless to
+    /// set for any other model, since it is then simply not sent.
+    pub thinking_level: Option<ThinkingLevel>,
+}
+
+/// How much a Gemini 3.x model reasons before answering. Lower is faster;
+/// higher can do better on genuinely hard questions. The user chooses this
+/// per connection (`ConnectionView::thinking_level`); there is no "off" —
+/// Gemini 3.x always thinks at least a little.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThinkingLevel {
+    Low,
+    Medium,
+    High,
+}
+
+impl ThinkingLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ThinkingLevel::Low => "LOW",
+            ThinkingLevel::Medium => "MEDIUM",
+            ThinkingLevel::High => "HIGH",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

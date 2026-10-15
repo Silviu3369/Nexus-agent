@@ -2,7 +2,7 @@
 //! persona and conversations. One transaction per operation, with events,
 //! like the M1 repository.
 
-use nexus_core::{MessageRole, MessageStatus};
+use nexus_core::{MessageRole, MessageStatus, ThinkingLevel};
 use nexus_protocol::{ConnectionId, ConversationId, MessageId, RunId};
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::json;
@@ -21,6 +21,7 @@ pub struct ConnectionRow {
     pub free_tier: bool,
     /// Opaque name of the vault entry holding the key; never the key.
     pub secret_name: String,
+    pub thinking_level: ThinkingLevel,
     pub revision: i64,
 }
 
@@ -182,6 +183,36 @@ impl Store {
             }
             let row = load_connection(&tx, id)?;
             insert_event(&tx, "ConnectionModelSelected", &id.to_string(), row.revision, json!({"model": row.model}), now)?;
+            tx.commit()?;
+            Ok(row)
+        })
+        .await
+    }
+
+    pub async fn set_thinking_level(
+        &self,
+        id: ConnectionId,
+        level: ThinkingLevel,
+        now: i64,
+    ) -> Result<ConnectionRow, StorageError> {
+        self.call(move |conn| {
+            let tx = conn.transaction()?;
+            let changed = tx.execute(
+                "UPDATE provider_connections SET thinking_level = ?1, revision = revision + 1, updated_at_ms = ?2 WHERE id = ?3",
+                params![level.as_str(), now, id.to_string()],
+            )?;
+            if changed != 1 {
+                return Err(StorageError::NotFound("connection"));
+            }
+            let row = load_connection(&tx, id)?;
+            insert_event(
+                &tx,
+                "ConnectionThinkingLevelSet",
+                &id.to_string(),
+                row.revision,
+                json!({"thinking_level": level.as_str()}),
+                now,
+            )?;
             tx.commit()?;
             Ok(row)
         })
@@ -557,7 +588,8 @@ impl Store {
 
 fn load_connection(tx: &Transaction, id: ConnectionId) -> Result<ConnectionRow, StorageError> {
     tx.query_row(
-        "SELECT id, provider, display_name, model, free_tier, secret_name, revision FROM provider_connections WHERE id = ?1",
+        "SELECT id, provider, display_name, model, free_tier, secret_name, thinking_level, revision
+         FROM provider_connections WHERE id = ?1",
         [id.to_string()],
         |r| {
             Ok((
@@ -567,23 +599,27 @@ fn load_connection(tx: &Transaction, id: ConnectionId) -> Result<ConnectionRow, 
                 r.get(3)?,
                 r.get::<_, i64>(4)?,
                 r.get(5)?,
-                r.get(6)?,
+                r.get::<_, String>(6)?,
+                r.get(7)?,
             ))
         },
     )
     .optional()?
     .ok_or(StorageError::NotFound("connection"))
-    .and_then(|(id, provider, display_name, model, free_tier, secret_name, revision)| {
-        Ok(ConnectionRow {
-            id: ConnectionId(parse_uuid(&id)?),
-            provider,
-            display_name,
-            model,
-            free_tier: free_tier != 0,
-            secret_name,
-            revision,
-        })
-    })
+    .and_then(
+        |(id, provider, display_name, model, free_tier, secret_name, thinking_level, revision)| {
+            Ok(ConnectionRow {
+                id: ConnectionId(parse_uuid(&id)?),
+                provider,
+                display_name,
+                model,
+                free_tier: free_tier != 0,
+                secret_name,
+                thinking_level: parse_state(&thinking_level)?,
+                revision,
+            })
+        },
+    )
 }
 
 fn current_persona(tx: &Transaction) -> Result<Option<PersonaRow>, StorageError> {

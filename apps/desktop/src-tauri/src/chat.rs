@@ -4,7 +4,7 @@
 use nexus_protocol::{
     ConnectionId, ConnectionView, ConversationId, ConversationSummary, ConversationView, MessageId,
     ModelView, PersonaView, SaveGeminiConnectionRequest, SavePersonaRequest, SendMessageRequest,
-    SendMessageResponse,
+    SendMessageResponse, ThinkingLevel,
 };
 
 use crate::host::{BridgeError, HostConnection};
@@ -68,6 +68,17 @@ pub async fn select_model(
 ) -> Result<ConnectionView, BridgeError> {
     connection
         .call(async |c| c.select_model(connection_id, model).await)
+        .await
+}
+
+#[tauri::command]
+pub async fn set_thinking_level(
+    connection: State<'_>,
+    connection_id: ConnectionId,
+    level: ThinkingLevel,
+) -> Result<ConnectionView, BridgeError> {
+    connection
+        .call(async |c| c.set_thinking_level(connection_id, level).await)
         .await
 }
 

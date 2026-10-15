@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import type { BackupSummary, ConnectionView, ModelView, PersonaView } from "@nexus/contracts";
+import type {
+  BackupSummary,
+  ConnectionView,
+  ModelView,
+  PersonaView,
+  ThinkingLevel,
+} from "@nexus/contracts";
 import { api, describeError } from "./api";
 import { PlugIcon, SparkleIcon } from "./icons";
 
@@ -153,6 +159,29 @@ function ConnectionItem({ connection, onChanged }: { connection: ConnectionView;
         <dt>Key</dt>
         <dd>{connection.has_key ? "in the Windows vault" : "missing — enter a new one"}</dd>
       </dl>
+
+      <div className="model-pick">
+        <label>
+          Thinking level
+          <select
+            value={connection.thinking_level}
+            disabled={busy}
+            onChange={(e) =>
+              act(() =>
+                api.setThinkingLevel(connection.connection_id, e.currentTarget.value as ThinkingLevel),
+              )
+            }
+          >
+            <option value="Low">Low — fastest replies</option>
+            <option value="Medium">Medium — balanced</option>
+            <option value="High">High — reasons more, slower</option>
+          </select>
+        </label>
+        <p className="muted">
+          Only Gemini 3.x models reason before answering; this only changes those. Older models
+          ignore it.
+        </p>
+      </div>
 
       <div className="actions">
         <button

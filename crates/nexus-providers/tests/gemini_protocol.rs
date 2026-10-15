@@ -7,7 +7,7 @@ use std::time::Duration;
 use nexus_providers::gemini::GeminiClient;
 use nexus_providers::{
     ApiKey, FinishReason, Message, ProviderError, ProviderEvent, ProviderRequest, Role,
-    ToolDeclaration, Usage,
+    ThinkingLevel, ToolDeclaration, Usage,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -27,6 +27,10 @@ impl Captured {
             .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case(name))
             .map(|(_, v)| v.as_str())
+    }
+
+    fn body_json(&self) -> serde_json::Value {
+        serde_json::from_str(&self.body).expect("the adapter sends JSON")
     }
 }
 
@@ -155,6 +159,7 @@ fn request() -> ProviderRequest {
         }],
         max_output_tokens: 256,
         deadline: Duration::from_secs(5),
+        thinking_level: None,
     }
 }
 
@@ -237,6 +242,54 @@ async fn function_call_is_reported_as_a_proposal_and_thoughts_are_skipped() {
             },
             ProviderEvent::Finished(FinishReason::Stop),
         ]
+    );
+}
+
+#[tokio::test]
+async fn thinking_level_is_sent_for_gemini_3_models_and_only_when_chosen() {
+    // Verified against ai.google.dev/gemini-api/docs/thinking (2026-10-15):
+    // Gemini 3.x thinks by default (e.g. gemini-3.8-flash: "medium"), real
+    // latency a short reply does not need; the user picks the level, which
+    // only makes sense for the models that support it.
+    let reply = || {
+        Reply::Sse(vec![
+            r#"{"candidates":[{"content":{"parts":[{"text":"hi"}]},"finishReason":"STOP"}]}"#,
+        ])
+    };
+    let (base, server) = server(vec![reply(), reply(), reply()]).await;
+
+    let mut high = request();
+    high.model = "gemini-3.8-flash".to_string();
+    high.thinking_level = Some(ThinkingLevel::High);
+    collect(&client(&base), &high).await.0.unwrap();
+
+    let mut unset = request();
+    unset.model = "gemini-3.8-flash".to_string();
+    unset.thinking_level = None;
+    collect(&client(&base), &unset).await.0.unwrap();
+
+    let mut legacy = request();
+    legacy.model = "gemini-2.5-flash".to_string();
+    legacy.thinking_level = Some(ThinkingLevel::Low);
+    collect(&client(&base), &legacy).await.0.unwrap();
+
+    let sent = server.await.unwrap();
+    assert_eq!(
+        sent[0].body_json()["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+        "HIGH"
+    );
+    assert!(
+        sent[1].body_json()["generationConfig"]
+            .get("thinkingConfig")
+            .is_none(),
+        "no choice made: the field is left out, Google's own default applies"
+    );
+    assert!(
+        sent[2].body_json()["generationConfig"]
+            .get("thinkingConfig")
+            .is_none(),
+        "an older model must not get a field verified only for Gemini 3.x: {}",
+        sent[2].body
     );
 }
 

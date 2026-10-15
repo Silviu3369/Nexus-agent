@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use nexus_core::{MessageRole, MessageStatus};
+use nexus_core::{MessageRole, MessageStatus, ThinkingLevel};
 use nexus_protocol::ConnectionId;
 use nexus_storage::{NewExchange, SUPPORTED_VERSION, Settlement, StorageError, Store};
 
@@ -96,6 +96,58 @@ async fn an_existing_database_is_migrated_forward_keeping_its_data() {
 }
 
 #[tokio::test]
+async fn an_existing_connection_defaults_to_low_thinking_after_migrating_to_v3() {
+    let dir = std::env::temp_dir().join(format!("nexus-migrate-v3-test-{}", uuid::Uuid::new_v4()));
+    let path = dir.join("nexus.db");
+    let id = {
+        let store = Store::open(&path).unwrap();
+        store.persona(0).await.unwrap();
+        let id = store
+            .save_connection(
+                None,
+                "Gemini personal".into(),
+                true,
+                "gemini-v2-test".into(),
+                1,
+            )
+            .await
+            .unwrap()
+            .id;
+        // Roll back to v2, as an M2 host before this change would have left it.
+        store
+            .call(|c| {
+                c.execute_batch("ALTER TABLE provider_connections DROP COLUMN thinking_level; PRAGMA user_version = 2;")?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        id
+    };
+
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.schema_version().await.unwrap(), SUPPORTED_VERSION);
+    let row = store.connection(id).await.unwrap();
+    assert_eq!(
+        row.thinking_level,
+        ThinkingLevel::Low,
+        "a connection that predates the column keeps the behaviour it already had"
+    );
+
+    let updated = store
+        .set_thinking_level(id, ThinkingLevel::High, 10)
+        .await
+        .unwrap();
+    assert_eq!(updated.thinking_level, ThinkingLevel::High);
+    assert_eq!(
+        store.connection(id).await.unwrap().thinking_level,
+        ThinkingLevel::High
+    );
+
+    drop(store);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
 async fn connections_hold_only_a_vault_reference_and_active_selection_is_explicit() {
     let env = env();
     assert!(
@@ -103,6 +155,11 @@ async fn connections_hold_only_a_vault_reference_and_active_selection_is_explici
         "no implicit default provider"
     );
     let id = connection(&env).await;
+    assert_eq!(
+        env.store.connection(id).await.unwrap().thinking_level,
+        ThinkingLevel::Low,
+        "a new connection starts at the fast default"
+    );
 
     let columns: Vec<String> = env
         .store

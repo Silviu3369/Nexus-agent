@@ -9,6 +9,15 @@ use specta::Type;
 use crate::ids::{ConnectionId, ConversationId, MessageId, RunId};
 use crate::runs::RunFailure;
 
+/// The user's speed/quality choice, where the model supports it (Gemini
+/// 3.x). Ignored for a model that does not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub enum ThinkingLevel {
+    Low,
+    Medium,
+    High,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct ConnectionView {
     pub connection_id: ConnectionId,
@@ -20,6 +29,7 @@ pub struct ConnectionView {
     pub free_tier: bool,
     pub has_key: bool,
     pub active: bool,
+    pub thinking_level: ThinkingLevel,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]

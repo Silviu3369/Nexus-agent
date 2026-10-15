@@ -19,6 +19,7 @@ import type {
   SendMessageResponse,
   Snapshot,
   SubmitNoteResponse,
+  ThinkingLevel,
 } from "@nexus/contracts";
 
 export const api = {
@@ -49,6 +50,8 @@ export const api = {
   listModels: (connectionId: ConnectionId) => invoke<ModelView[]>("list_models", { connectionId }),
   selectModel: (connectionId: ConnectionId, model: string) =>
     invoke<ConnectionView>("select_model", { connectionId, model }),
+  setThinkingLevel: (connectionId: ConnectionId, level: ThinkingLevel) =>
+    invoke<ConnectionView>("set_thinking_level", { connectionId, level }),
   getPersona: () => invoke<PersonaView>("get_persona"),
   savePersona: (name: string, tone: string, style: string) =>
     invoke<PersonaView>("save_persona", { name, tone, style }),

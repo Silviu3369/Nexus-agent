@@ -12,7 +12,7 @@ use nexus_host::RuntimeConfig;
 use nexus_host::vault::SecretVault;
 use nexus_protocol::{
     ApprovalDecision, ChatRole, ChatStatus, DecideApprovalRequest, ErrorCode, RunId, RunStatus,
-    RunView, SavePersonaRequest, SendMessageRequest,
+    RunView, SavePersonaRequest, SendMessageRequest, ThinkingLevel,
 };
 use support::chat::{files_under, gemini, message, send, settled};
 use support::fake_gemini::{FakeGemini, MODEL, Reply, text_event};
@@ -582,6 +582,55 @@ async fn a_note_proposed_alongside_a_fetch_ends_the_turn_on_the_note_alone() {
         fake.generations().len(),
         1,
         "a note in the same step ends the turn; fetch_url is not also run"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_chosen_thinking_level_is_sent_for_a_gemini_3_model_only() {
+    let fake = FakeGemini::start(KEY).await;
+    let host = TestHost::start_with(TOKEN, config(&fake)).await;
+    let client = host.client().await;
+    let saved = client.save_gemini_connection(gemini(KEY)).await.unwrap();
+    assert_eq!(
+        saved.thinking_level,
+        ThinkingLevel::Low,
+        "a new connection starts fast"
+    );
+
+    // select_model only checks the id's character set, so a Gemini-3-shaped
+    // id can be used here without the fake catalogue needing to list it.
+    client
+        .select_model(saved.connection_id, "gemini-3-test-flash".to_string())
+        .await
+        .unwrap();
+    let updated = client
+        .set_thinking_level(saved.connection_id, ThinkingLevel::High)
+        .await
+        .unwrap();
+    assert_eq!(updated.thinking_level, ThinkingLevel::High);
+
+    fake.push(Reply::text(&["ok"]));
+    let sent = send(&client, None, "t1", "Salut").await;
+    settled(&client, &sent).await;
+    let body = fake.generations().remove(0).json();
+    assert_eq!(
+        body["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+        "HIGH"
+    );
+
+    // An older model must not get the field, whatever level is stored.
+    client
+        .select_model(saved.connection_id, MODEL.to_string())
+        .await
+        .unwrap();
+    fake.push(Reply::text(&["ok"]));
+    let sent = send(&client, Some(sent.conversation_id), "t2", "Din nou").await;
+    settled(&client, &sent).await;
+    let body = fake.generations().remove(1).json();
+    assert!(
+        body["generationConfig"].get("thinkingConfig").is_none(),
+        "{body}"
     );
     host.shutdown().await;
 }

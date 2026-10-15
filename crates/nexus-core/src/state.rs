@@ -182,6 +182,11 @@ impl OperationState {
 
 closed_enum!(MessageRole { User, Model });
 
+// The user's speed/quality choice for models that support it (Gemini 3.x;
+// `nexus_providers::ThinkingLevel` is the matching provider-level type).
+// Not a workflow state — stored on the connection, not transitioned.
+closed_enum!(ThinkingLevel { Low, Medium, High });
+
 closed_enum!(MessageStatus {
     Streaming,
     Complete,

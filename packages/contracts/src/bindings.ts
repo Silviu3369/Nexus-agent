@@ -68,7 +68,13 @@ export type ConversationId = string
 
 export type MessageId = string
 
-export type ConnectionView = { connection_id: ConnectionId; provider: string; display_name: string; model: string | null; free_tier: boolean; has_key: boolean; active: boolean }
+export type ConnectionView = { connection_id: ConnectionId; provider: string; display_name: string; model: string | null; free_tier: boolean; has_key: boolean; active: boolean; thinking_level: ThinkingLevel }
+
+/**
+ * The user's speed/quality choice, where the model supports it (Gemini
+ * 3.x). Ignored for a model that does not.
+ */
+export type ThinkingLevel = "Low" | "Medium" | "High"
 
 export type ModelView = { id: string; display_name: string; input_token_limit: number | null; output_token_limit: number | null }
 

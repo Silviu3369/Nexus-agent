@@ -238,6 +238,17 @@ impl NexusClient {
             .await??)
     }
 
+    pub async fn set_thinking_level(
+        &self,
+        id: nexus_protocol::ConnectionId,
+        level: nexus_protocol::ThinkingLevel,
+    ) -> Result<nexus_protocol::ConnectionView, CallError> {
+        Ok(self
+            .client
+            .set_thinking_level(context::current(), id, level)
+            .await??)
+    }
+
     pub async fn persona(&self) -> Result<nexus_protocol::PersonaView, CallError> {
         Ok(self.client.get_persona(context::current()).await??)
     }

@@ -11,6 +11,7 @@ use nexus_protocol::{
     HandshakeRequest, HandshakeResponse, HealthStatus, MessageId, ModelView, NexusError,
     PROTOCOL_VERSION, PersonaView, RunId, RunView, SaveGeminiConnectionRequest, SavePersonaRequest,
     SendMessageRequest, SendMessageResponse, Snapshot, SubmitNoteRequest, SubmitNoteResponse,
+    ThinkingLevel,
 };
 use tarpc::context::Context;
 use tarpc::server::{BaseChannel, Channel};
@@ -225,6 +226,16 @@ impl NexusService for HostServer {
     ) -> Result<ConnectionView, NexusError> {
         self.require_session()?;
         self.runtime.select_model(connection_id, model).await
+    }
+
+    async fn set_thinking_level(
+        self,
+        _ctx: Context,
+        connection_id: ConnectionId,
+        level: ThinkingLevel,
+    ) -> Result<ConnectionView, NexusError> {
+        self.require_session()?;
+        self.runtime.set_thinking_level(connection_id, level).await
     }
 
     async fn get_persona(self, _ctx: Context) -> Result<PersonaView, NexusError> {

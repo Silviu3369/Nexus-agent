@@ -104,6 +104,7 @@ impl Runtime {
             free_tier: row.free_tier,
             has_key: self.has_key(row),
             active: active == Some(row.id),
+            thinking_level: to_protocol_thinking_level(row.thinking_level),
         }
     }
 
@@ -282,6 +283,25 @@ impl Runtime {
             .await
             .map_err(to_nexus_error)?;
         Ok(self.connection_view(&row, Some(id)))
+    }
+
+    pub async fn set_thinking_level(
+        &self,
+        id: ConnectionId,
+        level: nexus_protocol::ThinkingLevel,
+    ) -> Result<ConnectionView, NexusError> {
+        let active = self
+            .store
+            .active_connection()
+            .await
+            .map_err(to_nexus_error)?
+            .map(|c| c.id);
+        let row = self
+            .store
+            .set_thinking_level(id, from_protocol_thinking_level(level), now_ms())
+            .await
+            .map_err(to_nexus_error)?;
+        Ok(self.connection_view(&row, active))
     }
 
     pub async fn get_persona(&self) -> Result<PersonaView, NexusError> {
@@ -513,6 +533,7 @@ impl Runtime {
             .await
             .map_err(to_nexus_error)?;
         let model = exchange.model_message.model.clone().unwrap_or_default();
+        let thinking_level = connection.thinking_level;
         let system_instruction = system_instruction(persona);
         let reply = exchange.model_message.id;
 
@@ -546,24 +567,42 @@ impl Runtime {
                 tools,
                 max_output_tokens: MAX_OUTPUT_TOKENS,
                 deadline: remaining,
+                thinking_level: Some(to_provider_thinking_level(thinking_level)),
             };
 
             let mut step_text = String::new();
             let mut calls = Vec::new();
+            let mut first_byte: Option<std::time::Duration> = None;
+            let step_started = tokio::time::Instant::now();
             client
-                .stream(&request, |event| match event {
-                    ProviderEvent::TextDelta(delta) => {
-                        step_text.push_str(&delta);
-                        self.replies.push(reply, &delta);
+                .stream(&request, |event| {
+                    if first_byte.is_none() {
+                        first_byte = Some(step_started.elapsed());
                     }
-                    ProviderEvent::ToolProposal { name, arguments } => {
-                        calls.push((name, arguments))
+                    match event {
+                        ProviderEvent::TextDelta(delta) => {
+                            step_text.push_str(&delta);
+                            self.replies.push(reply, &delta);
+                        }
+                        ProviderEvent::ToolProposal { name, arguments } => {
+                            calls.push((name, arguments))
+                        }
+                        ProviderEvent::Usage(u) => total_usage = add_usage(total_usage, u),
+                        ProviderEvent::Finished(_) => {}
                     }
-                    ProviderEvent::Usage(u) => total_usage = add_usage(total_usage, u),
-                    ProviderEvent::Finished(_) => {}
                 })
                 .await
                 .map_err(provider_error)?;
+            // Timing, not content: how long the provider took, split into
+            // "before the first event" (its own latency, e.g. thinking) and
+            // the rest (streaming + our own processing).
+            tracing::info!(
+                step,
+                model = %model,
+                first_byte_ms = first_byte.map(|d| d.as_millis()),
+                step_ms = step_started.elapsed().as_millis(),
+                "model call finished"
+            );
 
             let note_call = calls.iter().find(|(name, _)| name == NOTE_TOOL);
             let fetch_call = calls.iter().find(|(name, _)| name == FETCH_TOOL);
@@ -792,6 +831,30 @@ fn add_usage(a: nexus_providers::Usage, b: nexus_providers::Usage) -> nexus_prov
         prompt_tokens: a.prompt_tokens + b.prompt_tokens,
         output_tokens: a.output_tokens + b.output_tokens,
         total_tokens: a.total_tokens + b.total_tokens,
+    }
+}
+
+fn to_protocol_thinking_level(level: nexus_core::ThinkingLevel) -> nexus_protocol::ThinkingLevel {
+    match level {
+        nexus_core::ThinkingLevel::Low => nexus_protocol::ThinkingLevel::Low,
+        nexus_core::ThinkingLevel::Medium => nexus_protocol::ThinkingLevel::Medium,
+        nexus_core::ThinkingLevel::High => nexus_protocol::ThinkingLevel::High,
+    }
+}
+
+fn from_protocol_thinking_level(level: nexus_protocol::ThinkingLevel) -> nexus_core::ThinkingLevel {
+    match level {
+        nexus_protocol::ThinkingLevel::Low => nexus_core::ThinkingLevel::Low,
+        nexus_protocol::ThinkingLevel::Medium => nexus_core::ThinkingLevel::Medium,
+        nexus_protocol::ThinkingLevel::High => nexus_core::ThinkingLevel::High,
+    }
+}
+
+fn to_provider_thinking_level(level: nexus_core::ThinkingLevel) -> nexus_providers::ThinkingLevel {
+    match level {
+        nexus_core::ThinkingLevel::Low => nexus_providers::ThinkingLevel::Low,
+        nexus_core::ThinkingLevel::Medium => nexus_providers::ThinkingLevel::Medium,
+        nexus_core::ThinkingLevel::High => nexus_providers::ThinkingLevel::High,
     }
 }
 

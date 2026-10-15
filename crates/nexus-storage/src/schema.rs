@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::StorageError;
 
-pub const SUPPORTED_VERSION: i64 = 2;
+pub const SUPPORTED_VERSION: i64 = 3;
 
 /// Version 1: everything M1 persists. State columns are closed lists that a
 /// test keeps identical to the `nexus-core` enums. Times are UTC unix ms.
@@ -171,7 +171,17 @@ CREATE TABLE messages (
 CREATE INDEX messages_by_status ON messages (status);
 "#;
 
-const MIGRATIONS: &[&str] = &[V1, V2];
+/// Version 3: the user's speed/quality choice for models that support it
+/// (Gemini 3.x; `nexus_providers::ThinkingLevel`). Existing rows default to
+/// `Low`, matching the fixed behaviour this replaces, so nothing changes
+/// for a connection until the user picks something else.
+const V3: &str = r#"
+ALTER TABLE provider_connections
+    ADD COLUMN thinking_level TEXT NOT NULL DEFAULT 'Low'
+    CHECK (thinking_level IN ('Low', 'Medium', 'High'));
+"#;
+
+const MIGRATIONS: &[&str] = &[V1, V2, V3];
 
 pub fn migrate(conn: &mut Connection) -> Result<(), StorageError> {
     let current: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;

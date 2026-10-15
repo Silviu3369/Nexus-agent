@@ -5,5 +5,5 @@ pub mod state;
 
 pub use state::{
     ActionState, IllegalTransition, MessageRole, MessageStatus, OperationState, RunState,
-    UnknownState,
+    ThinkingLevel, UnknownState,
 };

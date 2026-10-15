@@ -5,6 +5,7 @@
 use crate::chat::{
     ConnectionView, ConversationSummary, ConversationView, ModelView, PersonaView,
     SaveGeminiConnectionRequest, SavePersonaRequest, SendMessageRequest, SendMessageResponse,
+    ThinkingLevel,
 };
 use crate::error::NexusError;
 use crate::handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse};
@@ -65,6 +66,13 @@ pub trait NexusService {
     async fn select_model(
         connection_id: ConnectionId,
         model: String,
+    ) -> Result<ConnectionView, NexusError>;
+
+    /// Sets the speed/quality choice for this connection's model, where the
+    /// model supports it (Gemini 3.x); ignored otherwise.
+    async fn set_thinking_level(
+        connection_id: ConnectionId,
+        level: ThinkingLevel,
     ) -> Result<ConnectionView, NexusError>;
 
     async fn get_persona() -> Result<PersonaView, NexusError>;

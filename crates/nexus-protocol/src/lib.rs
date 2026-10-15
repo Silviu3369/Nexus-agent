@@ -21,7 +21,7 @@ pub use runs::{
 pub use chat::{
     ChatMessageView, ChatRole, ChatStatus, ConnectionView, ConversationSummary, ConversationView,
     ModelView, PersonaView, SaveGeminiConnectionRequest, SavePersonaRequest, SendMessageRequest,
-    SendMessageResponse,
+    SendMessageResponse, ThinkingLevel,
 };
 pub use error::{ErrorCode, NexusError};
 pub use handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse, HealthStatus};

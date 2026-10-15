@@ -24,6 +24,7 @@ pub fn run() {
             chat::remove_connection,
             chat::list_models,
             chat::select_model,
+            chat::set_thinking_level,
             chat::get_persona,
             chat::save_persona,
             chat::list_conversations,
