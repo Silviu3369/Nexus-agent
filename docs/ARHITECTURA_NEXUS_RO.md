@@ -209,11 +209,21 @@ Pentru mai mulți utilizatori se adaugă un proiect explicit de identitate, sepa
 | ID | Decizie | Stare / prag |
 | --- | --- | --- |
 | ADR-STACK-001 | Rust + React/TypeScript + Tauri; SQLite; Three.js opțional | Direcție stabilită |
-| ADR-HOST-001 | Host independent, per utilizator, fără admin implicit | Direcție stabilită; probă M0 |
+| ADR-HOST-001 | Host independent, per utilizator, fără admin implicit | Direcție stabilită; probat în M0 (Host-ul supraviețuiește închiderii UI) |
 | ADR-STATE-001 | Stare durabilă, outbox, intenție și reconciliere | Direcție stabilită; probe M1 |
-| ADR-IPC-001 | Transport local, autentificare, format și generare contracte | De decis și demonstrat în M0 |
+| ADR-IPC-001 | Transport local, autentificare, format și generare contracte | **Închis în M0**, cu un caz IPC-02 deschis (vezi mai jos) |
 | ADR-ISO-001 | Backend OS/VM pentru cod neîncrezător | De demonstrat înainte de M3 |
 | ADR-DATA-001 | Criptare, backup, export și recuperarea cheilor | De decis înainte de date sensibile în utilizare zilnică / M6 |
 | ADR-RELEASE-001 | Installer, semnare, actualizare și compatibilitate | De calificat în M6 |
 
 Rezultatele ADR-urilor se înregistrează în acest document, cu alternativa aleasă, motiv, dependențe, limitări și probe. Progresul rămâne în plan; aici se schimbă deciziile de proiectare.
+
+### ADR-IPC-001 — rezultat (2026-10-15)
+
+- **Alegere:** named pipe Windows per utilizator (`\\.\pipe\nexus-host-<USERNAME>`, prin `tokio::net::windows::named_pipe`), cadre `LengthDelimitedCodec` (plafon de 1 MiB), JSON și RPC `tarpc` 0.38 generat dintr-un singur trait Rust (`nexus-protocol::service::NexusService`). Tipurile pentru webview se generează din aceleași tipuri Rust cu `specta` 1.0.5, în `packages/contracts`. Un test eșuează dacă fișierul generat a rămas în urmă.
+- **Respins:** Protobuf. Ar fi adus încă o sursă de schemă și un toolchain în plus, fără nicio probă care să ceară asta. `tauri-specta` pentru Tauri 2 există doar ca pre-release (`2.0.0-rc.25`, verificat pe crates.io la 2026-10-15) și depinde de linia pre-release specta 2. Ca să nu introducem dependențe RC, tipurile se exportă direct cu specta 1.0.5 stabil. Merită reevaluat când apare o versiune stabilă.
+- **Autentificare:** tokenul de pairing e un UUID aleator, stocat în `%LOCALAPPDATA%\Nexus` și protejat de ACL-ul moștenit de la profil. Se compară în timp constant. Pe fiecare conexiune, toate apelurile în afară de `handshake` cer un handshake reușit, iar un handshake eșuat revocă sesiunea. Nu e criptografie nouă; dovedește doar „poate citi profilul meu”.
+- **Instanță unică:** `first_pipe_instance(true)`. A doua instanță primește `ERROR_ACCESS_DENIED`/`ERROR_PIPE_BUSY` și iese, scriind motivul în log.
+- **Două hop-uri:** webview ↔ shell Tauri, prin comenzile înguste `host_status`/`start_host`; shell ↔ Host, prin `nexus-client`. Webview-ul nu primește niciodată tokenul, căi sau argumente de proces.
+- **Limită deschisă (IPC-02 „Host fals”):** clientul trimite tokenul oricărui proces care deține numele pipe-ului. Pentru că numele de pipe sunt globale, alt cont Windows ar putea ocupa numele primul. Măsura planificată: înainte de handshake, clientul verifică prin `GetNamedPipeServerProcessId` și tokenul de acces al procesului că serverul rulează sub același SID. Un proces ostil sub același cont rămâne în afara modelului de amenințare (`SECURITATE_SI_VALIDARE_RO.md` §1).
+- **Probe:** `crates/nexus-host/tests/handshake.rs` (7 teste pe pipe real) și proba end-to-end pe executabilele release, consemnată în planul activ.

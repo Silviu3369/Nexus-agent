@@ -1,4 +1,6 @@
 use std::io;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use futures::StreamExt;
@@ -16,14 +18,50 @@ use tokio_util::codec::LengthDelimitedCodec;
 /// IPC-02: reject a message above this size before it is ever deserialized.
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 
-/// OS error raised by `CreateNamedPipe` when `first_pipe_instance(true)` and
-/// an instance already exists — our LIFE-02 single-instance signal.
+/// `CreateNamedPipe` with `first_pipe_instance(true)` fails with one of these
+/// when the name is already owned — by another host (LIFE-02) or by any other
+/// process squatting the name. Either way this host must not start.
+const ERROR_ACCESS_DENIED: i32 = 5;
 const ERROR_PIPE_BUSY: i32 = 231;
 
+/// Request handler for one connection. tarpc clones it per call, so the
+/// `authenticated` flag is shared by the calls of a single connection and
+/// never across clients.
 #[derive(Clone)]
 pub struct HostServer {
-    pub pairing_token: String,
-    pub started_at: Instant,
+    pairing_token: String,
+    started_at: Instant,
+    authenticated: Arc<AtomicBool>,
+}
+
+impl HostServer {
+    pub fn for_connection(pairing_token: String, started_at: Instant) -> Self {
+        Self {
+            pairing_token,
+            started_at,
+            authenticated: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Every call except `handshake` requires a successful handshake on this
+    /// same connection first (IPC-02: refuse before any privileged command).
+    fn require_session(&self) -> Result<(), NexusError> {
+        if self.authenticated.load(Ordering::Acquire) {
+            Ok(())
+        } else {
+            Err(NexusError::new(
+                ErrorCode::Unauthenticated,
+                "handshake required before this call",
+            ))
+        }
+    }
+}
+
+/// Constant-time comparison so response timing does not reveal how much of a
+/// guessed token was right. Length is not secret (tokens are UUIDs).
+fn tokens_match(presented: &str, expected: &str) -> bool {
+    let (a, b) = (presented.as_bytes(), expected.as_bytes());
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 impl NexusService for HostServer {
@@ -32,7 +70,11 @@ impl NexusService for HostServer {
         _ctx: Context,
         request: HandshakeRequest,
     ) -> Result<HandshakeResponse, NexusError> {
-        if request.pairing_token != self.pairing_token {
+        // A failed handshake also revokes any earlier success on this
+        // connection, so a client cannot keep a session after a bad attempt.
+        self.authenticated.store(false, Ordering::Release);
+
+        if !tokens_match(&request.pairing_token, &self.pairing_token) {
             tracing::warn!("rejected handshake with invalid pairing token");
             return Err(NexusError::new(
                 ErrorCode::Unauthenticated,
@@ -53,6 +95,7 @@ impl NexusService for HostServer {
                 ),
             ));
         }
+        self.authenticated.store(true, Ordering::Release);
         tracing::info!(client = %request.client_name, "handshake accepted");
         Ok(HandshakeResponse {
             request_id: request.request_id,
@@ -63,9 +106,10 @@ impl NexusService for HostServer {
     }
 
     async fn get_health(self, _ctx: Context) -> Result<GetHealthResponse, NexusError> {
+        self.require_session()?;
         Ok(GetHealthResponse {
             status: HealthStatus::Ok,
-            uptime_seconds: self.started_at.elapsed().as_secs(),
+            uptime_seconds: u32::try_from(self.started_at.elapsed().as_secs()).unwrap_or(u32::MAX),
         })
     }
 }
@@ -79,9 +123,14 @@ pub fn bind_first_instance(pipe_name: &str) -> anyhow::Result<NamedPipeServer> {
         .create(pipe_name)
     {
         Ok(pipe) => Ok(pipe),
-        Err(err) if err.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
+        Err(err)
+            if matches!(
+                err.raw_os_error(),
+                Some(ERROR_ACCESS_DENIED) | Some(ERROR_PIPE_BUSY)
+            ) =>
+        {
             anyhow::bail!(
-                "another nexus-host instance is already running for this profile (pipe {pipe_name} busy)"
+                "pipe {pipe_name} is already owned by another process (another nexus-host for this profile, or a process squatting the name); refusing to start a second queue owner"
             );
         }
         Err(err) => Err(err.into()),
@@ -104,10 +153,7 @@ pub async fn serve_forever(
         // while this one is served.
         listener = ServerOptions::new().create(&pipe_name)?;
 
-        let server = HostServer {
-            pairing_token: pairing_token.clone(),
-            started_at,
-        };
+        let server = HostServer::for_connection(pairing_token.clone(), started_at);
 
         tokio::spawn(async move {
             if let Err(err) = serve_connection(connected, server).await {
@@ -133,4 +179,17 @@ async fn serve_connection(pipe: NamedPipeServer, server: HostServer) -> io::Resu
         .await;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tokens_match;
+
+    #[test]
+    fn token_comparison_requires_exact_match() {
+        assert!(tokens_match("3f2a-token", "3f2a-token"));
+        assert!(!tokens_match("3f2a-tokem", "3f2a-token"));
+        assert!(!tokens_match("3f2a", "3f2a-token"));
+        assert!(!tokens_match("", "3f2a-token"));
+    }
 }

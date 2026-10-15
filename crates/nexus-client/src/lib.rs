@@ -11,6 +11,13 @@ use tokio_util::codec::LengthDelimitedCodec;
 
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
 
+const ERROR_FILE_NOT_FOUND: i32 = 2;
+const ERROR_PIPE_BUSY: i32 = 231;
+/// The host always keeps one free pipe instance open, so "busy" only lasts
+/// the instant between two accepts; ~1 s of retries covers it.
+const BUSY_RETRIES: u32 = 20;
+const BUSY_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(50);
+
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectError {
     #[error("could not read local pairing token: {0}")]
@@ -19,6 +26,19 @@ pub enum ConnectError {
     Pipe(#[source] std::io::Error),
     #[error("host rejected handshake: {0}")]
     HandshakeRejected(#[source] NexusError),
+}
+
+impl ConnectError {
+    /// True when no host is listening for this profile (pipe absent, or the
+    /// host has never run so no pairing token exists yet) — as opposed to a
+    /// host that exists but failed or refused.
+    pub fn host_not_running(&self) -> bool {
+        match self {
+            ConnectError::MissingPairingToken(err) => err.kind() == std::io::ErrorKind::NotFound,
+            ConnectError::Pipe(err) => err.raw_os_error() == Some(ERROR_FILE_NOT_FOUND),
+            ConnectError::HandshakeRejected(_) => false,
+        }
+    }
 }
 
 pub struct NexusClient {
@@ -43,9 +63,7 @@ impl NexusClient {
         pairing_token: String,
         client_name: impl Into<String>,
     ) -> Result<(Self, HandshakeResponse), ConnectError> {
-        let pipe = ClientOptions::new()
-            .open(pipe_name)
-            .map_err(ConnectError::Pipe)?;
+        let pipe = open_pipe(pipe_name).await.map_err(ConnectError::Pipe)?;
 
         let codec = LengthDelimitedCodec::builder()
             .max_frame_length(MAX_FRAME_BYTES)
@@ -76,5 +94,20 @@ impl NexusClient {
     ) -> Result<Result<nexus_protocol::GetHealthResponse, NexusError>, tarpc::client::RpcError>
     {
         self.client.get_health(context::current()).await
+    }
+}
+
+async fn open_pipe(
+    pipe_name: &str,
+) -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeClient> {
+    let mut attempt = 0;
+    loop {
+        match ClientOptions::new().open(pipe_name) {
+            Err(err) if err.raw_os_error() == Some(ERROR_PIPE_BUSY) && attempt < BUSY_RETRIES => {
+                attempt += 1;
+                tokio::time::sleep(BUSY_RETRY_DELAY).await;
+            }
+            result => return result,
+        }
     }
 }

@@ -1,14 +1,2 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+//! Domain core: task, run, step, action, approval and policy state, kept
+//! independent of Tauri, React, SQLite drivers and provider SDKs. Populated in M1.

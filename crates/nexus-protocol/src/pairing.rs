@@ -11,7 +11,9 @@ use std::path::PathBuf;
 
 use uuid::Uuid;
 
-fn token_dir() -> PathBuf {
+/// Per-profile data directory (`%LOCALAPPDATA%\Nexus`), never the checkout or
+/// install directory (`ARHITECTURA_NEXUS_RO.md` §7).
+pub fn profile_dir() -> PathBuf {
     let base = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);
@@ -19,7 +21,7 @@ fn token_dir() -> PathBuf {
 }
 
 pub fn token_file_path() -> PathBuf {
-    token_dir().join("host.pairing-token")
+    profile_dir().join("host.pairing-token")
 }
 
 /// Named pipe path, scoped per Windows account so two users on the same
@@ -32,8 +34,7 @@ pub fn pipe_name() -> String {
 
 /// Host-side only: create the token on first run, or load the existing one.
 pub fn load_or_create_token() -> io::Result<String> {
-    let dir = token_dir();
-    fs::create_dir_all(&dir)?;
+    fs::create_dir_all(profile_dir())?;
     let path = token_file_path();
     match fs::read_to_string(&path) {
         Ok(existing) if !existing.trim().is_empty() => Ok(existing.trim().to_string()),

@@ -4,11 +4,41 @@ Platformă AI personală pentru Windows, proiectată pentru extindere. Nexus va 
 
 **Stack stabilit:** Rust pentru Core/Host/PC Agent și coordonarea executorilor; TypeScript + React pentru dashboard; Tauri pentru aplicația desktop; Three.js pentru vizualizarea interactivă opțională; SQLite pentru datele locale. Python și PowerShell au roluri specializate, controlate.
 
-## Punctul de pornire
+## Starea curentă
 
-La verificarea din **13 octombrie 2026**, înaintea acestei documentații, directorul proiectului era gol. Acest pachet conține planul și specificațiile; nu conține o aplicație funcțională, builduri sau teste ale produsului. Nu presupune existența vechilor șabloane .NET.
+M0 este în lucru: Host-ul Rust separat, IPC pe named pipe și dashboardul Tauri care se conectează la el funcționează și sunt probate. Circuitul complet cu note aprobate (M1) nu există încă.
 
 **Planul și starea implementării au o singură sursă:** [PLAN_NEXUS_RO.md](docs/PLAN_NEXUS_RO.md).
+
+## Dezvoltare
+
+Cerințe pe Windows: Rust stable (`x86_64-pc-windows-msvc`), MSVC Build Tools 2022, WebView2, Node.js LTS și pnpm.
+
+```powershell
+pnpm install
+
+# Dashboard în mod dezvoltare; Host-ul trebuie construit lângă el,
+# ca butonul „Pornește Hostul” să-l găsească.
+cargo build -p nexus-host
+pnpm --filter @nexus/desktop tauri dev
+
+# Verificări
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+pnpm --filter @nexus/desktop build
+
+# Executabile release (fără installer): target\release\desktop.exe și nexus-host.exe
+cargo build -p nexus-host --release --locked
+pnpm --filter @nexus/desktop tauri build --no-bundle
+
+# Verificare independentă a unui Host pornit
+cargo run -p nexus-client --example health
+```
+
+Tipurile TypeScript din `packages/contracts` sunt generate din Rust. După o schimbare de contract: `$env:NEXUS_UPDATE_BINDINGS="1"; cargo test -p desktop`. Testul eșuează dacă fișierul generat a rămas în urmă.
+
+Datele locale (tokenul de pairing și log-ul Host-ului, `logs\nexus-host.log`) stau în `%LOCALAPPDATA%\Nexus`, niciodată în repo.
 
 ## Documente
 

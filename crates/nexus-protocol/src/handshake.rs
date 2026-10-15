@@ -34,5 +34,7 @@ pub enum HealthStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct GetHealthResponse {
     pub status: HealthStatus,
-    pub uptime_seconds: u64,
+    /// u32, not u64: it crosses into JavaScript as a plain number, and specta
+    /// refuses u64 by default to avoid silent precision loss above 2^53.
+    pub uptime_seconds: u32,
 }

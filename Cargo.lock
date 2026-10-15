@@ -749,8 +749,11 @@ dependencies = [
 name = "desktop"
 version = "0.1.0"
 dependencies = [
+ "nexus-client",
+ "nexus-protocol",
  "serde",
  "serde_json",
+ "specta",
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",

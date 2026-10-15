@@ -1,0 +1,10 @@
+{
+  "name": "@nexus/contracts",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "types": "./src/bindings.ts",
+  "exports": {
+    ".": "./src/bindings.ts"
+  }
+}

@@ -168,6 +168,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@nexus/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@tauri-apps/api':
         specifier: ^2
         version: 2.12.3
@@ -199,6 +202,8 @@ importers:
       vite:
         specifier: ^8.0.16
         version: 8.3.4
+
+  packages/contracts: {}
 
 packages:
 
