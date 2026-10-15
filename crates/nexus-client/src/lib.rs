@@ -5,7 +5,10 @@
 mod server_identity;
 
 use nexus_protocol::service::NexusServiceClient;
-use nexus_protocol::{HandshakeRequest, HandshakeResponse, NexusError, PROTOCOL_VERSION, pairing};
+use nexus_protocol::{
+    ArtifactId, DecideApprovalRequest, EventsPage, HandshakeRequest, HandshakeResponse, NexusError,
+    PROTOCOL_VERSION, RunId, RunView, Snapshot, SubmitNoteRequest, SubmitNoteResponse, pairing,
+};
 use tarpc::context;
 use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
 use tokio_serde::formats::Json;
@@ -132,6 +135,78 @@ impl NexusClient {
     ) -> Result<Result<nexus_protocol::GetHealthResponse, NexusError>, tarpc::client::RpcError>
     {
         self.client.get_health(context::current()).await
+    }
+
+    pub async fn submit_note(
+        &self,
+        request: SubmitNoteRequest,
+    ) -> Result<SubmitNoteResponse, CallError> {
+        Ok(self
+            .client
+            .submit_note(context::current(), request)
+            .await??)
+    }
+
+    pub async fn snapshot(&self, limit: u32) -> Result<Snapshot, CallError> {
+        Ok(self
+            .client
+            .get_snapshot(context::current(), limit)
+            .await??)
+    }
+
+    pub async fn run(&self, run_id: RunId) -> Result<RunView, CallError> {
+        Ok(self.client.get_run(context::current(), run_id).await??)
+    }
+
+    pub async fn decide_approval(
+        &self,
+        request: DecideApprovalRequest,
+    ) -> Result<RunView, CallError> {
+        Ok(self
+            .client
+            .decide_approval(context::current(), request)
+            .await??)
+    }
+
+    pub async fn cancel_run(&self, run_id: RunId) -> Result<RunView, CallError> {
+        Ok(self.client.cancel_run(context::current(), run_id).await??)
+    }
+
+    pub async fn events(&self, after: i64, limit: u32) -> Result<EventsPage, CallError> {
+        Ok(self
+            .client
+            .get_events(context::current(), after, limit)
+            .await??)
+    }
+
+    pub async fn artifact_content(&self, artifact_id: ArtifactId) -> Result<String, CallError> {
+        Ok(self
+            .client
+            .get_artifact_content(context::current(), artifact_id)
+            .await??)
+    }
+
+    pub async fn stop_host(&self) -> Result<(), CallError> {
+        Ok(self.client.stop_host(context::current()).await??)
+    }
+}
+
+/// A call either never got a usable answer (transport) or the host answered
+/// with a refusal that has a stable code.
+#[derive(Debug, thiserror::Error)]
+pub enum CallError {
+    #[error("transport: {0}")]
+    Transport(#[from] tarpc::client::RpcError),
+    #[error("{0}")]
+    Host(#[from] NexusError),
+}
+
+impl CallError {
+    pub fn code(&self) -> Option<nexus_protocol::ErrorCode> {
+        match self {
+            CallError::Host(err) => Some(err.code),
+            CallError::Transport(_) => None,
+        }
     }
 }
 

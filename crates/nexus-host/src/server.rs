@@ -6,14 +6,17 @@ use std::time::Instant;
 use futures::StreamExt;
 use nexus_protocol::service::NexusService;
 use nexus_protocol::{
-    ErrorCode, GetHealthResponse, HandshakeRequest, HandshakeResponse, HealthStatus, NexusError,
-    PROTOCOL_VERSION,
+    ArtifactId, DecideApprovalRequest, ErrorCode, EventsPage, GetHealthResponse, HandshakeRequest,
+    HandshakeResponse, HealthStatus, NexusError, PROTOCOL_VERSION, RunId, RunView, Snapshot,
+    SubmitNoteRequest, SubmitNoteResponse,
 };
 use tarpc::context::Context;
 use tarpc::server::{BaseChannel, Channel};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio_serde::formats::Json;
 use tokio_util::codec::LengthDelimitedCodec;
+
+use crate::runtime::Runtime;
 
 /// IPC-02: reject a message above this size before it is ever deserialized.
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
@@ -32,14 +35,20 @@ pub struct HostServer {
     pairing_token: String,
     started_at: Instant,
     authenticated: Arc<AtomicBool>,
+    runtime: Arc<Runtime>,
 }
 
 impl HostServer {
-    pub fn for_connection(pairing_token: String, started_at: Instant) -> Self {
+    pub fn for_connection(
+        pairing_token: String,
+        started_at: Instant,
+        runtime: Arc<Runtime>,
+    ) -> Self {
         Self {
             pairing_token,
             started_at,
             authenticated: Arc::new(AtomicBool::new(false)),
+            runtime,
         }
     }
 
@@ -112,6 +121,65 @@ impl NexusService for HostServer {
             uptime_seconds: u32::try_from(self.started_at.elapsed().as_secs()).unwrap_or(u32::MAX),
         })
     }
+
+    async fn submit_note(
+        self,
+        _ctx: Context,
+        request: SubmitNoteRequest,
+    ) -> Result<SubmitNoteResponse, NexusError> {
+        self.require_session()?;
+        self.runtime.submit_note(request).await
+    }
+
+    async fn get_snapshot(self, _ctx: Context, limit: u32) -> Result<Snapshot, NexusError> {
+        self.require_session()?;
+        self.runtime.snapshot(limit).await
+    }
+
+    async fn get_run(self, _ctx: Context, run_id: RunId) -> Result<RunView, NexusError> {
+        self.require_session()?;
+        self.runtime.run(run_id).await
+    }
+
+    async fn decide_approval(
+        self,
+        _ctx: Context,
+        request: DecideApprovalRequest,
+    ) -> Result<RunView, NexusError> {
+        self.require_session()?;
+        self.runtime.decide(request).await
+    }
+
+    async fn cancel_run(self, _ctx: Context, run_id: RunId) -> Result<RunView, NexusError> {
+        self.require_session()?;
+        self.runtime.cancel(run_id).await
+    }
+
+    async fn get_events(
+        self,
+        _ctx: Context,
+        after: i64,
+        limit: u32,
+    ) -> Result<EventsPage, NexusError> {
+        self.require_session()?;
+        self.runtime.events(after, limit).await
+    }
+
+    async fn get_artifact_content(
+        self,
+        _ctx: Context,
+        artifact_id: ArtifactId,
+    ) -> Result<String, NexusError> {
+        self.require_session()?;
+        self.runtime.artifact_content(artifact_id).await
+    }
+
+    async fn stop_host(self, _ctx: Context) -> Result<(), NexusError> {
+        self.require_session()?;
+        tracing::info!("explicit stop requested");
+        self.runtime.request_stop();
+        Ok(())
+    }
 }
 
 /// Binds the first instance of the named pipe. Fails if another host already
@@ -137,23 +205,29 @@ pub fn bind_first_instance(pipe_name: &str) -> anyhow::Result<NamedPipeServer> {
     }
 }
 
-/// Runs the accept loop forever. `first` must come from `bind_first_instance`
-/// so the single-instance guarantee holds for the life of the process.
+/// Runs the accept loop until the runtime is asked to stop. `listener` must
+/// come from `bind_first_instance` so the single-instance guarantee holds for
+/// the life of the process.
 pub async fn serve_forever(
     mut listener: NamedPipeServer,
     pipe_name: String,
     pairing_token: String,
+    runtime: Arc<Runtime>,
 ) -> anyhow::Result<()> {
     let started_at = Instant::now();
+    let mut stop = runtime.stop_signal();
 
     loop {
-        listener.connect().await?;
+        tokio::select! {
+            connected = listener.connect() => connected?,
+            _ = stop.changed() => break,
+        }
         let connected = listener;
         // Open the next instance immediately so a second client can queue
         // while this one is served.
         listener = ServerOptions::new().create(&pipe_name)?;
 
-        let server = HostServer::for_connection(pairing_token.clone(), started_at);
+        let server = HostServer::for_connection(pairing_token.clone(), started_at, runtime.clone());
 
         tokio::spawn(async move {
             if let Err(err) = serve_connection(connected, server).await {
@@ -161,6 +235,8 @@ pub async fn serve_forever(
             }
         });
     }
+    tracing::info!("stopped accepting connections");
+    Ok(())
 }
 
 async fn serve_connection(pipe: NamedPipeServer, server: HostServer) -> io::Result<()> {

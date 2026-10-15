@@ -127,6 +127,9 @@ pub struct RunDetail {
     pub approval: Option<ApprovalRow>,
     pub operation: Option<OperationRow>,
     pub artifact: Option<ArtifactRow>,
+    /// Read from the durable event log, so it survives repeated restarts
+    /// even after the run itself has moved on to NeedsReconciliation.
+    pub cancellation_requested: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -413,6 +416,18 @@ impl Store {
         self.call(move |conn| {
             let tx = conn.transaction()?;
             let detail = load_detail(&tx, run_id)?;
+            // Checked in the same transaction as the consumption, so a
+            // cancellation that lands meanwhile can never be overtaken.
+            match detail.run.state {
+                RunState::Running => {}
+                RunState::CancellationRequested => return Err(StorageError::CancellationRequested),
+                other => {
+                    return Err(StorageError::IllegalTransition(nexus_core::IllegalTransition {
+                        from: other.as_str(),
+                        to: "Executing",
+                    }));
+                }
+            }
             let action = detail.action.ok_or(StorageError::NotFound("action"))?;
             let approval = detail.approval.ok_or(StorageError::NotFound("approval"))?;
 
@@ -741,7 +756,9 @@ impl Store {
         .await
     }
 
-    /// The executor saw a cancellation request before any effect started.
+    /// Cancellation was requested and no effect happened — either the
+    /// executor saw the request before acting, or reconciliation proved the
+    /// recorded intent left nothing behind.
     pub async fn finish_cancellation(
         &self,
         run_id: RunId,
@@ -750,10 +767,21 @@ impl Store {
         self.call(move |conn| {
             let tx = conn.transaction()?;
             let detail = load_detail(&tx, run_id)?;
+            if let Some(op) = &detail.operation
+                && op.state == OperationState::Intended
+            {
+                transition_operation(&tx, op.id, op.state, OperationState::Failed, now)?;
+            }
             if let Some(action) = &detail.action
                 && !action.state.is_terminal()
             {
-                transition_action(&tx, action.id, ActionState::Invalidated, now)?;
+                let next = match action.state {
+                    ActionState::Executing | ActionState::NeedsReconciliation => {
+                        ActionState::Failed
+                    }
+                    _ => ActionState::Invalidated,
+                };
+                transition_action(&tx, action.id, next, now)?;
             }
             transition_run(
                 &tx,
@@ -1228,6 +1256,12 @@ fn load_detail(tx: &Transaction, run_id: RunId) -> Result<RunDetail, StorageErro
         Some(op) => load_artifact_for_operation(tx, op.id)?,
         None => None,
     };
+    let cancellation_requested = tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM events WHERE kind = 'RunStateChanged' AND entity_id = ?1
+                        AND json_extract(payload_json, '$.to') = 'CancellationRequested')",
+        [run_id.to_string()],
+        |r| r.get(0),
+    )?;
     Ok(RunDetail {
         run,
         task,
@@ -1235,5 +1269,6 @@ fn load_detail(tx: &Transaction, run_id: RunId) -> Result<RunDetail, StorageErro
         approval,
         operation,
         artifact,
+        cancellation_requested,
     })
 }

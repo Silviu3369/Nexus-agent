@@ -406,6 +406,30 @@ async fn run04_interrupted_run_goes_to_reconciliation_then_retries_same_operatio
 }
 
 #[tokio::test]
+async fn run07_cancellation_requested_before_a_crash_is_honoured_after_restart() {
+    let env = env().await;
+    submit(&env, "k", "r").await.unwrap();
+    let running = env.store.claim_next_queued_run(T0).await.unwrap().unwrap();
+    env.store.cancel_run(running.run.id, T0 + 1).await.unwrap();
+
+    // Crash, restart: the run is moved to reconciliation...
+    let interrupted = env.store.take_interrupted_runs(T0 + 10).await.unwrap();
+    assert_eq!(interrupted[0].run.state, RunState::NeedsReconciliation);
+    // ...but the durable event log still says cancellation was requested,
+    // and a second restart must not forget it either.
+    assert!(interrupted[0].cancellation_requested);
+    let again = env.store.take_interrupted_runs(T0 + 20).await.unwrap();
+    assert!(again[0].cancellation_requested);
+
+    let done = env
+        .store
+        .finish_cancellation(running.run.id, T0 + 21)
+        .await
+        .unwrap();
+    assert_eq!(done.run.state, RunState::Cancelled);
+}
+
+#[tokio::test]
 async fn evt01_cursor_returns_only_newer_events_and_snapshot_watermark_matches() {
     let env = env().await;
     awaiting_approval(&env, "a").await;

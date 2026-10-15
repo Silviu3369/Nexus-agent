@@ -87,7 +87,11 @@ impl RunState {
                 next,
                 Cancelled | Verifying | Succeeded | Failed | NeedsReconciliation
             ),
-            NeedsReconciliation => matches!(next, Queued | Succeeded | Failed | NeedsReview),
+            // Cancelled: reconciliation proved no effect for a run whose
+            // cancellation had been requested before it was interrupted.
+            NeedsReconciliation => {
+                matches!(next, Queued | Succeeded | Failed | NeedsReview | Cancelled)
+            }
             NeedsReview => matches!(next, Succeeded | Failed | Cancelled),
             Succeeded | Failed | Cancelled | Denied => false,
         }
@@ -231,6 +235,15 @@ mod tests {
         // does not jump back to Queued by itself.
         assert!(!RunState::Running.can_transition_to(RunState::Queued));
         assert!(RunState::Running.can_transition_to(RunState::NeedsReconciliation));
+    }
+
+    #[test]
+    fn cancelled_run_interrupted_before_any_effect_can_end_cancelled() {
+        RunState::CancellationRequested
+            .transition(RunState::NeedsReconciliation)
+            .unwrap()
+            .transition(RunState::Cancelled)
+            .unwrap();
     }
 
     #[test]

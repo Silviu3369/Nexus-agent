@@ -7,8 +7,15 @@ pub mod error;
 pub mod handshake;
 pub mod ids;
 pub mod pairing;
+pub mod runs;
 pub mod service;
 pub mod version;
+
+pub use runs::{
+    ApprovalDecision, ArtifactSummary, DecideApprovalRequest, EventView, EventsPage, NotePreview,
+    PendingApproval, RunFailure, RunStatus, RunView, Snapshot, SubmitNoteRequest,
+    SubmitNoteResponse,
+};
 
 pub use error::{ErrorCode, NexusError};
 pub use handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse, HealthStatus};

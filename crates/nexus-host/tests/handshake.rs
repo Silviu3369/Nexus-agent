@@ -2,24 +2,32 @@
 //! (`SECURITATE_SI_VALIDARE_RO.md` §3). No mocked transport: this binds an
 //! actual Windows named pipe and connects real clients to it.
 
+mod support;
+
 use nexus_client::{ConnectError, NexusClient};
 use nexus_protocol::service::NexusServiceClient;
 use nexus_protocol::{ErrorCode, HandshakeRequest, PROTOCOL_VERSION, RequestId};
+use support::{TempProfile, unique_pipe_name};
 
-fn unique_pipe_name() -> String {
-    format!(r"\\.\pipe\nexus-test-{}", uuid::Uuid::new_v4())
-}
-
-async fn start_test_host(pipe_name: String, pairing_token: String) {
+/// Serves `pipe_name` with a real runtime in an isolated temp profile; keep
+/// the returned profile alive for the duration of the test.
+#[must_use]
+async fn start_test_host(pipe_name: String, pairing_token: String) -> TempProfile {
+    let profile = TempProfile::new("handshake");
     let listener = nexus_host::bind_first_instance(&pipe_name)
         .expect("binding a fresh, uniquely-named pipe must succeed");
+    let runtime = nexus_host::Runtime::open(profile.path(), nexus_host::DEFAULT_APPROVAL_TTL)
+        .await
+        .expect("runtime must open a fresh profile");
     tokio::spawn(nexus_host::serve_forever(
         listener,
         pipe_name,
         pairing_token,
+        runtime,
     ));
     // Give the accept loop a tick to start listening before clients connect.
     tokio::task::yield_now().await;
+    profile
 }
 
 /// A client that skips `NexusClient`'s guarantees (real version, size cap,
@@ -65,7 +73,7 @@ fn handshake_request(pairing_token: &str, protocol_version: u32) -> HandshakeReq
 async fn ipc01_legitimate_client_handshakes_successfully() {
     let pipe_name = unique_pipe_name();
     let token = "correct-token".to_string();
-    start_test_host(pipe_name.clone(), token.clone()).await;
+    let _profile = start_test_host(pipe_name.clone(), token.clone()).await;
 
     let (client, response) = NexusClient::connect_with(&pipe_name, token, "test-client")
         .await
@@ -85,7 +93,7 @@ async fn ipc01_legitimate_client_handshakes_successfully() {
 #[tokio::test]
 async fn ipc02_wrong_pairing_token_is_rejected() {
     let pipe_name = unique_pipe_name();
-    start_test_host(pipe_name.clone(), "real-token".to_string()).await;
+    let _profile = start_test_host(pipe_name.clone(), "real-token".to_string()).await;
 
     let result = NexusClient::connect_with(&pipe_name, "wrong-token".to_string(), "attacker").await;
 
@@ -102,7 +110,7 @@ async fn ipc02_wrong_pairing_token_is_rejected() {
 async fn ipc02_incompatible_protocol_version_is_rejected() {
     let pipe_name = unique_pipe_name();
     let token = "correct-token";
-    start_test_host(pipe_name.clone(), token.to_string()).await;
+    let _profile = start_test_host(pipe_name.clone(), token.to_string()).await;
 
     let client = raw_client(&pipe_name, nexus_host::server::MAX_FRAME_BYTES);
     let response = client
@@ -122,7 +130,7 @@ async fn ipc02_incompatible_protocol_version_is_rejected() {
 #[tokio::test]
 async fn ipc02_calls_before_handshake_are_rejected() {
     let pipe_name = unique_pipe_name();
-    start_test_host(pipe_name.clone(), "correct-token".to_string()).await;
+    let _profile = start_test_host(pipe_name.clone(), "correct-token".to_string()).await;
 
     let client = raw_client(&pipe_name, nexus_host::server::MAX_FRAME_BYTES);
     let response = client
@@ -140,7 +148,7 @@ async fn ipc02_calls_before_handshake_are_rejected() {
 async fn ipc02_failed_handshake_does_not_open_a_session() {
     let pipe_name = unique_pipe_name();
     let token = "correct-token";
-    start_test_host(pipe_name.clone(), token.to_string()).await;
+    let _profile = start_test_host(pipe_name.clone(), token.to_string()).await;
 
     let client = raw_client(&pipe_name, nexus_host::server::MAX_FRAME_BYTES);
 
@@ -178,7 +186,7 @@ async fn ipc02_failed_handshake_does_not_open_a_session() {
 async fn ipc02_oversized_message_is_rejected() {
     let pipe_name = unique_pipe_name();
     let token = "correct-token";
-    start_test_host(pipe_name.clone(), token.to_string()).await;
+    let _profile = start_test_host(pipe_name.clone(), token.to_string()).await;
 
     // This client's own cap is far above the host's 1 MiB, so it will send the
     // oversized frame and the test shows the host is the one refusing it.
@@ -205,7 +213,7 @@ async fn ipc02_oversized_message_is_rejected() {
 #[tokio::test]
 async fn ipc02_pipe_server_running_as_another_user_is_not_trusted() {
     let pipe_name = unique_pipe_name();
-    start_test_host(pipe_name.clone(), "correct-token".to_string()).await;
+    let _profile = start_test_host(pipe_name.clone(), "correct-token".to_string()).await;
 
     // The real server process (this test's own) runs as the current user.
     let me = nexus_client::current_user_sid().expect("current SID must be readable");

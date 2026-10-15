@@ -54,6 +54,8 @@ pub enum StorageError {
     ApprovalExpired,
     #[error("approval invalidated: {0}")]
     ApprovalInvalidated(String),
+    #[error("cancellation was requested before the effect started")]
+    CancellationRequested,
 }
 
 type Job = Box<dyn FnOnce(&mut Connection) + Send>;

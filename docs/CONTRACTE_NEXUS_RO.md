@@ -118,7 +118,7 @@ RiskLevel este o indicație pentru policy, nu o permisiune. Modelul nu își poa
 Instrumentul creează o notă nouă în Artifact Store administrat de Nexus. Interfața arată titlul, conținutul exact și destinația rezolvată înaintea aprobării.
 
 - Hostul alege calea din profil/proiect/OperationId; clientul nu furnizează o cale arbitrară.
-- Textul este UTF-8 și limitat explicit; propunere inițială: maximum 1 MiB, confirmată în configurarea M1.
+- Textul este UTF-8 și limitat explicit. Propunerea inițială era de 1 MiB; în M1 s-a confirmat **128 KiB**, ca o cerere să încapă în cadrul IPC de 1 MiB chiar și în cel mai rău caz de escapare JSON (×6).
 - Schema nu acceptă execuție, download sau instrucțiuni shell.
 - Fișierul se creează numai dacă nu există; nu suprascriem un fișier găsit.
 - Se verifică rădăcina reală și se refuză reparse points/junctions sau alte redirecționări incompatibile cu scope-ul.

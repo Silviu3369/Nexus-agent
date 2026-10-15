@@ -17,7 +17,9 @@ use sha2::{Digest, Sha256};
 pub const TOOL_ID: &str = "CreateMarkdownArtifact";
 pub const TOOL_VERSION: u32 = 1;
 pub const ALGORITHM_VERSION: u32 = 1;
-pub const MAX_CONTENT_BYTES: usize = 1024 * 1024;
+/// 128 KiB: even worst-case JSON escaping (×6 for control characters) keeps a
+/// submit request under the 1 MiB IPC frame (`server::MAX_FRAME_BYTES`).
+pub const MAX_CONTENT_BYTES: usize = 128 * 1024;
 pub const MAX_TITLE_CHARS: usize = 200;
 
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;

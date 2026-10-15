@@ -1,0 +1,736 @@
+//! M1 runtime: the serial executor, startup reconciliation and the
+//! operations behind the RPC surface. Every decision re-reads durable state;
+//! the client only ever proposes (`ARHITECTURA_NEXUS_RO.md` §8).
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+
+use nexus_core::{ActionState, OperationState, RunState};
+use nexus_protocol::{
+    ApprovalDecision, ArtifactId, ArtifactSummary, DecideApprovalRequest, ErrorCode, EventView,
+    EventsPage, NexusError, NotePreview, OperationId, PendingApproval, RunFailure, RunId,
+    RunStatus, RunView, Snapshot, SubmitNoteRequest, SubmitNoteResponse,
+};
+use nexus_storage::{
+    Decision, NewAction, NewOperation, RunDetail, RunError, StorageError, Store, SubmitOutcome,
+    now_ms,
+};
+use serde::{Deserialize, Serialize};
+use tokio::sync::{Notify, watch};
+
+use crate::fault;
+use crate::tools::markdown_artifact::{self as note_tool, ArtifactPaths, NoteContent, Observed};
+
+pub const DEFAULT_APPROVAL_TTL: Duration = Duration::from_secs(10 * 60);
+const IDLE_TICK: Duration = Duration::from_secs(1);
+const MAX_SNAPSHOT_RUNS: u32 = 200;
+const MAX_EVENTS_PAGE: u32 = 500;
+const MAX_IDEMPOTENCY_KEY: usize = 200;
+const MANIFEST_VERSION: u32 = 1;
+const POLICY_REVISION: u32 = 1;
+
+/// The persisted task request; normalised before hashing so equal notes
+/// produce equal idempotency hashes.
+#[derive(Debug, Serialize, Deserialize)]
+struct NoteRequest {
+    title: String,
+    body: String,
+}
+
+/// Everything an approval is bound to (`CONTRACTE_NEXUS_RO.md` §5). Field
+/// order is the canonical serialisation, so an action always hashes the same.
+#[derive(Serialize)]
+struct Manifest<'a> {
+    manifest_version: u32,
+    actor: &'a str,
+    channel: &'a str,
+    project_id: String,
+    operation_id: String,
+    tool_id: &'a str,
+    tool_version: u32,
+    effect: &'a str,
+    destination: &'a str,
+    content_sha256: String,
+    content_size: u64,
+    policy_revision: u32,
+    single_use: bool,
+    expires_at_ms: i64,
+}
+
+#[derive(Deserialize)]
+struct ManifestCheck {
+    destination: String,
+    content_sha256: String,
+}
+
+pub struct Runtime {
+    store: Store,
+    artifact_root: PathBuf,
+    approval_ttl_ms: i64,
+    wake: Notify,
+    stop: watch::Sender<bool>,
+}
+
+impl Runtime {
+    /// Opens the profile's database and reconciles interrupted runs *before*
+    /// the executor or any client can act on them.
+    pub async fn open(profile: &Path, approval_ttl: Duration) -> anyhow::Result<Arc<Self>> {
+        let store = Store::open(&profile.join("nexus.db"))?;
+        store.ensure_default_project(now_ms()).await?;
+        let (stop, _) = watch::channel(false);
+        let runtime = Arc::new(Self {
+            store,
+            artifact_root: profile.join("artifacts"),
+            approval_ttl_ms: i64::try_from(approval_ttl.as_millis()).unwrap_or(i64::MAX),
+            wake: Notify::new(),
+            stop,
+        });
+        runtime.reconcile_interrupted().await?;
+        Ok(runtime)
+    }
+
+    pub fn stop_signal(&self) -> watch::Receiver<bool> {
+        self.stop.subscribe()
+    }
+
+    pub fn request_stop(&self) {
+        self.stop.send_replace(true);
+        self.wake.notify_one();
+    }
+
+    /// One run at a time, in order (`PLAN_NEXUS_RO.md` M1 §3).
+    pub async fn run_executor(self: Arc<Self>) {
+        let mut stop = self.stop.subscribe();
+        loop {
+            if *stop.borrow() {
+                break;
+            }
+            if let Err(err) = self.store.expire_approvals(now_ms()).await {
+                tracing::warn!(error = %err, "could not expire approvals");
+            }
+            match self.step().await {
+                Ok(true) => continue,
+                Ok(false) => {}
+                // The run stays where it is; startup reconciliation will
+                // decide it from durable state rather than guess now.
+                Err(err) => tracing::error!(error = %err, "executor step failed"),
+            }
+            tokio::select! {
+                _ = self.wake.notified() => {}
+                _ = tokio::time::sleep(IDLE_TICK) => {}
+                _ = stop.changed() => {}
+            }
+        }
+        tracing::info!("executor stopped");
+    }
+
+    async fn step(&self) -> Result<bool, StorageError> {
+        let Some(detail) = self.store.claim_next_queued_run(now_ms()).await? else {
+            return Ok(false);
+        };
+        let run_id = detail.run.id;
+        let content = match note_content(&detail) {
+            Ok(content) => content,
+            Err(reason) => {
+                self.store
+                    .fail_run(run_id, RunError::new("InvalidRequest", reason), now_ms())
+                    .await?;
+                return Ok(true);
+            }
+        };
+        match detail.action.as_ref().map(|a| a.state) {
+            None => self.prepare(&detail, &content).await?,
+            Some(ActionState::Authorized) => self.execute(&detail, &content).await?,
+            Some(ActionState::Executing) => self.resume(&detail, &content).await?,
+            Some(other) => {
+                self.store
+                    .mark_needs_review(
+                        run_id,
+                        RunError::new(
+                            "OutcomeUnknown",
+                            format!("queued run has action in state {other}"),
+                        ),
+                        now_ms(),
+                    )
+                    .await?;
+            }
+        }
+        Ok(true)
+    }
+
+    /// Builds the exact manifest and asks for approval. Nothing is written.
+    async fn prepare(&self, detail: &RunDetail, content: &NoteContent) -> Result<(), StorageError> {
+        let now = now_ms();
+        let operation_id = OperationId::new();
+        let paths =
+            ArtifactPaths::for_operation(&self.artifact_root, detail.task.project_id, operation_id);
+        let expires_at_ms = now.saturating_add(self.approval_ttl_ms);
+        let manifest = Manifest {
+            manifest_version: MANIFEST_VERSION,
+            actor: "local-user",
+            channel: "dashboard",
+            project_id: detail.task.project_id.to_string(),
+            operation_id: operation_id.to_string(),
+            tool_id: note_tool::TOOL_ID,
+            tool_version: note_tool::TOOL_VERSION,
+            effect: "create-new-file",
+            destination: &paths.target_relpath,
+            content_sha256: content.sha256_hex(),
+            content_size: content.size(),
+            policy_revision: POLICY_REVISION,
+            single_use: true,
+            expires_at_ms,
+        };
+        let manifest_json =
+            serde_json::to_string(&manifest).map_err(|e| StorageError::Corrupt(e.to_string()))?;
+        let manifest_sha256 = note_tool::sha256_hex(manifest_json.as_bytes());
+        self.store
+            .prepare_action(
+                detail.run.id,
+                NewAction {
+                    tool_id: note_tool::TOOL_ID.to_string(),
+                    tool_version: i64::from(note_tool::TOOL_VERSION),
+                    operation_id,
+                    manifest_json,
+                    manifest_sha256,
+                    approval_expires_at_ms: expires_at_ms,
+                },
+                now,
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Approved: re-check preconditions, consume the approval together with
+    /// the intent, then perform the effect.
+    async fn execute(&self, detail: &RunDetail, content: &NoteContent) -> Result<(), StorageError> {
+        let run_id = detail.run.id;
+        let action = detail
+            .action
+            .as_ref()
+            .expect("execute is only called with an action");
+        let paths = self.paths(detail, action.operation_id);
+
+        if let Err(reason) = manifest_matches(&action.manifest_json, &paths, content) {
+            self.store
+                .fail_run(
+                    run_id,
+                    RunError::new("ApprovalInvalidated", reason),
+                    now_ms(),
+                )
+                .await?;
+            return Ok(());
+        }
+        // SEC-01 "resource changed": the destination must still be untouched.
+        let observed = observe(&paths, content).await;
+        if observed != Observed::NoEffect {
+            self.store
+                .fail_run(
+                    run_id,
+                    RunError::new(
+                        "ResourceChanged",
+                        format!("destination is no longer untouched: {observed:?}"),
+                    ),
+                    now_ms(),
+                )
+                .await?;
+            return Ok(());
+        }
+
+        let intent = NewOperation {
+            target_relpath: paths.target_relpath.clone(),
+            staging_relpath: paths.staging_relpath.clone(),
+            expected_sha256: content.sha256_hex(),
+            expected_size: content.size() as i64,
+            algorithm_version: i64::from(note_tool::ALGORITHM_VERSION),
+        };
+        match self.store.claim_effect(run_id, intent, now_ms()).await {
+            Ok(_) => {}
+            Err(StorageError::CancellationRequested) => {
+                self.store.finish_cancellation(run_id, now_ms()).await?;
+                return Ok(());
+            }
+            Err(StorageError::ApprovalExpired) => {
+                self.store
+                    .fail_run(
+                        run_id,
+                        RunError::new("ApprovalExpired", "approval expired before execution"),
+                        now_ms(),
+                    )
+                    .await?;
+                return Ok(());
+            }
+            Err(StorageError::ApprovalInvalidated(reason)) => {
+                self.store
+                    .fail_run(
+                        run_id,
+                        RunError::new("ApprovalInvalidated", reason),
+                        now_ms(),
+                    )
+                    .await?;
+                return Ok(());
+            }
+            Err(other) => return Err(other),
+        }
+        fault::hit("after_intent");
+        self.perform(run_id, &paths, content).await
+    }
+
+    /// A reconciled run whose intent left no effect: try the same operation.
+    async fn resume(&self, detail: &RunDetail, content: &NoteContent) -> Result<(), StorageError> {
+        let action = detail
+            .action
+            .as_ref()
+            .expect("resume is only called with an action");
+        let paths = self.paths(detail, action.operation_id);
+        match observe(&paths, content).await {
+            Observed::NoEffect => self.perform(detail.run.id, &paths, content).await,
+            Observed::Complete => {
+                discard_staging(&paths).await;
+                self.store
+                    .complete_operation(detail.run.id, now_ms())
+                    .await?;
+                Ok(())
+            }
+            Observed::Uncertain(_) if !paths.target().exists() => {
+                discard_staging(&paths).await;
+                self.perform(detail.run.id, &paths, content).await
+            }
+            Observed::Uncertain(reason) => {
+                self.store
+                    .mark_needs_review(
+                        detail.run.id,
+                        RunError::new("OutcomeUnknown", reason),
+                        now_ms(),
+                    )
+                    .await?;
+                Ok(())
+            }
+        }
+    }
+
+    async fn perform(
+        &self,
+        run_id: RunId,
+        paths: &ArtifactPaths,
+        content: &NoteContent,
+    ) -> Result<(), StorageError> {
+        let (p, c) = (paths.clone(), content.clone());
+        let outcome = tokio::task::spawn_blocking(move || note_tool::create(&p, &c)).await;
+        match outcome {
+            Ok(Ok(())) => {
+                fault::hit("after_publish");
+                self.store.complete_operation(run_id, now_ms()).await?;
+                Ok(())
+            }
+            Ok(Err(err)) => self.settle(run_id, paths, content, err.to_string()).await,
+            Err(join) => self.settle(run_id, paths, content, join.to_string()).await,
+        }
+    }
+
+    /// The tool reported a problem: decide only from what the filesystem
+    /// actually shows, never by retrying blindly.
+    async fn settle(
+        &self,
+        run_id: RunId,
+        paths: &ArtifactPaths,
+        content: &NoteContent,
+        reason: String,
+    ) -> Result<(), StorageError> {
+        match observe(paths, content).await {
+            Observed::Complete => {
+                discard_staging(paths).await;
+                self.store.complete_operation(run_id, now_ms()).await?;
+            }
+            Observed::NoEffect => {
+                self.store
+                    .fail_run(run_id, RunError::new("EffectFailed", reason), now_ms())
+                    .await?;
+            }
+            Observed::Uncertain(_) if !paths.target().exists() => {
+                discard_staging(paths).await;
+                self.store
+                    .fail_run(run_id, RunError::new("EffectFailed", reason), now_ms())
+                    .await?;
+            }
+            Observed::Uncertain(why) => {
+                self.store
+                    .mark_needs_review(
+                        run_id,
+                        RunError::new("OutcomeUnknown", format!("{reason}; {why}")),
+                        now_ms(),
+                    )
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Startup (RUN-04/05/06): decide every interrupted run from the
+    /// filesystem and the durable log — never by replaying an effect blindly.
+    async fn reconcile_interrupted(&self) -> Result<(), StorageError> {
+        for detail in self.store.take_interrupted_runs(now_ms()).await? {
+            let run_id = detail.run.id;
+            let intent = match (&detail.action, &detail.operation) {
+                (Some(action), Some(op)) if op.state == OperationState::Intended => {
+                    Some(action.operation_id)
+                }
+                _ => None,
+            };
+            let Some(operation_id) = intent else {
+                // No intent was recorded, so no effect can have happened.
+                if detail.cancellation_requested {
+                    self.store.finish_cancellation(run_id, now_ms()).await?;
+                } else {
+                    self.store.requeue_reconciled(run_id, now_ms()).await?;
+                }
+                continue;
+            };
+
+            let paths = self.paths(&detail, operation_id);
+            let content = match note_content(&detail) {
+                Ok(c) => c,
+                Err(reason) => {
+                    self.store
+                        .mark_needs_review(
+                            run_id,
+                            RunError::new("OutcomeUnknown", reason),
+                            now_ms(),
+                        )
+                        .await?;
+                    continue;
+                }
+            };
+            let observed = observe(&paths, &content).await;
+            tracing::info!(run = %run_id, ?observed, "reconciling interrupted run");
+            match observed {
+                Observed::Complete => {
+                    // RUN-05: the file was published before the crash; record
+                    // it instead of creating a second one.
+                    discard_staging(&paths).await;
+                    self.store.complete_operation(run_id, now_ms()).await?;
+                }
+                Observed::Uncertain(reason) if paths.target().exists() => {
+                    // RUN-06: something is there but it is not provably ours.
+                    self.store
+                        .mark_needs_review(
+                            run_id,
+                            RunError::new("OutcomeUnknown", reason),
+                            now_ms(),
+                        )
+                        .await?;
+                }
+                Observed::NoEffect | Observed::Uncertain(_) => {
+                    // Nothing published (at most an unpublished staging file).
+                    discard_staging(&paths).await;
+                    if detail.cancellation_requested {
+                        self.store.finish_cancellation(run_id, now_ms()).await?;
+                    } else {
+                        self.store.requeue_reconciled(run_id, now_ms()).await?;
+                    }
+                }
+            }
+        }
+        self.wake.notify_one();
+        Ok(())
+    }
+
+    fn paths(&self, detail: &RunDetail, operation_id: OperationId) -> ArtifactPaths {
+        ArtifactPaths::for_operation(&self.artifact_root, detail.task.project_id, operation_id)
+    }
+
+    // ---- RPC surface ----
+
+    pub async fn submit_note(
+        &self,
+        request: SubmitNoteRequest,
+    ) -> Result<SubmitNoteResponse, NexusError> {
+        let key = request.idempotency_key.trim();
+        if key.is_empty() || key.len() > MAX_IDEMPOTENCY_KEY {
+            return Err(NexusError::new(
+                ErrorCode::InvalidRequest,
+                "idempotency key must be 1..=200 bytes",
+            ));
+        }
+        // Validate before persisting: an invalid note never becomes a task.
+        NoteContent::new(&request.title, &request.body)
+            .map_err(|e| NexusError::new(ErrorCode::InvalidRequest, e.to_string()))?;
+        let normalised = NoteRequest {
+            title: request.title,
+            body: request.body,
+        };
+        let request_json = serde_json::to_string(&normalised).expect("plain strings serialise");
+        let request_sha256 = note_tool::sha256_hex(request_json.as_bytes());
+        let project = self
+            .store
+            .ensure_default_project(now_ms())
+            .await
+            .map_err(to_nexus_error)?;
+        let outcome = self
+            .store
+            .submit_task(
+                project,
+                key.to_string(),
+                request_json,
+                request_sha256,
+                now_ms(),
+            )
+            .await
+            .map_err(to_nexus_error)?;
+        self.wake.notify_one();
+        Ok(match outcome {
+            SubmitOutcome::Created { task_id, run_id } => SubmitNoteResponse {
+                task_id,
+                run_id,
+                created: true,
+            },
+            SubmitOutcome::Existing { task_id, run_id } => SubmitNoteResponse {
+                task_id,
+                run_id,
+                created: false,
+            },
+        })
+    }
+
+    pub async fn snapshot(&self, limit: u32) -> Result<Snapshot, NexusError> {
+        let (runs, watermark) = self
+            .store
+            .snapshot(limit.clamp(1, MAX_SNAPSHOT_RUNS))
+            .await
+            .map_err(to_nexus_error)?;
+        Ok(Snapshot {
+            runs: runs.iter().map(|d| self.view(d, false)).collect(),
+            watermark,
+        })
+    }
+
+    pub async fn run(&self, run_id: RunId) -> Result<RunView, NexusError> {
+        let detail = self
+            .store
+            .run_detail(run_id)
+            .await
+            .map_err(to_nexus_error)?;
+        Ok(self.view(&detail, true))
+    }
+
+    pub async fn decide(&self, request: DecideApprovalRequest) -> Result<RunView, NexusError> {
+        let decision = match request.decision {
+            ApprovalDecision::Approve => Decision::Approved,
+            ApprovalDecision::Deny => Decision::Denied,
+        };
+        let detail = self
+            .store
+            .decide_approval(
+                request.approval_id,
+                request.manifest_sha256,
+                decision,
+                now_ms(),
+            )
+            .await
+            .map_err(to_nexus_error)?;
+        self.wake.notify_one();
+        Ok(self.view(&detail, false))
+    }
+
+    pub async fn cancel(&self, run_id: RunId) -> Result<RunView, NexusError> {
+        let detail = self
+            .store
+            .cancel_run(run_id, now_ms())
+            .await
+            .map_err(to_nexus_error)?;
+        Ok(self.view(&detail, false))
+    }
+
+    pub async fn events(&self, after: i64, limit: u32) -> Result<EventsPage, NexusError> {
+        let rows = self
+            .store
+            .events_since(after, limit.clamp(1, MAX_EVENTS_PAGE))
+            .await
+            .map_err(to_nexus_error)?;
+        let next_after = rows.last().map_or(after, |e| e.seq);
+        Ok(EventsPage {
+            events: rows
+                .into_iter()
+                .map(|e| EventView {
+                    seq: e.seq,
+                    kind: e.kind,
+                    entity_id: e.entity_id,
+                    created_at_ms: e.created_at_ms,
+                })
+                .collect(),
+            next_after,
+        })
+    }
+
+    /// Reads a verified artifact and re-checks its hash; a file changed
+    /// outside Nexus is reported, not served as if it were the original.
+    pub async fn artifact_content(&self, artifact_id: ArtifactId) -> Result<String, NexusError> {
+        let row = self
+            .store
+            .artifact(artifact_id)
+            .await
+            .map_err(to_nexus_error)?;
+        let path = self.artifact_root.join(&row.relpath);
+        let bytes = tokio::task::spawn_blocking(move || std::fs::read(path))
+            .await
+            .map_err(|e| NexusError::new(ErrorCode::InternalFailure, e.to_string()))?
+            .map_err(|e| {
+                NexusError::new(
+                    ErrorCode::NotFound,
+                    format!("artifact file unreadable: {e}"),
+                )
+            })?;
+        if note_tool::sha256_hex(&bytes) != row.sha256 {
+            return Err(NexusError::new(
+                ErrorCode::ResourceChanged,
+                "the artifact file was changed outside Nexus",
+            ));
+        }
+        String::from_utf8(bytes)
+            .map_err(|_| NexusError::new(ErrorCode::ResourceChanged, "artifact is not UTF-8"))
+    }
+
+    fn view(&self, d: &RunDetail, with_preview: bool) -> RunView {
+        let request: Option<NoteRequest> = serde_json::from_str(&d.task.request_json).ok();
+        let title = request
+            .as_ref()
+            .map(|r| r.title.trim().to_string())
+            .unwrap_or_default();
+
+        let pending_approval = match (&d.action, &d.approval, &request) {
+            (Some(action), Some(approval), Some(req))
+                if action.state == ActionState::AwaitingApproval
+                    && approval.decision.is_none()
+                    && approval.revoked_at_ms.is_none() =>
+            {
+                let preview = if with_preview {
+                    // Rebuilt from the stored request and shown only if it is
+                    // exactly what the approval's manifest covers.
+                    NoteContent::new(&req.title, &req.body)
+                        .ok()
+                        .filter(|c| {
+                            let paths = self.paths(d, action.operation_id);
+                            manifest_matches(&action.manifest_json, &paths, c).is_ok()
+                        })
+                        .map(|content| NotePreview {
+                            destination: self
+                                .paths(d, action.operation_id)
+                                .target()
+                                .display()
+                                .to_string(),
+                            size_bytes: content.size() as u32,
+                            sha256: content.sha256_hex(),
+                            content: content.text,
+                        })
+                } else {
+                    None
+                };
+                Some(PendingApproval {
+                    approval_id: approval.id,
+                    manifest_sha256: approval.manifest_sha256.clone(),
+                    expires_at_ms: approval.expires_at_ms,
+                    preview,
+                })
+            }
+            _ => None,
+        };
+
+        RunView {
+            run_id: d.run.id,
+            title,
+            status: status(d.run.state),
+            revision: d.run.revision,
+            failure: d.run.error_code.as_ref().map(|code| RunFailure {
+                code: code.clone(),
+                message: d.run.error_message.clone().unwrap_or_default(),
+            }),
+            pending_approval,
+            artifact: d.artifact.as_ref().map(|a| ArtifactSummary {
+                artifact_id: a.id,
+                path: self.artifact_root.join(&a.relpath).display().to_string(),
+                sha256: a.sha256.clone(),
+                size_bytes: u32::try_from(a.size_bytes).unwrap_or(u32::MAX),
+                created_at_ms: a.created_at_ms,
+            }),
+            created_at_ms: d.run.created_at_ms,
+            updated_at_ms: d.run.updated_at_ms,
+        }
+    }
+}
+
+fn note_content(detail: &RunDetail) -> Result<NoteContent, String> {
+    let request: NoteRequest = serde_json::from_str(&detail.task.request_json)
+        .map_err(|e| format!("stored request unreadable: {e}"))?;
+    NoteContent::new(&request.title, &request.body).map_err(|e| e.to_string())
+}
+
+/// The bytes about to be written must be the ones the approval covers.
+fn manifest_matches(
+    manifest_json: &str,
+    paths: &ArtifactPaths,
+    content: &NoteContent,
+) -> Result<(), String> {
+    let manifest: ManifestCheck =
+        serde_json::from_str(manifest_json).map_err(|e| format!("manifest unreadable: {e}"))?;
+    if manifest.destination != paths.target_relpath {
+        return Err("destination differs from the approved manifest".to_string());
+    }
+    if manifest.content_sha256 != content.sha256_hex() {
+        return Err("content differs from the approved manifest".to_string());
+    }
+    Ok(())
+}
+
+async fn observe(paths: &ArtifactPaths, content: &NoteContent) -> Observed {
+    let (p, c) = (paths.clone(), content.clone());
+    tokio::task::spawn_blocking(move || note_tool::observe(&p, &c))
+        .await
+        .unwrap_or_else(|e| Observed::Uncertain(format!("observation failed: {e}")))
+}
+
+async fn discard_staging(paths: &ArtifactPaths) {
+    let p = paths.clone();
+    if let Ok(Err(err)) = tokio::task::spawn_blocking(move || note_tool::discard_staging(&p)).await
+    {
+        tracing::warn!(error = %err, "could not remove a leftover staging file");
+    }
+}
+
+fn status(state: RunState) -> RunStatus {
+    match state {
+        RunState::Queued => RunStatus::Queued,
+        RunState::Running => RunStatus::Running,
+        RunState::AwaitingApproval => RunStatus::AwaitingApproval,
+        RunState::Verifying => RunStatus::Verifying,
+        RunState::CancellationRequested => RunStatus::CancellationRequested,
+        RunState::NeedsReconciliation => RunStatus::NeedsReconciliation,
+        RunState::NeedsReview => RunStatus::NeedsReview,
+        RunState::Succeeded => RunStatus::Succeeded,
+        RunState::Failed => RunStatus::Failed,
+        RunState::Cancelled => RunStatus::Cancelled,
+        RunState::Denied => RunStatus::Denied,
+    }
+}
+
+/// User-facing errors keep a stable code; internal detail stays in the log.
+fn to_nexus_error(err: StorageError) -> NexusError {
+    let (code, message) = match &err {
+        StorageError::NotFound(what) => (ErrorCode::NotFound, format!("{what} not found")),
+        StorageError::IdempotencyConflict(_) => (ErrorCode::RevisionConflict, err.to_string()),
+        StorageError::ApprovalExpired => (ErrorCode::ApprovalExpired, err.to_string()),
+        StorageError::ApprovalInvalidated(_) | StorageError::ApprovalAlreadyDecided => {
+            (ErrorCode::ApprovalInvalidated, err.to_string())
+        }
+        StorageError::IllegalTransition(_) => (ErrorCode::InvalidRequest, err.to_string()),
+        StorageError::RevisionConflict(_) => (ErrorCode::RevisionConflict, err.to_string()),
+        _ => {
+            tracing::error!(error = %err, "storage failure");
+            (
+                ErrorCode::InternalFailure,
+                "internal storage failure".to_string(),
+            )
+        }
+    };
+    NexusError::new(code, message)
+}

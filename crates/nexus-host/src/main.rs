@@ -9,24 +9,36 @@ const MAX_LOG_BYTES: u64 = 10 * 1024 * 1024;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    init_logging()?;
+    let profile = nexus_protocol::pairing::profile_dir();
+    init_logging(&profile)?;
 
-    let pairing_token = nexus_protocol::pairing::load_or_create_token()?;
-    let name = nexus_protocol::pairing::pipe_name();
+    let pairing_token = nexus_protocol::pairing::load_or_create_token_in(&profile)?;
+    let name = nexus_protocol::pairing::pipe_name_for(&profile);
 
-    // Logged before returning: a detached host has no console for stderr.
+    // The single-instance lock comes first: a second host must never open
+    // the database or reconcile runs owned by the first.
     let listener = nexus_host::bind_first_instance(&name).inspect_err(|err| {
+        // Logged before returning: a detached host has no console for stderr.
         tracing::error!(pid = std::process::id(), error = %err, "nexus-host not started");
     })?;
+
+    let runtime = nexus_host::Runtime::open(&profile, nexus_host::DEFAULT_APPROVAL_TTL)
+        .await
+        .inspect_err(|err| tracing::error!(error = %err, "could not open the profile database"))?;
+    let executor = tokio::spawn(runtime.clone().run_executor());
     tracing::info!(pipe = %name, pid = std::process::id(), "nexus-host listening");
 
-    nexus_host::serve_forever(listener, name, pairing_token).await
+    nexus_host::serve_forever(listener, name, pairing_token, runtime).await?;
+    // Let the step in progress finish and record its outcome before exiting.
+    executor.await?;
+    tracing::info!(pid = std::process::id(), "nexus-host stopped");
+    Ok(())
 }
 
 /// When the dashboard starts the host detached there is no console, so the
 /// log also goes to the profile directory.
-fn init_logging() -> anyhow::Result<()> {
-    let log_dir = nexus_protocol::pairing::profile_dir().join("logs");
+fn init_logging(profile: &Path) -> anyhow::Result<()> {
+    let log_dir = profile.join("logs");
     fs::create_dir_all(&log_dir)?;
     let log_path = log_dir.join("nexus-host.log");
     rotate_if_large(&log_path)?;
