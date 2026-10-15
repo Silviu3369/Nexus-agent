@@ -11,7 +11,11 @@
     cargo build -p nexus-host --release --locked
     pnpm --filter @nexus/desktop tauri build --no-bundle
 #>
-param([string]$Root = (Resolve-Path "$PSScriptRoot\..").Path)
+param(
+  [string]$Root = (Resolve-Path "$PSScriptRoot\..").Path,
+  # Folder holding desktop.exe with nexus-host.exe next to it.
+  [string]$Bin = (Join-Path $Root "target\release")
+)
 
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
@@ -19,8 +23,9 @@ $A = [System.Windows.Automation.AutomationElement]
 $S = [System.Windows.Automation.TreeScope]
 $True_ = [System.Windows.Automation.Condition]::TrueCondition
 
-$exe = Join-Path $Root "target\release\desktop.exe"
-$hostExe = Join-Path $Root "target\release\nexus-host.exe"
+$Bin = (Resolve-Path $Bin).Path
+$exe = Join-Path $Bin "desktop.exe"
+$hostExe = Join-Path $Bin "nexus-host.exe"
 foreach ($f in $exe, $hostExe) { if (-not (Test-Path $f)) { throw "missing $f - build the release first" } }
 
 $profileDir = Join-Path $env:TEMP ("nexus-ui-check-" + [guid]::NewGuid())
@@ -114,9 +119,9 @@ function Wait-Files([int]$count, [int]$seconds = 15) {
 }
 
 function New-Note($win, [string]$title, [string]$body) {
-  Set-Field $win "Titlu" $title
-  Set-Field $win "Conținut" $body
-  Click-Button $win "Pregătește nota"
+  Set-Field $win "Title" $title
+  Set-Field $win "Content" $body
+  Click-Button $win "Prepare note"
 }
 
 $ui = $null
@@ -125,28 +130,29 @@ try {
   # --- start the host from the UI ---
   $ui = Start-Process $exe -PassThru
   $win = Get-Window $ui.Id
-  Check (Wait-Text $win "Pornește Hostul") "fresh profile shows the host as stopped"
-  Click-Button $win "Pornește Hostul"
-  Check (Wait-Text $win "Conectat") "the UI launched the host and connected"
-  Check (Wait-Text $win "Nicio notă încă.") "empty activity state is shown"
+  Check (Wait-Text $win "Start Host") "fresh profile shows the host as stopped"
+  Click-Button $win "Start Host"
+  Check (Wait-Text $win "Host online") "the UI launched the host and connected"
+  Click-Button $win "Notes"
+  Check (Wait-Text $win "No notes yet.") "empty activity state is shown"
 
   # --- RUN-01 + UI-02 through the window ---
-  New-Note $win "Notă de test" $hostile
-  Check (Wait-Text $win "Ce se va scrie") "an exact preview is shown before anything is written"
-  $expected = "# Notă de test`n`n$hostile`n"
+  New-Note $win "Test note" $hostile
+  Check (Wait-Text $win "What will be written") "an exact preview is shown before anything is written"
+  $expected = "# Test note`n`n$hostile`n"
   Check (@(Get-Names $win | Where-Object { $_.Contains($hostile) }).Count -gt 0) "hostile markup appears as literal text in the preview"
   Check ((Note-Files).Count -eq 0) "no file exists before approval"
-  Click-Button $win "Aprobă și creează"
+  Click-Button $win "Approve and create"
   Check (Wait-Files 1) "approving creates exactly one note"
   $file = (Note-Files)[0].FullName
   Check ([System.IO.File]::ReadAllText($file, [System.Text.UTF8Encoding]::new($false)) -ceq $expected) "the file holds exactly the approved bytes"
   Check ($file.StartsWith($profileDir)) "the note is inside the isolated profile"
-  Click-Button $win "Arată conținutul"
-  Check (Wait-Text $win "Conținutul verificat al notei") "verified content can be shown"
+  Click-Button $win "Show content"
+  Check (Wait-Text $win "Verified content of the note") "verified content can be shown"
 
   # --- LIFE-01: close the UI while a task waits, reopen, finish it ---
-  New-Note $win "A doua notă" "conținut 2"
-  Check (Wait-Text $win "Așteaptă aprobarea ta") "second note waits for approval"
+  New-Note $win "Second note" "content 2"
+  Check (Wait-Text $win "Awaiting your approval") "second note waits for approval"
   $hostProc = Get-Process nexus-host | Where-Object { $_.Path -eq $hostExe -and $_.StartTime -ge $started } | Select-Object -First 1
   $ui.CloseMainWindow() | Out-Null
   $ui.WaitForExit(10000) | Out-Null
@@ -156,32 +162,34 @@ try {
 
   $ui = Start-Process $exe -PassThru
   $win = Get-Window $ui.Id
-  Check (Wait-Text $win "Conectat") "the reopened UI reconnected"
+  Check (Wait-Text $win "Host online") "the reopened UI reconnected"
+  Click-Button $win "Notes"
   $row = $null
   $deadline = (Get-Date).AddSeconds(10)
   while (-not $row -and (Get-Date) -lt $deadline) {
-    $row = $win.FindAll($S::Descendants, $True_) | Where-Object { $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $_.Current.Name -like "*A doua notă*" } | Select-Object -First 1
+    $row = $win.FindAll($S::Descendants, $True_) | Where-Object { $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $_.Current.Name -like "*Second note*" } | Select-Object -First 1
     if (-not $row) { Start-Sleep -Milliseconds 250 }
   }
   Check ($null -ne $row) "the pending task is still listed after reopening"
-  Check ($row.Current.Name -like "*Așteaptă aprobarea ta*") "its state was recovered, not reset"
+  Check ($row.Current.Name -like "*Awaiting your approval*") "its state was recovered, not reset"
   Invoke-Element $row
-  Check (Wait-Text $win "Ce se va scrie") "its exact preview is shown again"
-  Click-Button $win "Aprobă și creează"
+  Check (Wait-Text $win "What will be written") "its exact preview is shown again"
+  Click-Button $win "Approve and create"
   Check (Wait-Files 2) "approving after reopening creates exactly the second note"
   Check ((Get-Process nexus-host | Where-Object { $_.Path -eq $hostExe -and $_.StartTime -ge $started }).Count -eq 1) "still a single host instance"
 
   # --- denial writes nothing ---
-  New-Note $win "A treia notă" "nu o vreau"
-  Check (Wait-Text $win "Ce se va scrie") "third note shows its preview"
-  Click-Button $win "Refuză"
-  Check (Wait-Text $win "Refuzată") "denial is shown"
+  New-Note $win "Third note" "I don't want it"
+  Check (Wait-Text $win "What will be written") "third note shows its preview"
+  Click-Button $win "Deny"
+  Check (Wait-Text $win "Denied") "denial is shown"
   Start-Sleep -Seconds 1
   Check ((Note-Files).Count -eq 2) "denial wrote no file"
 
   # --- BACKUP-01 through the UI and the real restore command ---
-  Click-Button $win "Fă backup"
-  Check ($null -ne (Wait-Contains $win "Backup creat: 2 note")) "the UI reports a backup of both notes"
+  Click-Button $win "Settings"
+  Click-Button $win "Back up now"
+  Check ($null -ne (Wait-Contains $win "Backup created: 2 notes")) "the UI reports a backup of both notes"
   $backupPath = Wait-Contains $win (Join-Path $profileDir "backups")
   Check ($null -ne $backupPath -and (Test-Path (Join-Path $backupPath "manifest.json"))) "the backup and its manifest exist inside the profile"
   $manifest = Get-Content -Raw -Encoding UTF8 (Join-Path $backupPath "manifest.json") | ConvertFrom-Json
@@ -201,11 +209,12 @@ try {
   $restoreStart = Get-Date
   $ui = Start-Process $exe -PassThru
   $win = Get-Window $ui.Id
-  Check (Wait-Text $win "Pornește Hostul") "the restored profile has no host running yet"
-  Click-Button $win "Pornește Hostul"
-  Check ($null -ne (Wait-Contains $win "Profil restaurat dintr-un backup")) "the UI states that the restored profile executes nothing"
-  Check ($null -ne (Wait-Contains $win "A treia notă")) "the restored history is visible"
-  Check ($null -ne (Wait-Contains $win "Refuzată")) "restored runs keep their states"
+  Check (Wait-Text $win "Start Host") "the restored profile has no host running yet"
+  Click-Button $win "Start Host"
+  Check ($null -ne (Wait-Contains $win "Restored from a backup")) "the UI states that the restored profile executes nothing"
+  Click-Button $win "Notes"
+  Check ($null -ne (Wait-Contains $win "Third note")) "the restored history is visible"
+  Check ($null -ne (Wait-Contains $win "Denied")) "restored runs keep their states"
 }
 finally {
   if ($ui -and -not $ui.HasExited) { $ui.CloseMainWindow() | Out-Null; $ui.WaitForExit(10000) | Out-Null }

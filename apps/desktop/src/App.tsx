@@ -1,10 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { BackupSummary, HostStatus } from "@nexus/contracts";
+import type { ReactElement } from "react";
+import type { ConnectionView, ConversationId, HostStatus, RunId } from "@nexus/contracts";
 import { api, describeError } from "./api";
+import { ChatPanel } from "./Chat";
+import { Dashboard } from "./Dashboard";
 import { NotesPanel } from "./Notes";
+import { BackupCard, ConnectionsCard, PersonaCard } from "./Settings";
+import { ChatIcon, DashboardIcon, NotesIcon, PlugIcon, SettingsIcon, ShieldIcon } from "./icons";
 import "./App.css";
 
 const POLL_MS = 3000;
+
+type Tab = "dashboard" | "chat" | "notes" | "settings";
+const TABS: { id: Tab; label: string; icon: (props: { size?: number }) => ReactElement }[] = [
+  { id: "dashboard", label: "Dashboard", icon: DashboardIcon },
+  { id: "chat", label: "Chat", icon: ChatIcon },
+  { id: "notes", label: "Notes", icon: NotesIcon },
+  { id: "settings", label: "Settings", icon: SettingsIcon },
+];
 
 type View =
   | { kind: "checking" }
@@ -15,13 +28,32 @@ function formatUptime(totalSeconds: number): string {
   const h = Math.floor(totalSeconds / 3600);
   const m = Math.floor((totalSeconds % 3600) / 60);
   const s = totalSeconds % 60;
-  if (h > 0) return `${h} h ${m} min`;
-  if (m > 0) return `${m} min ${s} s`;
-  return `${s} s`;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function Clock() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return (
+    <div className="clock">
+      <span className="clock-time">{now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}</span>
+      <span className="clock-date">{now.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</span>
+    </div>
+  );
 }
 
 function App() {
   const [view, setView] = useState<View>({ kind: "checking" });
+  const [tab, setTab] = useState<Tab>("dashboard");
+  const [connections, setConnections] = useState<ConnectionView[]>([]);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [focusRunId, setFocusRunId] = useState<RunId | null>(null);
+  const [focusConversationId, setFocusConversationId] = useState<ConversationId | null>(null);
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const inFlight = useRef(false);
@@ -32,6 +64,11 @@ function App() {
     try {
       const status = await api.hostStatus();
       setView({ kind: "status", status });
+      if (status.state === "Connected") {
+        const [conns, snapshot] = await Promise.all([api.listConnections(), api.listRuns()]);
+        setConnections(conns);
+        setPendingCount(snapshot.runs.filter((r) => r.status === "AwaitingApproval").length);
+      }
     } catch (err) {
       setView({ kind: "bridgeError", message: describeError(err) });
     } finally {
@@ -60,116 +97,192 @@ function App() {
     }
   }
 
+  function goToChat(conversationId?: ConversationId) {
+    setFocusConversationId(conversationId ?? null);
+    setTab("chat");
+  }
+  function goToNotes(runId?: RunId) {
+    setFocusRunId(runId ?? null);
+    setTab("notes");
+  }
+
+  if (view.kind !== "status" || view.status.state !== "Connected") {
+    return (
+      <main className="shell shell-gate">
+        <header className="header">
+          <h1>NEXUS</h1>
+          <p className="subtitle">Personal AI agent</p>
+        </header>
+        <section className="card" aria-labelledby="host-heading">
+          <h2 id="host-heading">Host</h2>
+          <div role="status" aria-live="polite">
+            <HostView view={view} />
+          </div>
+          <div className="actions">
+            {view.kind === "status" && view.status.state === "NotRunning" && (
+              <button type="button" onClick={startHost} disabled={starting}>
+                {starting ? "Starting…" : "Start Host"}
+              </button>
+            )}
+            {(view.kind === "bridgeError" ||
+              (view.kind === "status" &&
+                (view.status.state === "Unreachable" ||
+                  view.status.state === "Rejected" ||
+                  view.status.state === "Untrusted"))) && (
+              <button type="button" onClick={() => void refresh()}>
+                Retry
+              </button>
+            )}
+          </div>
+          {startError && (
+            <p className="error" role="alert">
+              The Host could not be started: {startError}
+            </p>
+          )}
+        </section>
+        <p className="note">Closing this window does not stop the Host or any accepted tasks.</p>
+      </main>
+    );
+  }
+
+  const status = view.status;
+  const active = connections.find((c) => c.active) ?? null;
+
   return (
-    <main className="shell">
-      <header className="header">
-        <h1>Nexus</h1>
-        <p className="subtitle">Panou de control</p>
-      </header>
-
-      <section className="card" aria-labelledby="host-heading">
-        <h2 id="host-heading">Host</h2>
-        <div role="status" aria-live="polite">
-          <HostView view={view} />
+    <div className="shell-app">
+      <aside className="sidebar">
+        <div className="brand">
+          <span className="brand-mark">NEXUS</span>
+          <span className="brand-tagline">Personal AI agent</span>
         </div>
-
-        <div className="actions">
-          {view.kind === "status" && view.status.state === "NotRunning" && (
-            <button type="button" onClick={startHost} disabled={starting}>
-              {starting ? "Se pornește…" : "Pornește Hostul"}
-            </button>
-          )}
-          {(view.kind === "bridgeError" ||
-            (view.kind === "status" &&
-              (view.status.state === "Unreachable" ||
-                view.status.state === "Rejected" ||
-                view.status.state === "Untrusted"))) && (
-            <button type="button" onClick={() => void refresh()}>
-              Reîncearcă
-            </button>
+        <nav aria-label="Sections">
+          {TABS.map((t) => {
+            const TabIcon = t.icon;
+            return (
+              <button
+                type="button"
+                key={t.id}
+                className={`nav-item${tab === t.id ? " selected" : ""}`}
+                aria-current={tab === t.id ? "page" : undefined}
+                onClick={() => setTab(t.id)}
+              >
+                <TabIcon />
+                {t.label}
+                {t.id === "dashboard" && pendingCount > 0 && (
+                  <span className="nav-count"> {pendingCount}</span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+        <div className="sidebar-connections">
+          <p className="sidebar-heading">AI connections</p>
+          {connections.length === 0 ? (
+            <p className="muted sidebar-empty">None yet</p>
+          ) : (
+            connections.map((c) => (
+              <div className="sidebar-connection" key={c.connection_id}>
+                <span className={`dot ${c.active && c.has_key ? "dot-good" : "dot-neutral"}`} />
+                {c.display_name}
+              </div>
+            ))
           )}
         </div>
+        <div className="sidebar-host">
+          <span className="dot dot-good" />
+          <div>
+            <p className="sidebar-host-title">Host connected</p>
+            <p className="muted sidebar-host-sub">{formatUptime(status.uptime_seconds)}</p>
+          </div>
+        </div>
+      </aside>
 
-        {startError && (
-          <p className="error" role="alert">
-            Hostul nu a putut fi pornit: {startError}
+      <div className="main">
+        <header className="topbar">
+          <div className="topbar-chips">
+            <button type="button" className="chip" onClick={() => setTab("settings")}>
+              <span className="dot dot-good" /> Host online
+            </button>
+            <button type="button" className="chip" onClick={() => setTab("settings")}>
+              <PlugIcon size={14} />
+              {active ? `${active.display_name}${active.model ? ` · ${active.model}` : ""}` : "No AI connection"}
+            </button>
+            <button
+              type="button"
+              className={`chip${pendingCount > 0 ? " chip-attention" : ""}`}
+              onClick={() => (pendingCount > 0 ? goToNotes() : setTab("dashboard"))}
+            >
+              <ShieldIcon size={14} />
+              {pendingCount > 0 ? `${pendingCount} waiting` : "All clear"}
+            </button>
+          </div>
+          <Clock />
+        </header>
+
+        {status.paused && (
+          <p className="error banner">
+            Restored from a backup: requests are recorded, but nothing runs until you review this
+            profile and delete restored.json from it.
           </p>
         )}
-      </section>
 
-      {view.kind === "status" && view.status.state === "Connected" && (
-        <>
-          <NotesPanel />
-          <BackupCard />
-        </>
-      )}
-
-      <p className="note">
-        Închiderea acestei ferestre nu oprește Hostul și nici sarcinile acceptate.
-      </p>
-    </main>
+        <div className="main-content">
+          {tab === "dashboard" && (
+            <Dashboard
+              hostStatus={status}
+              onGoToChat={goToChat}
+              onGoToNotes={goToNotes}
+              onGoToSettings={() => setTab("settings")}
+            />
+          )}
+          {tab === "chat" && (
+            <ChatPanel
+              key={focusConversationId ?? "new"}
+              initialConversationId={focusConversationId}
+              onOpenSettings={() => setTab("settings")}
+            />
+          )}
+          {tab === "notes" && <NotesPanel key={focusRunId ?? "new"} initialRunId={focusRunId} />}
+          {tab === "settings" && (
+            <>
+              <HostCard status={status} />
+              <ConnectionsCard />
+              <PersonaCard />
+              <BackupCard />
+            </>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
-function BackupCard() {
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<BackupSummary | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  async function backup() {
-    setBusy(true);
-    setError(null);
-    try {
-      setResult(await api.createBackup());
-    } catch (err) {
-      setError(describeError(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
+function HostCard({ status }: { status: Extract<HostStatus, { state: "Connected" }> }) {
   return (
-    <section className="card" aria-labelledby="backup-heading">
-      <h2 id="backup-heading">Date</h2>
-      <p className="muted">
-        Backup-ul copiază baza de date și notele verificate, cu un manifest de hash-uri. Se poate
-        restaura doar într-un profil nou, unde nimic nu se execută automat.
-      </p>
-      <div className="actions">
-        <button type="button" onClick={backup} disabled={busy}>
-          {busy ? "Se face backup…" : "Fă backup"}
-        </button>
-      </div>
-      {result && (
-        <div role="status">
-          <p>{`Backup creat: ${result.artifacts} ${result.artifacts === 1 ? "notă" : "note"}.`}</p>
-          <p className="path">{result.path}</p>
-          {result.unmatched_artifacts > 0 && (
-            <p className="error">
-              {result.unmatched_artifacts} notă/note fuseseră modificate în afara Nexus și au fost
-              copiate așa cum erau.
-            </p>
-          )}
-        </div>
-      )}
-      {error && (
-        <p className="error" role="alert">
-          Backup-ul a eșuat: {error}
-        </p>
-      )}
+    <section className="card" aria-labelledby="host-heading">
+      <h2 id="host-heading">Host</h2>
+      <Badge tone="good">Connected</Badge>
+      <dl className="facts">
+        <dt>Identity</dt>
+        <dd>{status.host_identity}</dd>
+        <dt>Protocol</dt>
+        <dd>v{status.protocol_version}</dd>
+        <dt>Running for</dt>
+        <dd>{formatUptime(status.uptime_seconds)}</dd>
+      </dl>
     </section>
   );
 }
 
 function HostView({ view }: { view: View }) {
   if (view.kind === "checking") {
-    return <p className="muted">Se verifică Hostul…</p>;
+    return <p className="muted">Checking the Host…</p>;
   }
   if (view.kind === "bridgeError") {
     return (
       <>
-        <Badge tone="bad">Eroare</Badge>
-        <p className="error">Puntea către Host a eșuat: {view.message}</p>
+        <Badge tone="bad">Error</Badge>
+        <p className="error">The bridge to the Host failed: {view.message}</p>
       </>
     );
   }
@@ -179,19 +292,19 @@ function HostView({ view }: { view: View }) {
     case "Connected":
       return (
         <>
-          <Badge tone="good">Conectat</Badge>
+          <Badge tone="good">Connected</Badge>
           <dl className="facts">
-            <dt>Identitate</dt>
+            <dt>Identity</dt>
             <dd>{status.host_identity}</dd>
             <dt>Protocol</dt>
             <dd>v{status.protocol_version}</dd>
-            <dt>Rulează de</dt>
+            <dt>Running for</dt>
             <dd>{formatUptime(status.uptime_seconds)}</dd>
           </dl>
           {status.paused && (
             <p className="error">
-              Profil restaurat dintr-un backup: cererile se înregistrează, dar nimic nu se execută până
-              nu verifici profilul și ștergi fișierul restored.json din el.
+              Restored from a backup: requests are recorded, but nothing runs until you review this
+              profile and delete restored.json from it.
             </p>
           )}
         </>
@@ -199,33 +312,33 @@ function HostView({ view }: { view: View }) {
     case "NotRunning":
       return (
         <>
-          <Badge tone="neutral">Oprit</Badge>
-          <p>Hostul Nexus nu rulează pentru acest utilizator Windows.</p>
+          <Badge tone="neutral">Stopped</Badge>
+          <p>The Nexus Host is not running for this Windows account.</p>
         </>
       );
     case "Unreachable":
       return (
         <>
-          <Badge tone="bad">Nu răspunde</Badge>
+          <Badge tone="bad">Unreachable</Badge>
           <p className="error">{status.reason}</p>
         </>
       );
     case "Rejected":
       return (
         <>
-          <Badge tone="bad">Refuzat</Badge>
+          <Badge tone="bad">Rejected</Badge>
           <p className="error">
-            Hostul a refuzat conexiunea ({status.error.code}): {status.error.message}
+            The Host refused the connection ({status.error.code}): {status.error.message}
           </p>
         </>
       );
     case "Untrusted":
       return (
         <>
-          <Badge tone="bad">Neverificat</Badge>
+          <Badge tone="bad">Untrusted</Badge>
           <p className="error">
-            Procesul care deține conexiunea Nexus nu rulează sub contul tău Windows, așa că
-            nu i-am trimis datele de acces.
+            The process holding the Nexus connection is not running under your Windows account, so
+            your credentials were not sent.
           </p>
           <p className="muted">{status.reason}</p>
         </>

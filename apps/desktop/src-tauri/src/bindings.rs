@@ -41,6 +41,18 @@ mod tests {
             ts::export::<nexus_protocol::Snapshot>(&conf),
             ts::export::<nexus_protocol::SubmitNoteResponse>(&conf),
             ts::export::<nexus_protocol::BackupSummary>(&conf),
+            ts::export::<nexus_protocol::ConnectionId>(&conf),
+            ts::export::<nexus_protocol::ConversationId>(&conf),
+            ts::export::<nexus_protocol::MessageId>(&conf),
+            ts::export::<nexus_protocol::ConnectionView>(&conf),
+            ts::export::<nexus_protocol::ModelView>(&conf),
+            ts::export::<nexus_protocol::PersonaView>(&conf),
+            ts::export::<nexus_protocol::ChatRole>(&conf),
+            ts::export::<nexus_protocol::ChatStatus>(&conf),
+            ts::export::<nexus_protocol::ChatMessageView>(&conf),
+            ts::export::<nexus_protocol::ConversationSummary>(&conf),
+            ts::export::<nexus_protocol::ConversationView>(&conf),
+            ts::export::<nexus_protocol::SendMessageResponse>(&conf),
         ];
         let mut out = String::from(HEADER);
         for exported in types {

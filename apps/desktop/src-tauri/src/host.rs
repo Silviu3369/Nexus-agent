@@ -6,6 +6,7 @@ use std::io;
 use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 
 use nexus_client::{CallError, ConnectError, NexusClient};
 use nexus_protocol::{ErrorCode, GetHealthResponse, HandshakeResponse, HealthStatus, NexusError};
@@ -85,10 +86,31 @@ struct Session {
     handshake: HandshakeResponse,
 }
 
+/// The lock guards only which session is current; calls run on a shared
+/// handle, so a slow one (a provider key check) does not block the others.
 #[derive(Default)]
-pub struct HostConnection(Mutex<Option<Session>>);
+pub struct HostConnection(Mutex<Option<Arc<Session>>>);
 
 impl HostConnection {
+    async fn session(&self) -> Result<Arc<Session>, BridgeError> {
+        let mut slot = self.0.lock().await;
+        if let Some(live) = slot.as_ref() {
+            return Ok(Arc::clone(live));
+        }
+        let (client, handshake) = NexusClient::connect(CLIENT_NAME).await?;
+        let live = Arc::new(Session { client, handshake });
+        *slot = Some(Arc::clone(&live));
+        Ok(live)
+    }
+
+    /// Drops `dead` unless another call has already replaced it.
+    async fn forget(&self, dead: &Arc<Session>) {
+        let mut slot = self.0.lock().await;
+        if slot.as_ref().is_some_and(|s| Arc::ptr_eq(s, dead)) {
+            *slot = None;
+        }
+    }
+
     /// Runs one host call on the live session, connecting first if needed.
     /// A transport failure drops the session so the next call reconnects;
     /// a host refusal keeps it (the connection itself is fine).
@@ -96,15 +118,10 @@ impl HostConnection {
         &self,
         f: impl AsyncFnOnce(&NexusClient) -> Result<T, CallError>,
     ) -> Result<T, BridgeError> {
-        let mut session = self.0.lock().await;
-        if session.is_none() {
-            let (client, handshake) = NexusClient::connect(CLIENT_NAME).await?;
-            *session = Some(Session { client, handshake });
-        }
-        let live = session.as_ref().expect("session was just ensured");
+        let live = self.session().await?;
         match f(&live.client).await {
             Err(CallError::Transport(err)) => {
-                *session = None;
+                self.forget(&live).await;
                 Err(CallError::Transport(err).into())
             }
             other => other.map_err(BridgeError::from),
@@ -116,21 +133,21 @@ impl HostConnection {
 pub async fn host_status(
     connection: tauri::State<'_, HostConnection>,
 ) -> Result<HostStatus, String> {
-    let mut session = connection.0.lock().await;
-
-    if let Some(existing) = session.as_ref() {
-        match existing.client.get_health().await {
-            Ok(Ok(health)) => return Ok(connected(&existing.handshake, &health)),
+    let existing = connection.0.lock().await.clone();
+    if let Some(live) = existing {
+        match live.client.get_health().await {
+            Ok(Ok(health)) => return Ok(connected(&live.handshake, &health)),
             Ok(Err(error)) => {
-                *session = None;
+                connection.forget(&live).await;
                 return Ok(HostStatus::Rejected { error });
             }
             // The host may have restarted: forget the dead session and
             // reconnect below instead of reporting a stale state.
-            Err(_) => *session = None,
+            Err(_) => connection.forget(&live).await,
         }
     }
 
+    let mut session = connection.0.lock().await;
     let (client, handshake) = match NexusClient::connect(CLIENT_NAME).await {
         Ok(pair) => pair,
         Err(err) => return Ok(status_from_connect_error(err)),
@@ -145,7 +162,7 @@ pub async fn host_status(
             });
         }
     };
-    *session = Some(Session { client, handshake });
+    *session = Some(Arc::new(Session { client, handshake }));
     Ok(status)
 }
 

@@ -62,3 +62,27 @@ export type SubmitNoteResponse = { task_id: TaskId; run_id: RunId; created: bool
 
 export type BackupSummary = { path: string; created_at_ms: number; artifacts: number; unmatched_artifacts: number; database_sha256: string }
 
+export type ConnectionId = string
+
+export type ConversationId = string
+
+export type MessageId = string
+
+export type ConnectionView = { connection_id: ConnectionId; provider: string; display_name: string; model: string | null; free_tier: boolean; has_key: boolean; active: boolean }
+
+export type ModelView = { id: string; display_name: string; input_token_limit: number | null; output_token_limit: number | null }
+
+export type PersonaView = { version: number; name: string; tone: string; style: string }
+
+export type ChatRole = "User" | "Model"
+
+export type ChatStatus = "Streaming" | "Complete" | "Failed" | "Cancelled"
+
+export type ChatMessageView = { message_id: MessageId; role: ChatRole; text: string; status: ChatStatus; model: string | null; persona_version: number | null; failure: RunFailure | null; proposed_run_id: RunId | null; prompt_tokens: number | null; output_tokens: number | null; created_at_ms: number }
+
+export type ConversationSummary = { conversation_id: ConversationId; title: string; updated_at_ms: number }
+
+export type ConversationView = { conversation_id: ConversationId; title: string; messages: ChatMessageView[] }
+
+export type SendMessageResponse = { conversation_id: ConversationId; user_message_id: MessageId; reply_message_id: MessageId }
+

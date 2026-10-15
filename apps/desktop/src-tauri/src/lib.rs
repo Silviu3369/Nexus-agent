@@ -1,4 +1,5 @@
 mod bindings;
+mod chat;
 mod host;
 mod runs;
 
@@ -18,6 +19,17 @@ pub fn run() {
             runs::artifact_content,
             runs::reveal_artifact,
             runs::create_backup,
+            chat::list_connections,
+            chat::save_gemini_connection,
+            chat::remove_connection,
+            chat::list_models,
+            chat::select_model,
+            chat::get_persona,
+            chat::save_persona,
+            chat::list_conversations,
+            chat::get_conversation,
+            chat::send_message,
+            chat::cancel_reply,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

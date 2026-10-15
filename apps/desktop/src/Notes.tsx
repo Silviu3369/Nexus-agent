@@ -1,21 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { RunId, RunStatus, RunView } from "@nexus/contracts";
 import { api, describeError } from "./api";
+import { CheckCircleIcon, NotesIcon } from "./icons";
 
 const POLL_MS = 2000;
 
 const STATUS_LABEL: Record<RunStatus, string> = {
-  Queued: "În coadă",
-  Running: "Se pregătește",
-  AwaitingApproval: "Așteaptă aprobarea ta",
-  Verifying: "Se verifică",
-  CancellationRequested: "Se anulează",
-  NeedsReconciliation: "Se reconciliază",
-  NeedsReview: "Necesită verificarea ta",
-  Succeeded: "Creată",
-  Failed: "Eșuată",
-  Cancelled: "Anulată",
-  Denied: "Refuzată",
+  Queued: "Queued",
+  Running: "Preparing",
+  AwaitingApproval: "Awaiting your approval",
+  Verifying: "Verifying",
+  CancellationRequested: "Cancelling",
+  NeedsReconciliation: "Reconciling",
+  NeedsReview: "Needs your review",
+  Succeeded: "Created",
+  Failed: "Failed",
+  Cancelled: "Cancelled",
+  Denied: "Denied",
 };
 
 function statusTone(status: RunStatus): "good" | "bad" | "neutral" | "attention" {
@@ -34,29 +35,29 @@ function statusTone(status: RunStatus): "good" | "bad" | "neutral" | "attention"
 }
 
 const FAILURE_TEXT: Record<string, string> = {
-  Denied: "Ai refuzat crearea notei.",
-  ApprovalExpired: "Aprobarea a expirat înainte de o decizie.",
-  ApprovalInvalidated: "Aprobarea nu mai corespundea acțiunii.",
-  Cancelled: "Anulată.",
-  ResourceChanged: "Destinația nu mai era neatinsă, așa că nota nu a fost scrisă.",
-  EffectFailed: "Scrierea nu a reușit; nu s-a creat niciun fișier.",
-  OutcomeUnknown: "Rezultat nesigur: există un fișier care nu poate fi dovedit ca fiind al acestei note.",
-  InvalidRequest: "Cererea nu era validă.",
+  Denied: "You denied creating the note.",
+  ApprovalExpired: "The approval expired before a decision.",
+  ApprovalInvalidated: "The approval no longer matched the action.",
+  Cancelled: "Cancelled.",
+  ResourceChanged: "The destination was no longer untouched, so the note was not written.",
+  EffectFailed: "The write failed; no file was created.",
+  OutcomeUnknown: "Uncertain outcome: there is a file that cannot be proven to belong to this note.",
+  InvalidRequest: "The request was not valid.",
 };
 
 const CANCELLABLE: RunStatus[] = ["Queued", "Running", "AwaitingApproval"];
 
-function time(ms: number): string {
-  return new Date(ms).toLocaleTimeString("ro-RO");
+export function time(ms: number): string {
+  return new Date(ms).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
 }
 
 export function StatusBadge({ status }: { status: RunStatus }) {
   return <span className={`badge badge-${statusTone(status)}`}>{STATUS_LABEL[status]}</span>;
 }
 
-export function NotesPanel() {
+export function NotesPanel({ initialRunId }: { initialRunId?: RunId | null }) {
   const [runs, setRuns] = useState<RunView[]>([]);
-  const [selected, setSelected] = useState<RunId | null>(null);
+  const [selected, setSelected] = useState<RunId | null>(initialRunId ?? null);
   const [listError, setListError] = useState<string | null>(null);
   const inFlight = useRef(false);
 
@@ -94,14 +95,16 @@ export function NotesPanel() {
       />
 
       <section className="card" aria-labelledby="activity-heading">
-        <h2 id="activity-heading">Activitate</h2>
+        <h2 id="activity-heading">
+          <NotesIcon /> Activity
+        </h2>
         {listError && (
           <p className="error" role="alert">
-            Lista nu a putut fi încărcată: {listError}
+            The list could not be loaded: {listError}
           </p>
         )}
         {runs.length === 0 && !listError ? (
-          <p className="muted">Nicio notă încă.</p>
+          <p className="muted">No notes yet.</p>
         ) : (
           <ul className="runs">
             {runs.map((run) => (
@@ -157,10 +160,10 @@ function NewNoteForm({ onSubmitted }: { onSubmitted: (runId: RunId) => void }) {
 
   return (
     <section className="card" aria-labelledby="new-note-heading">
-      <h2 id="new-note-heading">Notă nouă</h2>
+      <h2 id="new-note-heading">New note</h2>
       <form className="note-form" onSubmit={submit}>
         <label>
-          Titlu
+          Title
           <input
             value={title}
             onChange={(e) => {
@@ -172,7 +175,7 @@ function NewNoteForm({ onSubmitted }: { onSubmitted: (runId: RunId) => void }) {
           />
         </label>
         <label>
-          Conținut
+          Content
           <textarea
             value={body}
             onChange={(e) => {
@@ -184,10 +187,10 @@ function NewNoteForm({ onSubmitted }: { onSubmitted: (runId: RunId) => void }) {
         </label>
         <div className="actions">
           <button type="submit" disabled={busy || title.trim() === ""}>
-            {busy ? "Se trimite…" : "Pregătește nota"}
+            {busy ? "Sending…" : "Prepare note"}
           </button>
         </div>
-        <p className="muted">Nimic nu se scrie pe disc până nu aprobi conținutul exact.</p>
+        <p className="muted">Nothing is written to disk until you approve the exact content.</p>
         {error && (
           <p className="error" role="alert">
             {error}
@@ -198,11 +201,13 @@ function NewNoteForm({ onSubmitted }: { onSubmitted: (runId: RunId) => void }) {
   );
 }
 
-function RunDetail({ summary, onChanged }: { summary: RunView; onChanged: () => void }) {
+export function RunDetail({ summary, onChanged }: { summary: RunView; onChanged: () => void }) {
   const [detail, setDetail] = useState<RunView | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [content, setContent] = useState<string | null>(null);
+  // Several details can be on screen (chat proposals), so ids are unique.
+  const headingId = useId();
 
   // Refetch whenever the run changes, so the preview always comes from the
   // host's current manifest.
@@ -235,8 +240,8 @@ function RunDetail({ summary, onChanged }: { summary: RunView; onChanged: () => 
   }
 
   return (
-    <section className="card" aria-labelledby="detail-heading">
-      <h2 id="detail-heading">{view.title}</h2>
+    <section className="card" aria-labelledby={headingId}>
+      <h2 id={headingId}>{view.title}</h2>
       <div role="status" aria-live="polite">
         <StatusBadge status={view.status} />
       </div>
@@ -249,20 +254,20 @@ function RunDetail({ summary, onChanged }: { summary: RunView; onChanged: () => 
 
       {pending && (
         <div className="preview">
-          <h3>Ce se va scrie</h3>
+          <h3>What will be written</h3>
           {preview ? (
             <>
               <dl className="facts">
-                <dt>Destinație</dt>
+                <dt>Destination</dt>
                 <dd className="path">{preview.destination}</dd>
-                <dt>Mărime</dt>
-                <dd>{preview.size_bytes} octeți</dd>
+                <dt>Size</dt>
+                <dd>{preview.size_bytes} bytes</dd>
                 <dt>SHA-256</dt>
                 <dd className="hash">{preview.sha256}</dd>
-                <dt>Expiră</dt>
+                <dt>Expires</dt>
                 <dd>{time(pending.expires_at_ms)}</dd>
               </dl>
-              <pre className="content" aria-label="Conținutul exact al notei">
+              <pre className="content" aria-label="Exact content of the note">
                 {preview.content}
               </pre>
               <div className="actions">
@@ -271,7 +276,7 @@ function RunDetail({ summary, onChanged }: { summary: RunView; onChanged: () => 
                   disabled={busy}
                   onClick={() => act(() => api.decide(pending.approval_id, pending.manifest_sha256, true))}
                 >
-                  Aprobă și creează
+                  Approve and create
                 </button>
                 <button
                   type="button"
@@ -279,12 +284,12 @@ function RunDetail({ summary, onChanged }: { summary: RunView; onChanged: () => 
                   disabled={busy}
                   onClick={() => act(() => api.decide(pending.approval_id, pending.manifest_sha256, false))}
                 >
-                  Refuză
+                  Deny
                 </button>
               </div>
             </>
           ) : (
-            <p className="muted">Se încarcă previzualizarea exactă…</p>
+            <p className="muted">Loading the exact preview…</p>
           )}
         </div>
       )}
@@ -292,7 +297,7 @@ function RunDetail({ summary, onChanged }: { summary: RunView; onChanged: () => 
       {view.status === "Succeeded" && view.artifact && (
         <div className="result">
           <dl className="facts">
-            <dt>Fișier</dt>
+            <dt>File</dt>
             <dd className="path">{view.artifact.path}</dd>
             <dt>SHA-256</dt>
             <dd className="hash">{view.artifact.sha256}</dd>
@@ -305,14 +310,14 @@ function RunDetail({ summary, onChanged }: { summary: RunView; onChanged: () => 
                 act(async () => setContent(await api.artifactContent(view.artifact!.artifact_id)))
               }
             >
-              Arată conținutul
+              Show content
             </button>
             <button type="button" className="secondary" disabled={busy} onClick={() => act(() => api.revealArtifact(view.run_id))}>
-              Deschide locația
+              Open location
             </button>
           </div>
           {content !== null && (
-            <pre className="content" aria-label="Conținutul verificat al notei">
+            <pre className="content" aria-label="Verified content of the note">
               {content}
             </pre>
           )}
@@ -322,7 +327,7 @@ function RunDetail({ summary, onChanged }: { summary: RunView; onChanged: () => 
       {CANCELLABLE.includes(view.status) && (
         <div className="actions">
           <button type="button" className="secondary" disabled={busy} onClick={() => act(() => api.cancelRun(view.run_id))}>
-            Anulează
+            Cancel
           </button>
         </div>
       )}
@@ -330,6 +335,11 @@ function RunDetail({ summary, onChanged }: { summary: RunView; onChanged: () => 
       {error && (
         <p className="error" role="alert">
           {error}
+        </p>
+      )}
+      {view.status === "Succeeded" && !view.failure && (
+        <p className="muted result-footer">
+          <CheckCircleIcon size={14} /> Verified against its SHA-256 hash.
         </p>
       )}
     </section>

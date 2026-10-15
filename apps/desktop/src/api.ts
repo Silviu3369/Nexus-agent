@@ -4,10 +4,19 @@ import type {
   ArtifactId,
   BackupSummary,
   BridgeError,
+  ConnectionId,
+  ConnectionView,
+  ConversationId,
+  ConversationSummary,
+  ConversationView,
   ErrorCode,
   HostStatus,
+  MessageId,
+  ModelView,
+  PersonaView,
   RunId,
   RunView,
+  SendMessageResponse,
   Snapshot,
   SubmitNoteResponse,
 } from "@nexus/contracts";
@@ -25,19 +34,47 @@ export const api = {
   artifactContent: (artifactId: ArtifactId) => invoke<string>("artifact_content", { artifactId }),
   revealArtifact: (runId: RunId) => invoke<null>("reveal_artifact", { runId }),
   createBackup: () => invoke<BackupSummary>("create_backup"),
+
+  listConnections: () => invoke<ConnectionView[]>("list_connections"),
+  /** The key goes to the host's Windows vault; `null` keeps the stored one. */
+  saveGeminiConnection: (
+    connectionId: ConnectionId | null,
+    displayName: string,
+    freeTier: boolean,
+    apiKey: string | null,
+  ) =>
+    invoke<ConnectionView>("save_gemini_connection", { connectionId, displayName, freeTier, apiKey }),
+  removeConnection: (connectionId: ConnectionId) =>
+    invoke<null>("remove_connection", { connectionId }),
+  listModels: (connectionId: ConnectionId) => invoke<ModelView[]>("list_models", { connectionId }),
+  selectModel: (connectionId: ConnectionId, model: string) =>
+    invoke<ConnectionView>("select_model", { connectionId, model }),
+  getPersona: () => invoke<PersonaView>("get_persona"),
+  savePersona: (name: string, tone: string, style: string) =>
+    invoke<PersonaView>("save_persona", { name, tone, style }),
+  listConversations: () => invoke<ConversationSummary[]>("list_conversations"),
+  getConversation: (conversationId: ConversationId) =>
+    invoke<ConversationView>("get_conversation", { conversationId }),
+  sendMessage: (conversationId: ConversationId | null, idempotencyKey: string, text: string) =>
+    invoke<SendMessageResponse>("send_message", { conversationId, idempotencyKey, text }),
+  cancelReply: (messageId: MessageId) => invoke<null>("cancel_reply", { messageId }),
 };
 
 const CODE_TEXT: Partial<Record<ErrorCode, string>> = {
-  ApprovalExpired: "Aprobarea a expirat.",
-  ApprovalInvalidated: "Aprobarea nu mai este valabilă.",
-  InvalidRequest: "Cererea nu este validă.",
-  RevisionConflict: "Conflict cu o cerere anterioară.",
-  ResourceChanged: "Fișierul a fost modificat în afara Nexus.",
-  NotFound: "Nu a fost găsit.",
-  Unauthenticated: "Conexiunea la Host nu este autentificată.",
+  ApprovalExpired: "The approval expired.",
+  ApprovalInvalidated: "The approval is no longer valid.",
+  InvalidRequest: "The request is not valid.",
+  RevisionConflict: "Conflict with an earlier request.",
+  ResourceChanged: "The file was changed outside Nexus.",
+  NotFound: "Not found.",
+  Unauthenticated: "Authentication was refused.",
+  Forbidden: "This operation is not allowed here.",
+  QuotaExceeded: "The AI provider's quota has been reached.",
+  DeadlineExceeded: "The AI provider did not respond in time.",
+  ProviderUnavailable: "The AI provider is unavailable right now.",
 };
 
-/** Turns a rejected bridge call into a short Romanian message plus detail. */
+/** Turns a rejected bridge call into a short English message plus detail. */
 export function describeError(err: unknown): string {
   if (typeof err === "object" && err !== null && "message" in err) {
     const bridge = err as BridgeError;
