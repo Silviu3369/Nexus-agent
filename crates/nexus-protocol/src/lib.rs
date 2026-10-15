@@ -3,6 +3,7 @@
 //! contracts (`CONTRACTE_NEXUS_RO.md` §1) — `nexus-host` and `nexus-client`
 //! depend on it; it depends on neither.
 
+pub mod chat;
 pub mod error;
 pub mod handshake;
 pub mod ids;
@@ -17,11 +18,16 @@ pub use runs::{
     SubmitNoteResponse,
 };
 
+pub use chat::{
+    ChatMessageView, ChatRole, ChatStatus, ConnectionView, ConversationSummary, ConversationView,
+    ModelView, PersonaView, SaveGeminiConnectionRequest, SavePersonaRequest, SendMessageRequest,
+    SendMessageResponse,
+};
 pub use error::{ErrorCode, NexusError};
 pub use handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse, HealthStatus};
 pub use ids::{
-    ActionId, ApprovalId, ArtifactId, EventId, OperationId, ProjectId, RequestId, RunId, StepId,
-    TaskId,
+    ActionId, ApprovalId, ArtifactId, ConnectionId, ConversationId, EventId, MessageId,
+    OperationId, ProjectId, RequestId, RunId, StepId, TaskId,
 };
 pub use service::{NexusService, NexusServiceClient};
 pub use version::PROTOCOL_VERSION;

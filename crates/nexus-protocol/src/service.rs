@@ -2,9 +2,13 @@
 //! (ADR-IPC-001: tarpc instead of a separate schema language). `nexus-host`
 //! implements this; `nexus-client` calls the generated client stub.
 
+use crate::chat::{
+    ConnectionView, ConversationSummary, ConversationView, ModelView, PersonaView,
+    SaveGeminiConnectionRequest, SavePersonaRequest, SendMessageRequest, SendMessageResponse,
+};
 use crate::error::NexusError;
 use crate::handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse};
-use crate::ids::{ArtifactId, RunId};
+use crate::ids::{ArtifactId, ConnectionId, ConversationId, MessageId, RunId};
 use crate::runs::{
     BackupSummary, DecideApprovalRequest, EventsPage, RunView, Snapshot, SubmitNoteRequest,
     SubmitNoteResponse,
@@ -40,6 +44,45 @@ pub trait NexusService {
     /// Consistent snapshot of the database and the notes it references,
     /// with a manifest of hashes (BACKUP-01). Writes wait while it runs.
     async fn create_backup() -> Result<BackupSummary, NexusError>;
+
+    /// Connections with their key redacted to `has_key`.
+    async fn list_connections() -> Result<Vec<ConnectionView>, NexusError>;
+
+    /// Stores the key in the Windows vault (never in the database), then
+    /// checks it by listing models — a real call to Google, made only here.
+    async fn save_gemini_connection(
+        request: SaveGeminiConnectionRequest,
+    ) -> Result<ConnectionView, NexusError>;
+
+    /// Deletes the connection and its vault entry.
+    async fn remove_connection(connection_id: ConnectionId) -> Result<(), NexusError>;
+
+    /// Models the provider reports for this connection (a real call).
+    async fn list_models(connection_id: ConnectionId) -> Result<Vec<ModelView>, NexusError>;
+
+    /// Makes this connection and model the ones used for chat. There is no
+    /// automatic fallback to another connection or provider.
+    async fn select_model(
+        connection_id: ConnectionId,
+        model: String,
+    ) -> Result<ConnectionView, NexusError>;
+
+    async fn get_persona() -> Result<PersonaView, NexusError>;
+
+    /// Saves a new persona version. It changes tone and style, never rights.
+    async fn save_persona(request: SavePersonaRequest) -> Result<PersonaView, NexusError>;
+
+    async fn list_conversations(limit: u32) -> Result<Vec<ConversationSummary>, NexusError>;
+
+    async fn get_conversation(
+        conversation_id: ConversationId,
+    ) -> Result<ConversationView, NexusError>;
+
+    /// Records the user's message and starts the reply; returns at once.
+    async fn send_message(request: SendMessageRequest) -> Result<SendMessageResponse, NexusError>;
+
+    /// Stops a reply in progress; what arrived so far is kept, marked cancelled.
+    async fn cancel_reply(message_id: MessageId) -> Result<(), NexusError>;
 
     /// Explicit stop: no new work is taken, the current step finishes,
     /// uncertain effects stay recorded for reconciliation on next start.

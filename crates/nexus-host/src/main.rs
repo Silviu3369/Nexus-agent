@@ -27,7 +27,7 @@ async fn main() -> anyhow::Result<()> {
         tracing::error!(pid = std::process::id(), error = %err, "nexus-host not started");
     })?;
 
-    let runtime = nexus_host::Runtime::open(&profile, nexus_host::DEFAULT_APPROVAL_TTL)
+    let runtime = nexus_host::Runtime::open_with(&profile, runtime_config())
         .await
         .inspect_err(|err| tracing::error!(error = %err, "could not open the profile database"))?;
     let executor = tokio::spawn(runtime.clone().run_executor());
@@ -38,6 +38,18 @@ async fn main() -> anyhow::Result<()> {
     executor.await?;
     tracing::info!(pid = std::process::id(), "nexus-host stopped");
     Ok(())
+}
+
+/// Release builds always talk to Google's endpoint. Debug builds may point
+/// at a local test server (the adapter still refuses anything but loopback).
+fn runtime_config() -> nexus_host::RuntimeConfig {
+    #[allow(unused_mut)]
+    let mut config = nexus_host::RuntimeConfig::default();
+    #[cfg(debug_assertions)]
+    if let Ok(url) = std::env::var("NEXUS_GEMINI_BASE_URL") {
+        config.gemini_base_url = url;
+    }
+    config
 }
 
 /// `nexus-host restore <backup-dir> <new-profile-dir>`: offline, never touches

@@ -180,6 +180,23 @@ impl OperationState {
     }
 }
 
+closed_enum!(MessageRole { User, Model });
+
+closed_enum!(MessageStatus {
+    Streaming,
+    Complete,
+    Failed,
+    Cancelled,
+});
+
+impl MessageStatus {
+    /// A model message is written once as Streaming and settles exactly once.
+    pub fn can_transition_to(self, next: MessageStatus) -> bool {
+        use MessageStatus::*;
+        matches!((self, next), (Streaming, Complete | Failed | Cancelled))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

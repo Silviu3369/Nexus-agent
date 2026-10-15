@@ -3,4 +3,7 @@
 
 pub mod state;
 
-pub use state::{ActionState, IllegalTransition, OperationState, RunState, UnknownState};
+pub use state::{
+    ActionState, IllegalTransition, MessageRole, MessageStatus, OperationState, RunState,
+    UnknownState,
+};

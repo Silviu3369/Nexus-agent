@@ -934,18 +934,18 @@ impl Store {
     }
 }
 
-fn parse_uuid(s: &str) -> Result<Uuid, StorageError> {
+pub(crate) fn parse_uuid(s: &str) -> Result<Uuid, StorageError> {
     Uuid::parse_str(s).map_err(|e| StorageError::Corrupt(format!("bad id {s:?}: {e}")))
 }
 
-fn parse_state<T: std::str::FromStr<Err = nexus_core::UnknownState>>(
+pub(crate) fn parse_state<T: std::str::FromStr<Err = nexus_core::UnknownState>>(
     s: &str,
 ) -> Result<T, StorageError> {
     s.parse::<T>()
         .map_err(|e| StorageError::Corrupt(e.to_string()))
 }
 
-fn insert_event(
+pub(crate) fn insert_event(
     tx: &Transaction,
     kind: &str,
     entity_id: &str,

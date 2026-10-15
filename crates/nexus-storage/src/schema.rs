@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::StorageError;
 
-pub const SUPPORTED_VERSION: i64 = 1;
+pub const SUPPORTED_VERSION: i64 = 2;
 
 /// Version 1: everything M1 persists. State columns are closed lists that a
 /// test keeps identical to the `nexus-core` enums. Times are UTC unix ms.
@@ -111,7 +111,67 @@ CREATE TABLE events (
 ) STRICT;
 "#;
 
-const MIGRATIONS: &[&str] = &[V1];
+/// Version 2 (M2): AI provider connections, a versioned persona and
+/// conversations. API keys are never stored here: a connection holds only an
+/// opaque name of its entry in the Windows vault.
+const V2: &str = r#"
+CREATE TABLE settings (
+    key        TEXT PRIMARY KEY,
+    value_json TEXT NOT NULL CHECK (json_valid(value_json))
+) STRICT;
+
+CREATE TABLE provider_connections (
+    id            TEXT    PRIMARY KEY,
+    provider      TEXT    NOT NULL CHECK (provider IN ('Gemini')),
+    display_name  TEXT    NOT NULL CHECK (length(display_name) BETWEEN 1 AND 100),
+    model         TEXT,
+    free_tier     INTEGER NOT NULL CHECK (free_tier IN (0, 1)),
+    secret_name   TEXT    NOT NULL UNIQUE,
+    revision      INTEGER NOT NULL CHECK (revision >= 1),
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE personas (
+    version       INTEGER PRIMARY KEY CHECK (version >= 1),
+    name          TEXT    NOT NULL CHECK (length(name) BETWEEN 1 AND 60),
+    tone          TEXT    NOT NULL CHECK (length(tone) <= 500),
+    style         TEXT    NOT NULL CHECK (length(style) <= 1000),
+    created_at_ms INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE conversations (
+    id            TEXT    PRIMARY KEY,
+    title         TEXT    NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE messages (
+    id              TEXT    PRIMARY KEY,
+    conversation_id TEXT    NOT NULL REFERENCES conversations (id),
+    seq             INTEGER NOT NULL CHECK (seq >= 1),
+    role            TEXT    NOT NULL CHECK (role IN ('User', 'Model')),
+    text            TEXT    NOT NULL,
+    status          TEXT    NOT NULL CHECK (status IN ('Streaming', 'Complete', 'Failed', 'Cancelled')),
+    idempotency_key TEXT    UNIQUE,
+    connection_id   TEXT    REFERENCES provider_connections (id) ON DELETE SET NULL,
+    model           TEXT,
+    persona_version INTEGER REFERENCES personas (version),
+    error_code      TEXT,
+    error_message   TEXT,
+    prompt_tokens   INTEGER,
+    output_tokens   INTEGER,
+    proposed_run_id TEXT    REFERENCES runs (id),
+    created_at_ms   INTEGER NOT NULL,
+    updated_at_ms   INTEGER NOT NULL,
+    UNIQUE (conversation_id, seq)
+) STRICT;
+
+CREATE INDEX messages_by_status ON messages (status);
+"#;
+
+const MIGRATIONS: &[&str] = &[V1, V2];
 
 pub fn migrate(conn: &mut Connection) -> Result<(), StorageError> {
     let current: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;

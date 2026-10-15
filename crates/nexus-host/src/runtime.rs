@@ -22,6 +22,9 @@ use tokio::sync::{Notify, watch};
 use crate::backup;
 use crate::fault;
 use crate::tools::markdown_artifact::{self as note_tool, ArtifactPaths, NoteContent, Observed};
+use crate::vault::SecretVault;
+
+mod chat;
 
 pub const DEFAULT_APPROVAL_TTL: Duration = Duration::from_secs(10 * 60);
 const IDLE_TICK: Duration = Duration::from_secs(1);
@@ -75,12 +78,46 @@ pub struct Runtime {
     paused: bool,
     wake: Notify,
     stop: watch::Sender<bool>,
+    vault: SecretVault,
+    gemini_base_url: String,
+    reply_deadline: Duration,
+    replies: chat::Replies,
+}
+
+#[derive(Debug, Clone)]
+pub struct RuntimeConfig {
+    pub approval_ttl: Duration,
+    /// Google's endpoint in production; tests point it at a local server.
+    pub gemini_base_url: String,
+    /// Whole budget of one model reply.
+    pub reply_deadline: Duration,
+}
+
+impl Default for RuntimeConfig {
+    fn default() -> Self {
+        Self {
+            approval_ttl: DEFAULT_APPROVAL_TTL,
+            gemini_base_url: nexus_providers::gemini::PRODUCTION_BASE_URL.to_string(),
+            reply_deadline: Duration::from_secs(120),
+        }
+    }
 }
 
 impl Runtime {
+    pub async fn open(profile: &Path, approval_ttl: Duration) -> anyhow::Result<Arc<Self>> {
+        Self::open_with(
+            profile,
+            RuntimeConfig {
+                approval_ttl,
+                ..RuntimeConfig::default()
+            },
+        )
+        .await
+    }
+
     /// Opens the profile's database and reconciles interrupted runs *before*
     /// the executor or any client can act on them.
-    pub async fn open(profile: &Path, approval_ttl: Duration) -> anyhow::Result<Arc<Self>> {
+    pub async fn open_with(profile: &Path, config: RuntimeConfig) -> anyhow::Result<Arc<Self>> {
         let store = Store::open(&profile.join(backup::DATABASE_FILE))?;
         store.ensure_default_project(now_ms()).await?;
         let paused = backup::is_restored_profile(profile);
@@ -89,10 +126,14 @@ impl Runtime {
             store,
             profile: profile.to_path_buf(),
             artifact_root: profile.join("artifacts"),
-            approval_ttl_ms: i64::try_from(approval_ttl.as_millis()).unwrap_or(i64::MAX),
+            approval_ttl_ms: i64::try_from(config.approval_ttl.as_millis()).unwrap_or(i64::MAX),
             paused,
             wake: Notify::new(),
             stop,
+            vault: SecretVault::for_profile(profile),
+            gemini_base_url: config.gemini_base_url,
+            reply_deadline: config.reply_deadline,
+            replies: chat::Replies::default(),
         });
         if paused {
             tracing::warn!(
@@ -102,6 +143,8 @@ impl Runtime {
             );
         } else {
             runtime.reconcile_interrupted().await?;
+            runtime.store.fail_interrupted_messages(now_ms()).await?;
+            runtime.sweep_unreferenced_secrets().await?;
         }
         Ok(runtime)
     }

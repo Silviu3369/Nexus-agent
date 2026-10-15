@@ -6,7 +6,8 @@ members = [
     "crates/nexus-storage",
     "crates/nexus-client",
     "crates/nexus-host",
-    "apps/desktop/src-tauri",
+    "crates/nexus-providers",
+    "apps/desktop/src-tauri", "crates/nexus-providers",
 ]
 
 [workspace.package]

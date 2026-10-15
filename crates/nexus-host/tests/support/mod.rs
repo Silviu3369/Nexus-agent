@@ -3,26 +3,41 @@
 
 #![allow(dead_code)]
 
+pub mod chat;
+pub mod fake_gemini;
+
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
 use nexus_client::NexusClient;
-use nexus_host::Runtime;
+use nexus_host::vault::SecretVault;
+use nexus_host::{Runtime, RuntimeConfig};
 use nexus_protocol::pairing::{self, PROFILE_DIR_ENV};
+
+/// Debug-only override read by `nexus-host` (see `main.rs`).
+pub const GEMINI_BASE_URL_ENV: &str = "NEXUS_GEMINI_BASE_URL";
 
 /// Starts the real `nexus-host` binary on `profile` (its own pipe), optionally
 /// set to abort at a fault point (debug builds only).
 pub fn spawn_host(profile: &Path, fault: Option<&str>) -> Child {
+    spawn_host_env(profile, fault, &[])
+}
+
+pub fn spawn_host_env(profile: &Path, fault: Option<&str>, envs: &[(&str, &str)]) -> Child {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_nexus-host"));
     cmd.env(PROFILE_DIR_ENV, profile)
         .env_remove(nexus_host::fault::FAULT_POINT_ENV)
+        .env_remove(GEMINI_BASE_URL_ENV)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     if let Some(point) = fault {
         cmd.env(nexus_host::fault::FAULT_POINT_ENV, point);
+    }
+    for (key, value) in envs {
+        cmd.env(key, value);
     }
     cmd.spawn().expect("nexus-host binary must start")
 }
@@ -73,6 +88,9 @@ impl TempProfile {
 
 impl Drop for TempProfile {
     fn drop(&mut self) {
+        // Test secrets live in Credential Manager under this profile's
+        // prefix; remove them even when the test failed half-way.
+        let _ = SecretVault::for_profile(&self.0).purge();
         // Best effort: on Windows a file still open by a lingering task
         // cannot be removed; that only leaves a stray temp directory.
         let _ = std::fs::remove_dir_all(&self.0);
@@ -98,13 +116,28 @@ impl TestHost {
     }
 
     pub async fn start_with_ttl(token: &str, approval_ttl: Duration) -> Self {
-        let profile = TempProfile::new("host");
+        Self::start_with(
+            token,
+            RuntimeConfig {
+                approval_ttl,
+                ..RuntimeConfig::default()
+            },
+        )
+        .await
+    }
+
+    pub async fn start_with(token: &str, config: RuntimeConfig) -> Self {
+        Self::start_in(TempProfile::new("host"), token, config).await
+    }
+
+    /// Starts on an existing profile (e.g. one prepared by the test).
+    pub async fn start_in(profile: TempProfile, token: &str, config: RuntimeConfig) -> Self {
         let pipe_name = unique_pipe_name();
         let listener = nexus_host::bind_first_instance(&pipe_name)
             .expect("binding a fresh, uniquely-named pipe must succeed");
-        let runtime = Runtime::open(profile.path(), approval_ttl)
+        let runtime = Runtime::open_with(profile.path(), config)
             .await
-            .expect("runtime must open a fresh profile");
+            .expect("runtime must open the profile");
         let executor = tokio::spawn(runtime.clone().run_executor());
         let serve = tokio::spawn(nexus_host::serve_forever(
             listener,

@@ -41,6 +41,9 @@ typed_id!(ApprovalId);
 typed_id!(ArtifactId);
 typed_id!(EventId);
 typed_id!(RequestId);
+typed_id!(ConnectionId);
+typed_id!(ConversationId);
+typed_id!(MessageId);
 
 #[cfg(test)]
 mod tests {

@@ -6,9 +6,11 @@ use std::time::Instant;
 use futures::StreamExt;
 use nexus_protocol::service::NexusService;
 use nexus_protocol::{
-    ArtifactId, BackupSummary, DecideApprovalRequest, ErrorCode, EventsPage, GetHealthResponse,
-    HandshakeRequest, HandshakeResponse, HealthStatus, NexusError, PROTOCOL_VERSION, RunId,
-    RunView, Snapshot, SubmitNoteRequest, SubmitNoteResponse,
+    ArtifactId, BackupSummary, ConnectionId, ConnectionView, ConversationId, ConversationSummary,
+    ConversationView, DecideApprovalRequest, ErrorCode, EventsPage, GetHealthResponse,
+    HandshakeRequest, HandshakeResponse, HealthStatus, MessageId, ModelView, NexusError,
+    PROTOCOL_VERSION, PersonaView, RunId, RunView, SaveGeminiConnectionRequest, SavePersonaRequest,
+    SendMessageRequest, SendMessageResponse, Snapshot, SubmitNoteRequest, SubmitNoteResponse,
 };
 use tarpc::context::Context;
 use tarpc::server::{BaseChannel, Channel};
@@ -181,6 +183,94 @@ impl NexusService for HostServer {
     async fn create_backup(self, _ctx: Context) -> Result<BackupSummary, NexusError> {
         self.require_session()?;
         self.runtime.create_backup().await
+    }
+
+    async fn list_connections(self, _ctx: Context) -> Result<Vec<ConnectionView>, NexusError> {
+        self.require_session()?;
+        self.runtime.list_connections().await
+    }
+
+    async fn save_gemini_connection(
+        self,
+        _ctx: Context,
+        request: SaveGeminiConnectionRequest,
+    ) -> Result<ConnectionView, NexusError> {
+        self.require_session()?;
+        self.runtime.save_gemini_connection(request).await
+    }
+
+    async fn remove_connection(
+        self,
+        _ctx: Context,
+        connection_id: ConnectionId,
+    ) -> Result<(), NexusError> {
+        self.require_session()?;
+        self.runtime.remove_connection(connection_id).await
+    }
+
+    async fn list_models(
+        self,
+        _ctx: Context,
+        connection_id: ConnectionId,
+    ) -> Result<Vec<ModelView>, NexusError> {
+        self.require_session()?;
+        self.runtime.list_models(connection_id).await
+    }
+
+    async fn select_model(
+        self,
+        _ctx: Context,
+        connection_id: ConnectionId,
+        model: String,
+    ) -> Result<ConnectionView, NexusError> {
+        self.require_session()?;
+        self.runtime.select_model(connection_id, model).await
+    }
+
+    async fn get_persona(self, _ctx: Context) -> Result<PersonaView, NexusError> {
+        self.require_session()?;
+        self.runtime.get_persona().await
+    }
+
+    async fn save_persona(
+        self,
+        _ctx: Context,
+        request: SavePersonaRequest,
+    ) -> Result<PersonaView, NexusError> {
+        self.require_session()?;
+        self.runtime.save_persona(request).await
+    }
+
+    async fn list_conversations(
+        self,
+        _ctx: Context,
+        limit: u32,
+    ) -> Result<Vec<ConversationSummary>, NexusError> {
+        self.require_session()?;
+        self.runtime.list_conversations(limit).await
+    }
+
+    async fn get_conversation(
+        self,
+        _ctx: Context,
+        conversation_id: ConversationId,
+    ) -> Result<ConversationView, NexusError> {
+        self.require_session()?;
+        self.runtime.get_conversation(conversation_id).await
+    }
+
+    async fn send_message(
+        self,
+        _ctx: Context,
+        request: SendMessageRequest,
+    ) -> Result<SendMessageResponse, NexusError> {
+        self.require_session()?;
+        self.runtime.send_message(request).await
+    }
+
+    async fn cancel_reply(self, _ctx: Context, message_id: MessageId) -> Result<(), NexusError> {
+        self.require_session()?;
+        self.runtime.cancel_reply(message_id).await
     }
 
     async fn stop_host(self, _ctx: Context) -> Result<(), NexusError> {

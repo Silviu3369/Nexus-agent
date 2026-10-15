@@ -1,0 +1,636 @@
+//! M2 chat over real RPC against a controlled Gemini stand-in on loopback
+//! (`SECURITATE_SI_VALIDARE_RO.md` AI-01..03). No real provider is called;
+//! the fake records exactly what would have left the PC.
+
+mod support;
+
+use std::path::Path;
+use std::time::Duration;
+
+use nexus_client::NexusClient;
+use nexus_host::RuntimeConfig;
+use nexus_host::vault::SecretVault;
+use nexus_protocol::{
+    ApprovalDecision, ChatRole, ChatStatus, DecideApprovalRequest, ErrorCode, RunId, RunStatus,
+    RunView, SavePersonaRequest, SendMessageRequest,
+};
+use support::chat::{files_under, gemini, message, send, settled};
+use support::fake_gemini::{FakeGemini, MODEL, Reply, text_event};
+use support::{TempProfile, TestHost};
+
+const TOKEN: &str = "chat-token";
+const KEY: &str = "SENTINEL-gemini-key-host-5c1e";
+
+fn config(fake: &FakeGemini) -> RuntimeConfig {
+    RuntimeConfig {
+        gemini_base_url: fake.base_url.clone(),
+        reply_deadline: Duration::from_secs(10),
+        ..RuntimeConfig::default()
+    }
+}
+
+/// A connection with the fake's model selected, ready to chat.
+async fn connect_gemini(client: &NexusClient) {
+    let saved = client.save_gemini_connection(gemini(KEY)).await.unwrap();
+    client
+        .select_model(saved.connection_id, MODEL.to_string())
+        .await
+        .unwrap();
+}
+
+async fn wait_run(client: &NexusClient, run: RunId, wanted: RunStatus) -> RunView {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let view = client.run(run).await.unwrap();
+        if view.status == wanted {
+            return view;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "run stayed {:?}, expected {wanted:?}",
+            view.status
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+fn note_files(profile: &Path) -> Vec<std::path::PathBuf> {
+    files_under(&profile.join("artifacts"))
+        .into_iter()
+        .filter(|p| p.extension().is_some_and(|e| e == "md"))
+        .collect()
+}
+
+fn roles(body: &serde_json::Value) -> Vec<String> {
+    body["contents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["role"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn ai01_reply_streams_from_the_selected_model_with_persona_and_history() {
+    let fake = FakeGemini::start(KEY).await;
+    let host = TestHost::start_with(TOKEN, config(&fake)).await;
+    let client = host.client().await;
+
+    let saved = client.save_gemini_connection(gemini(KEY)).await.unwrap();
+    assert!(saved.has_key && saved.active && saved.free_tier);
+    assert_eq!(saved.model, None);
+    let models = client.list_models(saved.connection_id).await.unwrap();
+    assert_eq!(
+        models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        [MODEL],
+        "only models that can generate text are offered"
+    );
+    let selected = client
+        .select_model(saved.connection_id, MODEL.to_string())
+        .await
+        .unwrap();
+    assert_eq!(selected.model.as_deref(), Some(MODEL));
+
+    fake.push(Reply::text(&["Bună! ", "Sunt bine."]));
+    let first = send(&client, None, "m1", "Salut, ce faci?").await;
+    let reply = settled(&client, &first).await;
+    assert_eq!(reply.status, ChatStatus::Complete);
+    assert_eq!(reply.role, ChatRole::Model);
+    assert_eq!(reply.text, "Bună! Sunt bine.");
+    assert_eq!(reply.model.as_deref(), Some(MODEL));
+    assert_eq!(reply.persona_version, Some(1));
+    assert_eq!(
+        (reply.prompt_tokens, reply.output_tokens),
+        (Some(11), Some(5))
+    );
+
+    let sent = fake.generations().remove(0);
+    assert_eq!(
+        sent.target,
+        format!("/v1beta/models/{MODEL}:streamGenerateContent?alt=sse")
+    );
+    assert_eq!(sent.header("x-goog-api-key"), Some(KEY));
+    assert!(!sent.target.contains(KEY) && !sent.body.contains(KEY));
+    let body = sent.json();
+    let system = body["systemInstruction"]["parts"][0]["text"]
+        .as_str()
+        .unwrap();
+    assert!(system.contains("You are Nexus"));
+    assert!(system.contains("language of the user's latest message"));
+    assert_eq!(roles(&body), ["user"]);
+    assert_eq!(body["contents"][0]["parts"][0]["text"], "Salut, ce faci?");
+    assert_eq!(
+        body["tools"][0]["functionDeclarations"][0]["name"],
+        "propose_note"
+    );
+
+    // The next turn carries the conversation so far.
+    fake.push(Reply::text(&["Desigur."]));
+    let second = send(
+        &client,
+        Some(first.conversation_id),
+        "m2",
+        "Poți fi mai scurt?",
+    )
+    .await;
+    assert_eq!(settled(&client, &second).await.text, "Desigur.");
+    let body = fake.generations().remove(1).json();
+    assert_eq!(roles(&body), ["user", "model", "user"]);
+    assert_eq!(body["contents"][1]["parts"][0]["text"], "Bună! Sunt bine.");
+
+    // A new persona version changes the voice of later replies only.
+    let persona = client
+        .save_persona(SavePersonaRequest {
+            name: "Ada".to_string(),
+            tone: "caldă".to_string(),
+            style: "fraze scurte".to_string(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(persona.version, 2);
+    fake.push(Reply::text(&["Gata."]));
+    let third = send(&client, Some(first.conversation_id), "m3", "Mulțumesc").await;
+    assert_eq!(settled(&client, &third).await.persona_version, Some(2));
+    let body = fake.generations().remove(2).json();
+    assert!(
+        body["systemInstruction"]["parts"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("You are Ada")
+    );
+    assert_eq!(
+        message(&client, first.conversation_id, first.reply_message_id)
+            .await
+            .persona_version,
+        Some(1),
+        "earlier replies keep the persona they were written with"
+    );
+
+    // A repeated send (same key, same text) is the same turn: no second call.
+    let again = send(&client, Some(first.conversation_id), "m3", "Mulțumesc").await;
+    assert_eq!(again.reply_message_id, third.reply_message_id);
+    let conflict = client
+        .send_message(SendMessageRequest {
+            conversation_id: Some(first.conversation_id),
+            idempotency_key: "m3".to_string(),
+            text: "alt text".to_string(),
+        })
+        .await;
+    assert!(conflict.is_err(), "a reused key with other text is refused");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(fake.generations().len(), 3);
+
+    let conversations = client.conversations(10).await.unwrap();
+    assert_eq!(conversations.len(), 1);
+    assert_eq!(conversations[0].conversation_id, first.conversation_id);
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn ai02_a_proposed_note_waits_for_approval_and_other_tools_are_ignored() {
+    let fake = FakeGemini::start(KEY).await;
+    let host = TestHost::start_with(TOKEN, config(&fake)).await;
+    let client = host.client().await;
+    connect_gemini(&client).await;
+
+    fake.push(Reply::calls(&[
+        (
+            "run_shell",
+            serde_json::json!({"command": "del /s C:\\Users"}),
+        ),
+        (
+            "propose_note",
+            serde_json::json!({"title": "Plan", "body": "pasul 1"}),
+        ),
+        (
+            "propose_note",
+            serde_json::json!({"title": "Al doilea", "body": "x"}),
+        ),
+    ]));
+    let sent = send(&client, None, "n1", "Salvează planul ca notă").await;
+    let reply = settled(&client, &sent).await;
+    assert_eq!(reply.status, ChatStatus::Complete);
+    let run = reply
+        .proposed_run_id
+        .expect("the note proposal becomes a run");
+
+    let waiting = wait_run(&client, run, RunStatus::AwaitingApproval).await;
+    let pending = waiting.pending_approval.expect("it waits for the user");
+    assert_eq!(pending.preview.unwrap().content, "# Plan\n\npasul 1\n");
+    assert!(
+        note_files(host.profile.path()).is_empty(),
+        "nothing is written on the model's word"
+    );
+    let snapshot = client.snapshot(50).await.unwrap();
+    assert_eq!(
+        snapshot.runs.len(),
+        1,
+        "one proposal per reply; tools the host does not offer are ignored"
+    );
+
+    client
+        .decide_approval(DecideApprovalRequest {
+            approval_id: pending.approval_id,
+            manifest_sha256: pending.manifest_sha256,
+            decision: ApprovalDecision::Approve,
+        })
+        .await
+        .unwrap();
+    wait_run(&client, run, RunStatus::Succeeded).await;
+    assert_eq!(note_files(host.profile.path()).len(), 1);
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn ai03_without_a_chosen_connection_and_model_nothing_is_sent_and_there_is_no_fallback() {
+    let fake = FakeGemini::start(KEY).await;
+    let host = TestHost::start_with(TOKEN, config(&fake)).await;
+    let client = host.client().await;
+
+    let refused = client
+        .send_message(SendMessageRequest {
+            conversation_id: None,
+            idempotency_key: "a".to_string(),
+            text: "Salut".to_string(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), Some(ErrorCode::InvalidRequest));
+    assert!(
+        fake.received().is_empty(),
+        "no connection: no request at all"
+    );
+
+    // A connection without a chosen model does not pick one by itself.
+    let saved = client.save_gemini_connection(gemini(KEY)).await.unwrap();
+    let refused = client
+        .send_message(SendMessageRequest {
+            conversation_id: None,
+            idempotency_key: "b".to_string(),
+            text: "Salut".to_string(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), Some(ErrorCode::InvalidRequest));
+
+    // Removing the only connection removes its key and leaves nothing to fall back on.
+    client
+        .select_model(saved.connection_id, MODEL.to_string())
+        .await
+        .unwrap();
+    client.remove_connection(saved.connection_id).await.unwrap();
+    assert!(client.list_connections().await.unwrap().is_empty());
+    let refused = client
+        .send_message(SendMessageRequest {
+            conversation_id: None,
+            idempotency_key: "c".to_string(),
+            text: "Salut".to_string(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), Some(ErrorCode::InvalidRequest));
+    assert!(fake.generations().is_empty(), "nothing was ever generated");
+    assert_eq!(
+        SecretVault::for_profile(host.profile.path())
+            .purge()
+            .unwrap(),
+        0,
+        "the removed connection's key is gone from the vault"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_key_the_provider_rejects_is_never_stored_or_echoed() {
+    let fake = FakeGemini::start(KEY).await;
+    let host = TestHost::start_with(TOKEN, config(&fake)).await;
+    let client = host.client().await;
+
+    let wrong = format!("WRONG-{}", uuid::Uuid::new_v4());
+    let refused = client
+        .save_gemini_connection(gemini(&wrong))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), Some(ErrorCode::Unauthenticated));
+    let text = format!("{refused} {refused:?}");
+    assert!(
+        !text.contains(&wrong),
+        "the refused key leaked into: {text}"
+    );
+    assert!(client.list_connections().await.unwrap().is_empty());
+    assert_eq!(
+        SecretVault::for_profile(host.profile.path())
+            .purge()
+            .unwrap(),
+        0
+    );
+
+    let malformed = client
+        .save_gemini_connection(gemini("has spaces inside"))
+        .await
+        .unwrap_err();
+    assert_eq!(malformed.code(), Some(ErrorCode::InvalidRequest));
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn provider_failures_settle_the_reply_with_a_stable_code() {
+    let fake = FakeGemini::start(KEY).await;
+    let host = TestHost::start_with(
+        TOKEN,
+        RuntimeConfig {
+            reply_deadline: Duration::from_millis(600),
+            ..config(&fake)
+        },
+    )
+    .await;
+    let client = host.client().await;
+    connect_gemini(&client).await;
+
+    let cases = [
+        (
+            Reply::Status {
+                code: 429,
+                headers: vec![("retry-after", "17".to_string())],
+                body: "{}".to_string(),
+            },
+            "QuotaExceeded",
+        ),
+        (
+            Reply::status(503, r#"{"error":{"message":"overloaded"}}"#),
+            "ProviderUnavailable",
+        ),
+        (
+            Reply::status(
+                401,
+                &format!(r#"{{"error":{{"message":"key {KEY} expired"}}}}"#),
+            ),
+            "Unauthenticated",
+        ),
+        (
+            Reply::Sse(vec!["{not json".to_string()]),
+            "ProviderUnavailable",
+        ),
+        (Reply::Hang, "DeadlineExceeded"),
+    ];
+    let mut conversation = None;
+    for (i, (reply, code)) in cases.into_iter().enumerate() {
+        fake.push(reply);
+        let sent = send(&client, conversation, &format!("f{i}"), "Salut").await;
+        conversation = Some(sent.conversation_id);
+        let settled = settled(&client, &sent).await;
+        assert_eq!(settled.status, ChatStatus::Failed, "case {code}");
+        let failure = settled.failure.expect("a failed reply says why");
+        assert_eq!(failure.code, code);
+        assert!(
+            !failure.message.contains(KEY),
+            "the key leaked into: {}",
+            failure.message
+        );
+        if code == "QuotaExceeded" {
+            assert!(
+                failure.message.contains("retry after 17 s"),
+                "{}",
+                failure.message
+            );
+        }
+    }
+
+    // Failed replies are not sent back as context.
+    fake.push(Reply::text(&["În sfârșit."]));
+    let sent = send(&client, conversation, "ok", "Mai încerc").await;
+    assert_eq!(settled(&client, &sent).await.status, ChatStatus::Complete);
+    let body = fake.generations().pop().unwrap().json();
+    assert!(roles(&body).iter().all(|r| r == "user"));
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn cancelling_a_reply_keeps_what_arrived_and_stops_the_call() {
+    let fake = FakeGemini::start(KEY).await;
+    let host = TestHost::start_with(TOKEN, config(&fake)).await;
+    let client = host.client().await;
+    connect_gemini(&client).await;
+
+    fake.push(Reply::SseThenHang(vec![text_event("Început ")]));
+    let sent = send(&client, None, "c1", "Scrie un eseu lung").await;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let reply = message(&client, sent.conversation_id, sent.reply_message_id).await;
+        assert_eq!(reply.status, ChatStatus::Streaming);
+        if reply.text == "Început " {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the partial text never showed"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    client.cancel_reply(sent.reply_message_id).await.unwrap();
+    let reply = message(&client, sent.conversation_id, sent.reply_message_id).await;
+    assert_eq!(reply.status, ChatStatus::Cancelled);
+    assert_eq!(reply.text, "Început ");
+    assert_eq!(reply.failure.unwrap().code, "Cancelled");
+    assert!(
+        client.cancel_reply(sent.reply_message_id).await.is_err(),
+        "a settled reply cannot be cancelled again"
+    );
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        message(&client, sent.conversation_id, sent.reply_message_id)
+            .await
+            .status,
+        ChatStatus::Cancelled,
+        "the aborted call cannot overwrite the cancellation"
+    );
+    host.shutdown().await;
+}
+
+// Must match MAX_FETCH_CALLS / MAX_AGENT_STEPS in nexus-host/src/runtime/chat.rs.
+const MAX_FETCH_CALLS: usize = 4;
+const MAX_AGENT_STEPS: usize = MAX_FETCH_CALLS + 2;
+
+#[tokio::test]
+async fn a_refused_fetch_is_reported_back_to_the_model_which_then_answers() {
+    let fake = FakeGemini::start(KEY).await;
+    let host = TestHost::start_with(TOKEN, config(&fake)).await;
+    let client = host.client().await;
+    connect_gemini(&client).await;
+
+    // Any URL fetch_url is offered is loopback relative to the host, so the
+    // real SSRF gate refuses it — this proves the loop and the gate both
+    // run for real, not that a fetch can succeed in this harness.
+    fake.push(Reply::calls(&[(
+        "fetch_url",
+        serde_json::json!({"url": "http://127.0.0.1:1/private"}),
+    )]));
+    fake.push(Reply::text(&["Nu am putut accesa acea pagină."]));
+
+    let sent = send(&client, None, "f1", "Caută ceva pe acea pagină").await;
+    let reply = settled(&client, &sent).await;
+    assert_eq!(reply.status, ChatStatus::Complete);
+    assert_eq!(reply.text, "Nu am putut accesa acea pagină.");
+
+    let generations = fake.generations();
+    assert_eq!(
+        generations.len(),
+        2,
+        "the loop must call the model a second time"
+    );
+    let second_body = generations[1].json();
+    assert_eq!(roles(&second_body), ["user", "model", "user"]);
+    let function_response = &second_body["contents"][2]["parts"][0]["functionResponse"];
+    assert_eq!(function_response["name"], "fetch_url");
+    assert!(
+        function_response["response"]["error"].is_string(),
+        "a refused fetch must come back as an error, not silently dropped: {function_response}"
+    );
+    assert!(
+        !function_response["response"]["error"]
+            .as_str()
+            .unwrap()
+            .is_empty()
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_fetch_budget_is_enforced_then_the_tool_is_withdrawn() {
+    let fake = FakeGemini::start(KEY).await;
+    let host = TestHost::start_with(TOKEN, config(&fake)).await;
+    let client = host.client().await;
+    connect_gemini(&client).await;
+
+    // The model never stops asking to fetch; the host must stop it anyway.
+    for _ in 0..MAX_AGENT_STEPS {
+        fake.push(Reply::calls(&[(
+            "fetch_url",
+            serde_json::json!({"url": "http://127.0.0.1:1/private"}),
+        )]));
+    }
+
+    let sent = send(&client, None, "f2", "Continuă să cauți oricât").await;
+    let reply = settled(&client, &sent).await;
+    assert_eq!(
+        reply.status,
+        ChatStatus::Complete,
+        "an exhausted step budget ends the turn, it is not a failure"
+    );
+
+    let generations = fake.generations();
+    assert_eq!(
+        generations.len(),
+        MAX_AGENT_STEPS,
+        "exactly the step budget worth of calls, not one more"
+    );
+    for (i, g) in generations.iter().enumerate() {
+        let tools = &g.json()["tools"][0]["functionDeclarations"];
+        let names: Vec<&str> = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        if i < MAX_FETCH_CALLS {
+            assert!(
+                names.contains(&"fetch_url"),
+                "call {i} must still offer fetch_url"
+            );
+        } else {
+            assert!(
+                !names.contains(&"fetch_url"),
+                "call {i} must not offer fetch_url once the budget is spent"
+            );
+        }
+        assert!(
+            names.contains(&"propose_note"),
+            "propose_note is always offered"
+        );
+    }
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_note_proposed_alongside_a_fetch_ends_the_turn_on_the_note_alone() {
+    let fake = FakeGemini::start(KEY).await;
+    let host = TestHost::start_with(TOKEN, config(&fake)).await;
+    let client = host.client().await;
+    connect_gemini(&client).await;
+
+    fake.push(Reply::calls(&[
+        (
+            "fetch_url",
+            serde_json::json!({"url": "http://127.0.0.1:1/x"}),
+        ),
+        (
+            "propose_note",
+            serde_json::json!({"title": "Găsit", "body": "conținut"}),
+        ),
+    ]));
+
+    let sent = send(&client, None, "f3", "Caută și salvează ce găsești").await;
+    let reply = settled(&client, &sent).await;
+    assert_eq!(reply.status, ChatStatus::Complete);
+    let run = reply
+        .proposed_run_id
+        .expect("the note proposal still becomes a run");
+    wait_run(&client, run, RunStatus::AwaitingApproval).await;
+
+    assert_eq!(
+        fake.generations().len(),
+        1,
+        "a note in the same step ends the turn; fetch_url is not also run"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_restored_profile_does_not_contact_the_provider() {
+    let fake = FakeGemini::start(KEY).await;
+    let profile = TempProfile::new("restored-chat");
+    std::fs::write(
+        profile.path().join(nexus_host::backup::RESTORED_MARKER),
+        "{}",
+    )
+    .unwrap();
+    let host = TestHost::start_in(profile, TOKEN, config(&fake)).await;
+    let client = host.client().await;
+    let refused = client
+        .send_message(SendMessageRequest {
+            conversation_id: None,
+            idempotency_key: "r".to_string(),
+            text: "Salut".to_string(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), Some(ErrorCode::Forbidden));
+    assert!(fake.received().is_empty());
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn startup_removes_vault_entries_no_connection_refers_to() {
+    let fake = FakeGemini::start(KEY).await;
+    let host = TestHost::start_with(TOKEN, config(&fake)).await;
+    let client = host.client().await;
+    let saved = client.save_gemini_connection(gemini(KEY)).await.unwrap();
+    drop(client);
+    let profile = host.shutdown().await;
+
+    // A key stored just before a crash, with no connection row yet.
+    let vault = SecretVault::for_profile(profile.path());
+    vault.store("gemini-orphan", "SENTINEL-orphan").unwrap();
+
+    let host = TestHost::start_in(profile, TOKEN, config(&fake)).await;
+    assert!(
+        vault.load("gemini-orphan").unwrap().is_none(),
+        "an unreferenced key is removed at startup"
+    );
+    let connections = host.client().await.list_connections().await.unwrap();
+    assert_eq!(connections.len(), 1);
+    assert_eq!(connections[0].connection_id, saved.connection_id);
+    assert!(connections[0].has_key, "a referenced key is kept");
+    host.shutdown().await;
+}

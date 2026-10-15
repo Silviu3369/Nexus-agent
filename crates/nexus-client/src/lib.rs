@@ -23,6 +23,16 @@ const ERROR_PIPE_BUSY: i32 = 231;
 const BUSY_RETRIES: u32 = 20;
 const BUSY_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(50);
 
+/// Calls that wait for the AI provider (key check, model list) get longer
+/// than tarpc's default 10 s, which the host also enforces.
+pub const PROVIDER_CALL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(45);
+
+fn provider_context() -> context::Context {
+    let mut ctx = context::current();
+    ctx.deadline = std::time::Instant::now() + PROVIDER_CALL_DEADLINE;
+    ctx
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectError {
     #[error("could not read local pairing token: {0}")]
@@ -184,6 +194,96 @@ impl NexusClient {
             .client
             .get_artifact_content(context::current(), artifact_id)
             .await??)
+    }
+
+    pub async fn list_connections(&self) -> Result<Vec<nexus_protocol::ConnectionView>, CallError> {
+        Ok(self.client.list_connections(context::current()).await??)
+    }
+
+    pub async fn save_gemini_connection(
+        &self,
+        request: nexus_protocol::SaveGeminiConnectionRequest,
+    ) -> Result<nexus_protocol::ConnectionView, CallError> {
+        Ok(self
+            .client
+            .save_gemini_connection(provider_context(), request)
+            .await??)
+    }
+
+    pub async fn remove_connection(
+        &self,
+        id: nexus_protocol::ConnectionId,
+    ) -> Result<(), CallError> {
+        Ok(self
+            .client
+            .remove_connection(context::current(), id)
+            .await??)
+    }
+
+    pub async fn list_models(
+        &self,
+        id: nexus_protocol::ConnectionId,
+    ) -> Result<Vec<nexus_protocol::ModelView>, CallError> {
+        Ok(self.client.list_models(provider_context(), id).await??)
+    }
+
+    pub async fn select_model(
+        &self,
+        id: nexus_protocol::ConnectionId,
+        model: String,
+    ) -> Result<nexus_protocol::ConnectionView, CallError> {
+        Ok(self
+            .client
+            .select_model(context::current(), id, model)
+            .await??)
+    }
+
+    pub async fn persona(&self) -> Result<nexus_protocol::PersonaView, CallError> {
+        Ok(self.client.get_persona(context::current()).await??)
+    }
+
+    pub async fn save_persona(
+        &self,
+        request: nexus_protocol::SavePersonaRequest,
+    ) -> Result<nexus_protocol::PersonaView, CallError> {
+        Ok(self
+            .client
+            .save_persona(context::current(), request)
+            .await??)
+    }
+
+    pub async fn conversations(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<nexus_protocol::ConversationSummary>, CallError> {
+        Ok(self
+            .client
+            .list_conversations(context::current(), limit)
+            .await??)
+    }
+
+    pub async fn conversation(
+        &self,
+        id: nexus_protocol::ConversationId,
+    ) -> Result<nexus_protocol::ConversationView, CallError> {
+        Ok(self
+            .client
+            .get_conversation(context::current(), id)
+            .await??)
+    }
+
+    pub async fn send_message(
+        &self,
+        request: nexus_protocol::SendMessageRequest,
+    ) -> Result<nexus_protocol::SendMessageResponse, CallError> {
+        Ok(self
+            .client
+            .send_message(context::current(), request)
+            .await??)
+    }
+
+    pub async fn cancel_reply(&self, id: nexus_protocol::MessageId) -> Result<(), CallError> {
+        Ok(self.client.cancel_reply(context::current(), id).await??)
     }
 
     pub async fn create_backup(&self) -> Result<nexus_protocol::BackupSummary, CallError> {
