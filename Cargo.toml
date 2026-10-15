@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/nexus-core",
+    "crates/nexus-protocol",
+    "crates/nexus-storage",
+    "crates/nexus-client",
+    "crates/nexus-host",
+    "apps/desktop/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Tauri scaffold requires release profile tuning to be declared at the
+# workspace root once this crate joins the workspace.
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

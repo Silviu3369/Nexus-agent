@@ -1,6 +1,6 @@
 # Plan activ Nexus
 
-Data de referință: **2026-10-13**, ora Europei Centrale. Acesta este unicul registru al progresului.
+Data de referință: **2026-10-15**, ora Europei Centrale. Acesta este unicul registru al progresului.
 
 ## 1. Starea curentă și următoarea acțiune
 
@@ -8,12 +8,16 @@ Data de referință: **2026-10-13**, ora Europei Centrale. Acesta este unicul re
 | --- | --- |
 | Cerințe și stack | Stabilite în conversație; documentate în acest pachet. |
 | Predare | Pregătită. |
-| Cod de produs | Neînceput în stackul Rust. Directorul era gol înaintea documentării. |
-| Compilare, teste, aplicație nativă | Neexecutate; nu există încă manifeste sau executabile Nexus. |
-| M0–M7 de mai jos | Neîncepute. |
-| Acțiune următoare | La cererea utilizatorului de a implementa: preluarea M0, apoi primul circuit complet M1. |
+| Implementare | Autorizată explicit de utilizator; un singur agent de cod lucrează la Nexus. Plan de implementare M0+M1 aprobat. |
+| Repo Git | Inițializat; commit inițial al documentației făcut. |
+| Mediu de dezvoltare | Node.js 24.20.0 + npm 11.19.0 + pnpm 12.11.2 instalate real în acest mediu (nu doar observate). Rust/Cargo/MSVC/WebView2 confirmate funcționale prin build real. |
+| Cod de produs | Workspace Cargo: `nexus-core` (gol încă), `nexus-protocol` (ID-uri tipate, DTO-uri, erori, serviciu tarpc, pairing), `nexus-storage` (gol încă), `nexus-client` (conectare + handshake reale), `nexus-host` (server named pipe + handshake + get_health reale) + `apps/desktop/src-tauri`. `cargo build --workspace`, `cargo fmt --all -- --check` și `cargo clippy --workspace --all-targets` trec curate. |
+| Aplicație nativă | Scaffold oficial Tauri v2 + React + TypeScript (`pnpm create tauri-app`) în `apps/desktop`. `pnpm tauri dev` a pornit fereastră nativă reală, verificată prin `Get-Process` (titlu "Nexus", handle de fereastră valid). Nu rulează momentan (oprit pentru a elibera lock-ul de build); shell-ul nu e încă conectat la `nexus-host`. |
+| ADR-IPC-001 | **Rezolvat prin probă**: named pipe Windows (`tokio::net::windows::named_pipe`) + tarpc peste framing `LengthDelimitedCodec` + JSON. 5 teste de integrare reale (pipe real, nu mock) în `crates/nexus-host/tests/handshake.rs`, toate PASS: handshake legitim cu negociere de versiune (IPC-01); token de pairing greșit respins; versiune de protocol incompatibilă respinsă; mesaj peste 1 MiB respins; a doua instanță pe același nume de pipe respinsă la bind (LIFE-02), toate înainte de orice efect. |
+| M0–M7 de mai jos | M0 în lucru: IPC/protocol dovedite; rămân SQLite (`nexus-storage`) și conectarea reală a shell-ului Tauri la Host pentru LIFE-01. M2–M7 neîncepute. |
+| Acțiune următoare | Conectează shell-ul Tauri la `nexus-host` prin `nexus-client` (comandă Tauri + buton în UI) ca să poată fi probat LIFE-01 (închide UI, Hostul rămâne, reconectare). |
 
-Cererea curentă autorizează planul și documentele. [Promptul de pornire](PROMPT_START_RO.md) poate fi trimis de utilizator pentru a autoriza implementarea. Documentul în sine nu o pornește.
+Cererea curentă autorizează implementarea M0+M1 conform planului aprobat (pașii din secțiunile 4 și 5 de mai jos). [Promptul de pornire](PROMPT_START_RO.md) rămâne valabil ca text de referință, nu mai e singurul declanșator.
 
 La fiecare predare se actualizează acest tabel și jurnalul de la final cu dovezi actuale. Starea mediului din predare este o observație datată, nu o garanție permanentă.
 
@@ -169,3 +173,5 @@ Nu marca o etapă terminată dacă există teste obligatorii neexecutate. Pentru
 | 2026-10-13 | Pachet de planificare și predare creat | Inventar local și versiuni în predare; documente, fără cod de produs | Utilizatorul poate porni M0 + M1 prin promptul pregătit |
 | 2026-10-13 | Documentație verificată | 8 fișiere Markdown, 27 legături locale valide, 39 de cazuri de acceptare cu ID-uri unice; fără cod de produs | Implementarea rămâne neîncepută; cazurile de acceptare sunt specificate, nu executate |
 | 2026-10-15 | Rafinare plan: candidați suplimentari pentru ADR-IPC-001 (tarpc, specta/tauri-specta) în arhitectură; notă de scop M0–M2 ferm / M3–M7 roadmap; documentele de predare/prompt generalizate (nu mai sunt legate de un agent anume, redenumite PREDARE_RO.md/PROMPT_START_RO.md) | Editări în ARHITECTURA_NEXUS_RO.md, PLAN_NEXUS_RO.md, AGENTS.md, README.md și fișierele redenumite; fără cod de produs | Implementarea rămâne neîncepută; decizie în curs privind inițializarea unui repo Git |
+| 2026-10-15 | Implementare autorizată; plan M0+M1 scris și aprobat. Repo Git inițializat (primul commit: documentația). Node.js/npm/pnpm instalate real. Workspace Cargo (5 crate-uri) + `apps/desktop/src-tauri` ca membru de workspace; `cargo build --workspace` trece. Scaffold oficial Tauri v2 + React + TS în `apps/desktop`; `pnpm tauri dev` pornește fereastră nativă reală (titlu "Nexus", handle valid, verificat prin `Get-Process`, nu mock) | Commit `826ab4f`; log complet `cargo build --workspace` (Finished, fără erori); `Get-Process desktop` cu MainWindowTitle="Nexus" și MainWindowHandle valid, PID 2820 | Implementare `nexus-protocol` (ID-uri tipate, DTO-uri Handshake/GetHealth) și proba IPC named pipe + tarpc pentru ADR-IPC-001/IPC-01/IPC-02; schimbările de cod nu sunt încă în Git (necesită aprobare separată pentru commit, conform AGENTS.md) |
+| 2026-10-15 | ADR-IPC-001 rezolvat: `nexus-protocol` (ID-uri, Handshake/GetHealth, ErrorCode/NexusError, trait tarpc `NexusService`, pairing token de fișier local) + `nexus-host` (bind cu lock de instanță unică, accept loop, validare token/versiune) + `nexus-client` (connect + handshake reale) implementate. 5 teste de integrare pe named pipe real (nu mock) toate PASS: IPC-01, token greșit respins, versiune incompatibilă respinsă, mesaj >1MiB respins, a doua instanță respinsă la bind | `cargo test --workspace` — 8 teste reale PASS, 0 FAIL; `cargo fmt --all -- --check` curat; `cargo clippy --workspace --all-targets` fără avertismente | Conectează shell-ul Tauri (`apps/desktop/src-tauri`) la Host prin `nexus-client`, pentru proba LIFE-01 (UI închis, Host rămâne, reconectare) și ENV-01 cu interacțiune reală; apoi `nexus-storage` (SQLite) pentru M1 |
