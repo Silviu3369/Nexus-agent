@@ -35,6 +35,9 @@ pub enum HostStatus {
     Unreachable { reason: String },
     /// The host answered and refused us (pairing token or protocol version).
     Rejected { error: NexusError },
+    /// We refused the process owning the pipe: it does not run as this
+    /// Windows user (or its identity could not be checked). No token was sent.
+    Untrusted { reason: String },
 }
 
 struct Session {
@@ -106,6 +109,11 @@ fn connected(handshake: &HandshakeResponse, uptime_seconds: u32) -> HostStatus {
 fn status_from_connect_error(err: ConnectError) -> HostStatus {
     if err.host_not_running() {
         return HostStatus::NotRunning;
+    }
+    if err.untrusted_server() {
+        return HostStatus::Untrusted {
+            reason: err.to_string(),
+        };
     }
     match err {
         ConnectError::HandshakeRejected(error) => HostStatus::Rejected { error },

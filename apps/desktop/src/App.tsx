@@ -80,7 +80,9 @@ function App() {
           )}
           {(view.kind === "bridgeError" ||
             (view.kind === "status" &&
-              (view.status.state === "Unreachable" || view.status.state === "Rejected"))) && (
+              (view.status.state === "Unreachable" ||
+                view.status.state === "Rejected" ||
+                view.status.state === "Untrusted"))) && (
             <button type="button" onClick={() => void refresh()}>
               Reîncearcă
             </button>
@@ -151,6 +153,17 @@ function HostView({ view }: { view: View }) {
           <p className="error">
             Hostul a refuzat conexiunea ({status.error.code}): {status.error.message}
           </p>
+        </>
+      );
+    case "Untrusted":
+      return (
+        <>
+          <Badge tone="bad">Neverificat</Badge>
+          <p className="error">
+            Procesul care deține conexiunea Nexus nu rulează sub contul tău Windows, așa că
+            nu i-am trimis datele de acces.
+          </p>
+          <p className="muted">{status.reason}</p>
         </>
       );
   }

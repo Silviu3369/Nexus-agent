@@ -36,6 +36,22 @@ fn raw_client(pipe_name: &str, max_frame_bytes: usize) -> NexusServiceClient {
     NexusServiceClient::new(tarpc::client::Config::default(), transport).spawn()
 }
 
+/// Opens a bare client pipe, waiting out the instant between two accepts when
+/// the host has not yet created its next free instance.
+async fn open_raw_pipe(pipe_name: &str) -> tokio::net::windows::named_pipe::NamedPipeClient {
+    const ERROR_PIPE_BUSY: i32 = 231;
+    for _ in 0..50 {
+        match tokio::net::windows::named_pipe::ClientOptions::new().open(pipe_name) {
+            Ok(pipe) => return pipe,
+            Err(err) if err.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            Err(err) => panic!("pipe must accept a connection: {err}"),
+        }
+    }
+    panic!("pipe stayed busy for 1 s");
+}
+
 fn handshake_request(pairing_token: &str, protocol_version: u32) -> HandshakeRequest {
     HandshakeRequest {
         request_id: RequestId::new(),
@@ -183,6 +199,28 @@ async fn ipc02_oversized_message_is_rejected() {
         Ok(Ok(Ok(_))) => panic!("host must not accept a handshake carried in an oversized frame"),
         // Decoded but still refused the call: acceptable too.
         Ok(Ok(Err(_))) => {}
+    }
+}
+
+#[tokio::test]
+async fn ipc02_pipe_server_running_as_another_user_is_not_trusted() {
+    let pipe_name = unique_pipe_name();
+    start_test_host(pipe_name.clone(), "correct-token".to_string()).await;
+
+    // The real server process (this test's own) runs as the current user.
+    let me = nexus_client::current_user_sid().expect("current SID must be readable");
+    nexus_client::verify_pipe_server_user(&open_raw_pipe(&pipe_name).await, &me)
+        .expect("a server running as the current user must be trusted");
+
+    // Expecting any other account (here: LocalSystem) must refuse the same
+    // real server — this is the check that stops a squatter on our pipe name
+    // before the pairing token is ever sent.
+    match nexus_client::verify_pipe_server_user(&open_raw_pipe(&pipe_name).await, "S-1-5-18") {
+        Err(ConnectError::UntrustedServer { expected, actual }) => {
+            assert_eq!(expected, "S-1-5-18");
+            assert_eq!(actual, me);
+        }
+        other => panic!("expected UntrustedServer, got {other:?}"),
     }
 }
 

@@ -211,7 +211,7 @@ Pentru mai mulți utilizatori se adaugă un proiect explicit de identitate, sepa
 | ADR-STACK-001 | Rust + React/TypeScript + Tauri; SQLite; Three.js opțional | Direcție stabilită |
 | ADR-HOST-001 | Host independent, per utilizator, fără admin implicit | Direcție stabilită; probat în M0 (Host-ul supraviețuiește închiderii UI) |
 | ADR-STATE-001 | Stare durabilă, outbox, intenție și reconciliere | Direcție stabilită; probe M1 |
-| ADR-IPC-001 | Transport local, autentificare, format și generare contracte | **Închis în M0**, cu un caz IPC-02 deschis (vezi mai jos) |
+| ADR-IPC-001 | Transport local, autentificare, format și generare contracte | **Închis în M0** (vezi mai jos) |
 | ADR-ISO-001 | Backend OS/VM pentru cod neîncrezător | De demonstrat înainte de M3 |
 | ADR-DATA-001 | Criptare, backup, export și recuperarea cheilor | De decis înainte de date sensibile în utilizare zilnică / M6 |
 | ADR-RELEASE-001 | Installer, semnare, actualizare și compatibilitate | De calificat în M6 |
@@ -225,5 +225,5 @@ Rezultatele ADR-urilor se înregistrează în acest document, cu alternativa ale
 - **Autentificare:** tokenul de pairing e un UUID aleator, stocat în `%LOCALAPPDATA%\Nexus` și protejat de ACL-ul moștenit de la profil. Se compară în timp constant. Pe fiecare conexiune, toate apelurile în afară de `handshake` cer un handshake reușit, iar un handshake eșuat revocă sesiunea. Nu e criptografie nouă; dovedește doar „poate citi profilul meu”.
 - **Instanță unică:** `first_pipe_instance(true)`. A doua instanță primește `ERROR_ACCESS_DENIED`/`ERROR_PIPE_BUSY` și iese, scriind motivul în log.
 - **Două hop-uri:** webview ↔ shell Tauri, prin comenzile înguste `host_status`/`start_host`; shell ↔ Host, prin `nexus-client`. Webview-ul nu primește niciodată tokenul, căi sau argumente de proces.
-- **Limită deschisă (IPC-02 „Host fals”):** clientul trimite tokenul oricărui proces care deține numele pipe-ului. Pentru că numele de pipe sunt globale, alt cont Windows ar putea ocupa numele primul. Măsura planificată: înainte de handshake, clientul verifică prin `GetNamedPipeServerProcessId` și tokenul de acces al procesului că serverul rulează sub același SID. Un proces ostil sub același cont rămâne în afara modelului de amenințare (`SECURITATE_SI_VALIDARE_RO.md` §1).
-- **Probe:** `crates/nexus-host/tests/handshake.rs` (7 teste pe pipe real) și proba end-to-end pe executabilele release, consemnată în planul activ.
+- **Host fals (IPC-02):** numele de pipe sunt globale, deci alt cont Windows ar putea ocupa numele primul. De aceea, înainte de handshake, clientul citește prin `GetNamedPipeServerProcessId` PID-ul procesului server, apoi SID-ul din tokenul lui de acces, și refuză dacă nu e SID-ul utilizatorului curent. Dacă identitatea nu poate fi citită, refuză la fel. În ambele cazuri tokenul nu pleacă, iar dashboardul afișează starea „Neverificat”. Un proces ostil sub același cont rămâne în afara modelului de amenințare (`SECURITATE_SI_VALIDARE_RO.md` §1).
+- **Probe:** `crates/nexus-host/tests/handshake.rs` (8 teste pe pipe real) și proba end-to-end pe executabilele release, consemnată în planul activ.

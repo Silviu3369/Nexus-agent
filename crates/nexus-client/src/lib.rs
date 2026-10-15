@@ -2,10 +2,12 @@
 //! Connects to `nexus-host` over the same named pipe + framed-JSON tarpc
 //! transport the host serves, and presents the local pairing token.
 
+mod server_identity;
+
 use nexus_protocol::service::NexusServiceClient;
 use nexus_protocol::{HandshakeRequest, HandshakeResponse, NexusError, PROTOCOL_VERSION, pairing};
 use tarpc::context;
-use tokio::net::windows::named_pipe::ClientOptions;
+use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
 use tokio_serde::formats::Json;
 use tokio_util::codec::LengthDelimitedCodec;
 
@@ -26,6 +28,10 @@ pub enum ConnectError {
     Pipe(#[source] std::io::Error),
     #[error("host rejected handshake: {0}")]
     HandshakeRejected(#[source] NexusError),
+    #[error("pipe server runs as {actual}, expected {expected}; the pairing token was not sent")]
+    UntrustedServer { expected: String, actual: String },
+    #[error("could not verify the pipe server's identity, so the pairing token was not sent: {0}")]
+    ServerIdentityUnknown(#[source] std::io::Error),
 }
 
 impl ConnectError {
@@ -36,10 +42,40 @@ impl ConnectError {
         match self {
             ConnectError::MissingPairingToken(err) => err.kind() == std::io::ErrorKind::NotFound,
             ConnectError::Pipe(err) => err.raw_os_error() == Some(ERROR_FILE_NOT_FOUND),
-            ConnectError::HandshakeRejected(_) => false,
+            ConnectError::HandshakeRejected(_)
+            | ConnectError::UntrustedServer { .. }
+            | ConnectError::ServerIdentityUnknown(_) => false,
         }
     }
+
+    /// True when this client refused to trust the process owning the pipe.
+    pub fn untrusted_server(&self) -> bool {
+        matches!(
+            self,
+            ConnectError::UntrustedServer { .. } | ConnectError::ServerIdentityUnknown(_)
+        )
+    }
 }
+
+/// Refuses unless the process serving `pipe` runs as `expected_sid`. Fails
+/// closed: if the identity cannot be read, the server is not trusted.
+pub fn verify_pipe_server_user(
+    pipe: &NamedPipeClient,
+    expected_sid: &str,
+) -> Result<(), ConnectError> {
+    let actual =
+        server_identity::pipe_server_user_sid(pipe).map_err(ConnectError::ServerIdentityUnknown)?;
+    if actual == expected_sid {
+        Ok(())
+    } else {
+        Err(ConnectError::UntrustedServer {
+            expected: expected_sid.to_string(),
+            actual,
+        })
+    }
+}
+
+pub use server_identity::current_user_sid;
 
 pub struct NexusClient {
     client: NexusServiceClient,
@@ -64,6 +100,8 @@ impl NexusClient {
         client_name: impl Into<String>,
     ) -> Result<(Self, HandshakeResponse), ConnectError> {
         let pipe = open_pipe(pipe_name).await.map_err(ConnectError::Pipe)?;
+        let me = current_user_sid().map_err(ConnectError::ServerIdentityUnknown)?;
+        verify_pipe_server_user(&pipe, &me)?;
 
         let codec = LengthDelimitedCodec::builder()
             .max_frame_length(MAX_FRAME_BYTES)

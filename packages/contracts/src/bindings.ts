@@ -21,5 +21,5 @@ export type NexusError = { code: ErrorCode; message: string; request_id: Request
  * What the dashboard may show about the host. Every variant comes from a
  * real connection attempt; there is no optimistic or cached "connected".
  */
-export type HostStatus = { state: "Connected"; host_identity: string; protocol_version: number; uptime_seconds: number } | { state: "NotRunning" } | { state: "Unreachable"; reason: string } | { state: "Rejected"; error: NexusError }
+export type HostStatus = { state: "Connected"; host_identity: string; protocol_version: number; uptime_seconds: number } | { state: "NotRunning" } | { state: "Unreachable"; reason: string } | { state: "Rejected"; error: NexusError } | { state: "Untrusted"; reason: string }
 
