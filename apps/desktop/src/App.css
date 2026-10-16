@@ -1694,7 +1694,7 @@ button.approve:hover:not(:disabled) {
 .core-label {
   color: #a3acbb;
   font-size: 0.84rem;
-  max-width: 80%;
+  max-width: min(60%, 640px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

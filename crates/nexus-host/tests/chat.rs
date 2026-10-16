@@ -510,6 +510,11 @@ async fn a_refused_fetch_is_reported_back_to_the_model_which_then_answers() {
     assert_eq!(roles(&second_body), ["user", "model", "user"]);
     let function_response = &second_body["contents"][2]["parts"][0]["functionResponse"];
     assert_eq!(function_response["name"], "fetch_url");
+    assert_eq!(
+        second_body["contents"][1]["parts"][0]["thoughtSignature"],
+        support::fake_gemini::signature_for("fetch_url").as_str(),
+        "the call goes back with the signature it came with (Gemini 3 answers 400 without it)"
+    );
     assert!(
         function_response["response"]["error"].is_string(),
         "a refused fetch must come back as an error, not silently dropped: {function_response}"

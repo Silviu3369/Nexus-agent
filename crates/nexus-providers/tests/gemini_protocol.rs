@@ -111,7 +111,8 @@ async fn function_call_is_reported_as_a_proposal_and_thoughts_are_skipped() {
             ProviderEvent::ToolProposal {
                 id: None,
                 name: "propose_note".into(),
-                arguments: serde_json::json!({"title": "Plan"})
+                arguments: serde_json::json!({"title": "Plan"}),
+                signature: None,
             },
             ProviderEvent::Finished(FinishReason::Stop),
         ]
@@ -185,6 +186,7 @@ async fn a_tool_result_round_trips_in_the_shape_gemini_expects() {
                 id: None,
                 name: "fetch_url".to_string(),
                 arguments: serde_json::json!({"url": "https://example.com"}),
+                signature: Some("SIG-fetch".to_string()),
             }],
         },
         Message {
@@ -226,6 +228,100 @@ async fn a_tool_result_round_trips_in_the_shape_gemini_expects() {
     assert_eq!(
         body["contents"][2]["parts"][0]["functionResponse"]["response"]["text"],
         "Hello world"
+    );
+    assert_eq!(
+        body["contents"][1]["parts"][0]["thoughtSignature"], "SIG-fetch",
+        "the signature goes back on the call it came with"
+    );
+}
+
+/// Gemini 3 rejects (400) a tool round trip whose first call in a step lacks
+/// the thought signature it was given (ai.google.dev, thought signatures,
+/// checked 2026-10-16). The signature is read from the call's part and sent
+/// back on it; a first call the model did not sign gets Google's documented
+/// value instead, and later calls are left as they are.
+#[tokio::test]
+async fn thought_signatures_are_kept_on_calls_and_unsigned_first_calls_get_the_documented_value() {
+    let (base, server) = server(vec![
+        Reply::Sse(vec![
+            r#"{"candidates":[{"content":{"parts":[{"functionCall":{"name":"fetch_url","args":{"url":"https://a"}},"thoughtSignature":"SIG-A"},{"functionCall":{"name":"fetch_url","args":{"url":"https://b"}}}]},"finishReason":"STOP"}]}"#,
+        ]),
+        Reply::Sse(vec![
+            r#"{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}"#,
+        ]),
+    ])
+    .await;
+    let (result, events) = collect(&client(&base), &request()).await;
+    result.unwrap();
+    assert_eq!(
+        events[0],
+        ProviderEvent::ToolProposal {
+            id: None,
+            name: "fetch_url".into(),
+            arguments: serde_json::json!({"url": "https://a"}),
+            signature: Some("SIG-A".into()),
+        }
+    );
+    assert!(matches!(
+        &events[1],
+        ProviderEvent::ToolProposal {
+            signature: None,
+            ..
+        }
+    ));
+
+    let call = |url: &str, signature: Option<&str>| nexus_providers::Part::FunctionCall {
+        id: None,
+        name: "fetch_url".to_string(),
+        arguments: serde_json::json!({ "url": url }),
+        signature: signature.map(str::to_string),
+    };
+    let answer = |url: &str| nexus_providers::Part::FunctionResponse {
+        id: None,
+        name: "fetch_url".to_string(),
+        response: serde_json::json!({ "url": url }),
+    };
+    let mut req = request();
+    req.model = "gemini-3.8-flash".to_string();
+    req.messages = vec![
+        Message::text(Role::User, "read both"),
+        // Signed by the model: kept as is, on the first call only.
+        Message {
+            role: Role::Model,
+            parts: vec![call("https://a", Some("SIG-A")), call("https://b", None)],
+        },
+        Message {
+            role: Role::User,
+            parts: vec![answer("https://a"), answer("https://b")],
+        },
+        // Unsigned (its signed sibling was not sent back): documented value.
+        Message {
+            role: Role::Model,
+            parts: vec![call("https://c", None), call("https://d", None)],
+        },
+        Message {
+            role: Role::User,
+            parts: vec![answer("https://c"), answer("https://d")],
+        },
+    ];
+    let (result, _) = collect(&client(&base), &req).await;
+    result.unwrap();
+    let sent = server.await.unwrap().remove(1);
+    let body: serde_json::Value = serde_json::from_str(&sent.body).unwrap();
+    let parts = |i: usize| body["contents"][i]["parts"].clone();
+    assert_eq!(parts(1)[0]["thoughtSignature"], "SIG-A");
+    assert!(
+        parts(1)[1].get("thoughtSignature").is_none(),
+        "parallel calls after the first carry none"
+    );
+    assert_eq!(
+        parts(3)[0]["thoughtSignature"],
+        "skip_thought_signature_validator"
+    );
+    assert!(parts(3)[1].get("thoughtSignature").is_none());
+    assert!(
+        parts(2)[0].get("thoughtSignature").is_none(),
+        "responses never carry one"
     );
 }
 

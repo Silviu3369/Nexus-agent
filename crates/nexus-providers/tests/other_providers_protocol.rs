@@ -66,6 +66,7 @@ async fn openai_streams_text_and_a_tool_call_with_the_key_only_in_the_header() {
                 id: Some("call_7".into()),
                 name: "fetch_url".into(),
                 arguments: json!({"url": "https://example.com"}),
+                signature: None,
             },
             ProviderEvent::Usage(Usage {
                 prompt_tokens: 12,

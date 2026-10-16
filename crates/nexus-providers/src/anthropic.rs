@@ -15,8 +15,8 @@ use crate::http::{
     self, LIST_BUDGET, LIST_TIMEOUT, MAX_BODY_BYTES, MAX_ERROR_BYTES, read_limited, transport,
 };
 use crate::{
-    ApiKey, FinishReason, Message, ModelInfo, Part, ProviderError, ProviderEvent, ProviderRequest,
-    Role, Usage,
+    ApiKey, FinishReason, Message, ModelInfo, Part, ProviderError, ProviderEvent, ProviderKind,
+    ProviderRequest, Role, Usage,
 };
 
 pub const ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com";
@@ -51,6 +51,13 @@ impl AnthropicClient {
             key,
             flavor,
         })
+    }
+
+    fn provider(&self) -> ProviderKind {
+        match self.flavor {
+            Flavor::Anthropic => ProviderKind::Anthropic,
+            Flavor::DeepSeek => ProviderKind::DeepSeek,
+        }
     }
 
     fn messages_url(&self) -> String {
@@ -173,7 +180,7 @@ impl AnthropicClient {
         with_effort: bool,
         on_event: &mut (impl FnMut(ProviderEvent) + Send),
     ) -> Result<(), ProviderError> {
-        let body = request_body(request, with_effort)?;
+        let body = request_body(request, with_effort, self.provider())?;
         let response = self
             .http
             .post(self.messages_url())
@@ -188,7 +195,7 @@ impl AnthropicClient {
             return Err(self.error_from(response).await);
         }
         let key = self.key.expose().to_string();
-        let mut state = StreamState::default();
+        let mut state = StreamState::new(self.provider());
         http::read_sse(response, |data| state.handle(data, on_event, &key)).await
     }
 
@@ -206,7 +213,11 @@ impl AnthropicClient {
     }
 }
 
-fn request_body(request: &ProviderRequest, with_effort: bool) -> Result<Value, ProviderError> {
+fn request_body(
+    request: &ProviderRequest,
+    with_effort: bool,
+    provider: ProviderKind,
+) -> Result<Value, ProviderError> {
     let model = http::checked_body_model_id(&request.model)?;
     let mut messages: Vec<Value> = Vec::new();
     let mut generated = 0usize;
@@ -224,10 +235,21 @@ fn request_body(request: &ProviderRequest, with_effort: bool) -> Result<Value, P
                     content.push(json!({ "type": "text", "text": text }))
                 }
                 Part::Text(_) => {}
+                // Signed thinking goes back unchanged, before the tool use
+                // it led to, and only to the provider that wrote it.
+                Part::Replay {
+                    provider: from,
+                    block,
+                } => {
+                    if *from == provider {
+                        content.push(block.clone());
+                    }
+                }
                 Part::FunctionCall {
                     id,
                     name,
                     arguments,
+                    ..
                 } => {
                     let id = id.clone().unwrap_or_else(|| {
                         generated += 1;
@@ -281,14 +303,28 @@ fn request_body(request: &ProviderRequest, with_effort: bool) -> Result<Value, P
 
 /// Tool-use blocks arrive as a start (id, name) followed by JSON fragments;
 /// they are assembled per block index and proposed when the block stops.
-#[derive(Default)]
+/// Thinking blocks are assembled the same way (text and signature) and
+/// handed back for replay, never shown: with thinking on, a tool call must
+/// be continued with the unchanged signed thinking that preceded it.
 struct StreamState {
+    provider: ProviderKind,
     tools: HashMap<u64, (String, String, String)>,
+    thinking: HashMap<u64, Value>,
     usage: Usage,
     stop_reason: Option<String>,
 }
 
 impl StreamState {
+    fn new(provider: ProviderKind) -> Self {
+        Self {
+            provider,
+            tools: HashMap::new(),
+            thinking: HashMap::new(),
+            usage: Usage::default(),
+            stop_reason: None,
+        }
+    }
+
     fn handle(
         &mut self,
         data: &str,
@@ -305,17 +341,36 @@ impl StreamState {
                 }
             }
             "content_block_start" => {
-                if let (Some(index), Some(block)) = (event.index, event.content_block)
-                    && block.kind == "tool_use"
-                {
-                    self.tools.insert(
-                        index,
-                        (
-                            block.id.unwrap_or_default(),
-                            block.name.unwrap_or_default(),
-                            String::new(),
-                        ),
-                    );
+                if let (Some(index), Some(block)) = (event.index, event.content_block) {
+                    match block.kind.as_str() {
+                        "tool_use" => {
+                            self.tools.insert(
+                                index,
+                                (
+                                    block.id.unwrap_or_default(),
+                                    block.name.unwrap_or_default(),
+                                    String::new(),
+                                ),
+                            );
+                        }
+                        "thinking" => {
+                            self.thinking.insert(
+                                index,
+                                json!({
+                                    "type": "thinking",
+                                    "thinking": block.thinking.unwrap_or_default(),
+                                    "signature": block.signature.unwrap_or_default(),
+                                }),
+                            );
+                        }
+                        "redacted_thinking" => {
+                            self.thinking.insert(
+                                index,
+                                json!({ "type": "redacted_thinking", "data": block.data.unwrap_or_default() }),
+                            );
+                        }
+                        _ => {}
+                    }
                 }
             }
             "content_block_delta" => {
@@ -331,11 +386,28 @@ impl StreamState {
                             entry.2.push_str(&delta.partial_json.unwrap_or_default());
                         }
                     }
-                    // Thinking and its signature are not part of the answer.
+                    // Thinking is not part of the answer; it is kept only
+                    // to be sent back with a tool call.
+                    Some("thinking_delta") => {
+                        if let Some(block) = event.index.and_then(|i| self.thinking.get_mut(&i)) {
+                            append(block, "thinking", &delta.thinking.unwrap_or_default());
+                        }
+                    }
+                    Some("signature_delta") => {
+                        if let Some(block) = event.index.and_then(|i| self.thinking.get_mut(&i)) {
+                            append(block, "signature", &delta.signature.unwrap_or_default());
+                        }
+                    }
                     _ => {}
                 }
             }
             "content_block_stop" => {
+                if let Some(block) = event.index.and_then(|i| self.thinking.remove(&i)) {
+                    on_event(ProviderEvent::Replay {
+                        provider: self.provider,
+                        block,
+                    });
+                }
                 if let Some((id, name, raw)) = event.index.and_then(|i| self.tools.remove(&i)) {
                     let arguments = if raw.trim().is_empty() {
                         json!({})
@@ -348,6 +420,7 @@ impl StreamState {
                         id: (!id.is_empty()).then_some(id),
                         name,
                         arguments,
+                        signature: None,
                     });
                 }
             }
@@ -450,6 +523,9 @@ struct ContentBlock {
     kind: String,
     id: Option<String>,
     name: Option<String>,
+    thinking: Option<String>,
+    signature: Option<String>,
+    data: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -458,7 +534,15 @@ struct Delta {
     kind: Option<String>,
     text: Option<String>,
     partial_json: Option<String>,
+    thinking: Option<String>,
+    signature: Option<String>,
     stop_reason: Option<String>,
+}
+
+/// Appends a streamed fragment to a string field of a thinking block.
+fn append(block: &mut Value, field: &str, fragment: &str) {
+    let current = block[field].as_str().unwrap_or_default().to_string();
+    block[field] = json!(current + fragment);
 }
 
 #[derive(Deserialize)]
@@ -515,6 +599,7 @@ mod tests {
                 Message {
                     role: Role::Model,
                     parts: vec![Part::FunctionCall {
+                        signature: None,
                         id: Some("toolu_1".into()),
                         name: "fetch_url".into(),
                         arguments: json!({"url": "https://x"}),
@@ -530,6 +615,7 @@ mod tests {
                 },
             ]),
             true,
+            ProviderKind::Anthropic,
         )
         .unwrap();
         assert_eq!(body["system"], "be brief");
@@ -551,7 +637,7 @@ mod tests {
         );
         assert_eq!(body["tools"][0]["input_schema"], json!({"type": "object"}));
         assert!(
-            request_body(&request(vec![]), false)
+            request_body(&request(vec![]), false, ProviderKind::Anthropic)
                 .unwrap()
                 .get("output_config")
                 .is_none()
@@ -560,7 +646,7 @@ mod tests {
 
     #[test]
     fn streamed_text_and_tool_input_are_assembled() {
-        let mut state = StreamState::default();
+        let mut state = StreamState::new(ProviderKind::Anthropic);
         let mut events = Vec::new();
         for data in [
             r#"{"type":"message_start","message":{"usage":{"input_tokens":25,"output_tokens":1}}}"#,
@@ -585,7 +671,8 @@ mod tests {
             ProviderEvent::ToolProposal {
                 id: Some("toolu_9".into()),
                 name: "fetch_url".into(),
-                arguments: json!({"url": "https://a"})
+                arguments: json!({"url": "https://a"}),
+                signature: None,
             }
         );
         assert_eq!(
@@ -600,8 +687,97 @@ mod tests {
     }
 
     #[test]
+    fn signed_thinking_before_a_tool_call_is_kept_and_sent_back_unchanged() {
+        // With thinking on, a tool call must be continued with the signed
+        // thinking that preceded it, unchanged (Anthropic and DeepSeek).
+        let mut state = StreamState::new(ProviderKind::DeepSeek);
+        let mut events = Vec::new();
+        for data in [
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Need the "}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"page."}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"SIG-1"}}"#,
+            r#"{"type":"content_block_stop","index":0}"#,
+            r#"{"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"OPAQUE"}}"#,
+            r#"{"type":"content_block_stop","index":1}"#,
+            r#"{"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_5","name":"fetch_url","input":{}}}"#,
+            r#"{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"url\":\"https://a\"}"}}"#,
+            r#"{"type":"content_block_stop","index":2}"#,
+        ] {
+            state.handle(data, &mut |e| events.push(e), "KEY").unwrap();
+        }
+        let thinking =
+            json!({"type": "thinking", "thinking": "Need the page.", "signature": "SIG-1"});
+        let redacted = json!({"type": "redacted_thinking", "data": "OPAQUE"});
+        assert_eq!(
+            events,
+            vec![
+                ProviderEvent::Replay {
+                    provider: ProviderKind::DeepSeek,
+                    block: thinking.clone()
+                },
+                ProviderEvent::Replay {
+                    provider: ProviderKind::DeepSeek,
+                    block: redacted.clone()
+                },
+                ProviderEvent::ToolProposal {
+                    id: Some("toolu_5".into()),
+                    name: "fetch_url".into(),
+                    arguments: json!({"url": "https://a"}),
+                    signature: None,
+                },
+            ],
+            "no thinking text reaches the answer"
+        );
+
+        let turn = vec![
+            Message::text(Role::User, "read it"),
+            Message {
+                role: Role::Model,
+                parts: vec![
+                    Part::Replay {
+                        provider: ProviderKind::DeepSeek,
+                        block: thinking.clone(),
+                    },
+                    Part::Replay {
+                        provider: ProviderKind::DeepSeek,
+                        block: redacted.clone(),
+                    },
+                    Part::FunctionCall {
+                        id: Some("toolu_5".into()),
+                        name: "fetch_url".into(),
+                        arguments: json!({"url": "https://a"}),
+                        signature: None,
+                    },
+                ],
+            },
+            Message {
+                role: Role::User,
+                parts: vec![Part::FunctionResponse {
+                    id: Some("toolu_5".into()),
+                    name: "fetch_url".into(),
+                    response: json!({"ok": true}),
+                }],
+            },
+        ];
+        let same = request_body(&request(turn.clone()), false, ProviderKind::DeepSeek).unwrap();
+        assert_eq!(
+            same["messages"][1]["content"][0], thinking,
+            "first, unchanged"
+        );
+        assert_eq!(same["messages"][1]["content"][1], redacted);
+        assert_eq!(same["messages"][1]["content"][2]["type"], "tool_use");
+        let other = request_body(&request(turn), false, ProviderKind::Anthropic).unwrap();
+        assert_eq!(
+            other["messages"][1]["content"].as_array().unwrap().len(),
+            1,
+            "another provider's thinking is never sent"
+        );
+    }
+
+    #[test]
     fn an_overloaded_event_is_transient_and_redacted() {
-        let mut state = StreamState::default();
+        let mut state = StreamState::new(ProviderKind::Anthropic);
         let err = state
             .handle(r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded KEY"}}"#, &mut |_| {}, "KEY")
             .unwrap_err();

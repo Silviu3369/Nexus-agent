@@ -34,11 +34,19 @@ impl Reply {
         Reply::Sse(events)
     }
 
-    /// One event carrying these function calls, then a normal finish.
+    /// One event carrying these function calls, then a normal finish. Like
+    /// Gemini 3, the first call of the step carries a thought signature.
     pub fn calls(calls: &[(&str, serde_json::Value)]) -> Self {
         let parts: Vec<serde_json::Value> = calls
             .iter()
-            .map(|(name, args)| serde_json::json!({"functionCall": {"name": name, "args": args}}))
+            .enumerate()
+            .map(|(i, (name, args))| {
+                let mut part = serde_json::json!({"functionCall": {"name": name, "args": args}});
+                if i == 0 {
+                    part["thoughtSignature"] = serde_json::json!(signature_for(name));
+                }
+                part
+            })
             .collect();
         let event =
             serde_json::json!({"candidates": [{"content": {"role": "model", "parts": parts}}]});
@@ -52,6 +60,42 @@ impl Reply {
             body: body.to_string(),
         }
     }
+}
+
+/// The signature this fake gives a step whose first call is `name`.
+pub fn signature_for(name: &str) -> String {
+    format!("fake-signature-{name}")
+}
+
+/// Gemini 3 rejects a request whose current turn sends back a model step
+/// with an unsigned first call (ai.google.dev, thought signatures, checked
+/// 2026-10-16); this fake does the same, with Google's message.
+fn unsigned_call(body: &serde_json::Value) -> Option<String> {
+    let contents = body["contents"].as_array()?;
+    // The current turn starts after the last user message with text.
+    let start = contents.iter().rposition(|c| {
+        c["role"] == "user"
+            && c["parts"]
+                .as_array()
+                .is_some_and(|p| p.iter().any(|part| part.get("text").is_some()))
+    })?;
+    for content in &contents[start..] {
+        if content["role"] != "model" {
+            continue;
+        }
+        let parts = content["parts"].as_array()?;
+        if let Some(first) = parts.iter().find(|p| p.get("functionCall").is_some())
+            && first.get("thoughtSignature").is_none()
+        {
+            return Some(
+                first["functionCall"]["name"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string(),
+            );
+        }
+    }
+    None
 }
 
 pub fn text_event(text: &str) -> String {
@@ -179,6 +223,15 @@ async fn serve(mut socket: TcpStream, state: Arc<State>) {
             ]})
             .to_string(),
         }
+    } else if request.is_generation()
+        && let Some(call) = unsigned_call(&request.json())
+    {
+        Reply::status(
+            400,
+            &format!(
+                r#"{{"error":{{"code":400,"message":"Function call is missing a thought_signature in functionCall parts. Additional data, function call `default_api:{call}`","status":"INVALID_ARGUMENT"}}}}"#
+            ),
+        )
     } else if request.is_generation() {
         state
             .replies

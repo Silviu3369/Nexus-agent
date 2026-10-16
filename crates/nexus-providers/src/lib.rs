@@ -76,11 +76,22 @@ pub enum Part {
         id: Option<String>,
         name: String,
         arguments: serde_json::Value,
+        /// The provider's opaque signature on this call (Gemini's
+        /// `thoughtSignature`), sent back on the same call as received.
+        signature: Option<String>,
     },
     FunctionResponse {
         id: Option<String>,
         name: String,
         response: serde_json::Value,
+    },
+    /// A block a provider requires back verbatim later in the same turn
+    /// (Anthropic's and DeepSeek's signed thinking before a tool call).
+    /// Only the provider that produced it receives it; it is never shown,
+    /// stored or sent anywhere else.
+    Replay {
+        provider: ProviderKind,
+        block: serde_json::Value,
     },
 }
 
@@ -177,6 +188,14 @@ pub enum ProviderEvent {
         id: Option<String>,
         name: String,
         arguments: serde_json::Value,
+        /// Opaque, to be sent back on this call (see `Part::FunctionCall`).
+        signature: Option<String>,
+    },
+    /// A block to send back verbatim with the tool calls of this step (see
+    /// `Part::Replay`).
+    Replay {
+        provider: ProviderKind,
+        block: serde_json::Value,
     },
     Usage(Usage),
     Finished(FinishReason),

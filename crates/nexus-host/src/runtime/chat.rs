@@ -834,7 +834,12 @@ impl Runtime {
                 // No tool call: the model gave its final answer.
                 return Ok((total_usage, None));
             }
-            let mut model_parts = Vec::new();
+            // The model's step goes back as it came: any signed thinking
+            // first, then its text, then the calls in the order it asked for
+            // them, each with the signature it carried (providers reject a
+            // tool round trip whose signatures are missing).
+            handled.sort_by_key(|(tool, _)| tool.order);
+            let mut model_parts = call.replay.clone();
             if !call.text.is_empty() {
                 model_parts.push(Part::Text(call.text.clone()));
             }
@@ -844,6 +849,7 @@ impl Runtime {
                     id: tool.id.clone(),
                     name: tool.name.clone(),
                     arguments: tool.arguments.clone(),
+                    signature: tool.signature.clone(),
                 });
                 results.push(Part::FunctionResponse {
                     id: tool.id.clone(),
@@ -1055,11 +1061,18 @@ impl Runtime {
                         id,
                         name,
                         arguments,
+                        signature,
                     } => result.calls.push(ToolCall {
+                        order: result.calls.len(),
                         id,
                         name,
                         arguments,
+                        signature,
                     }),
+                    // Kept for this turn only, never shown or stored.
+                    ProviderEvent::Replay { provider, block } => {
+                        result.replay.push(Part::Replay { provider, block })
+                    }
                     ProviderEvent::Usage(u) => result.usage = add_usage(result.usage, u),
                     ProviderEvent::Finished(_) => {}
                 }
@@ -1535,15 +1548,21 @@ struct Route {
 }
 
 struct ToolCall {
+    /// Position among the calls of its step, as the model asked.
+    order: usize,
     id: Option<String>,
     name: String,
     arguments: Value,
+    /// Opaque; sent back on this call (Gemini's thought signature).
+    signature: Option<String>,
 }
 
 #[derive(Default)]
 struct CallResult {
     text: String,
     calls: Vec<ToolCall>,
+    /// Signed thinking to send back with this step's tool calls.
+    replay: Vec<Part>,
     usage: nexus_providers::Usage,
 }
 

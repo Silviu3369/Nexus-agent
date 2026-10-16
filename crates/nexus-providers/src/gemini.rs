@@ -216,6 +216,7 @@ fn handle_chunk(data: &str, on_event: &mut impl FnMut(ProviderEvent)) -> Result<
                     id: call.id,
                     name: call.name,
                     arguments: call.args,
+                    signature: part.thought_signature,
                 });
             }
         }
@@ -234,33 +235,59 @@ fn handle_chunk(data: &str, on_event: &mut impl FnMut(ProviderEvent)) -> Result<
     Ok(())
 }
 
+/// Documented by Google for a function call the model did not sign (for
+/// example one it signed was not sent back): it skips the validation that
+/// otherwise rejects the request with a 400 on Gemini 3 and later.
+/// ai.google.dev/gemini-api/docs/generate-content/thought-signatures,
+/// checked 2026-10-16.
+const UNSIGNED_CALL: &str = "skip_thought_signature_validator";
+
 fn request_body(request: &ProviderRequest) -> Value {
+    let signs_calls = is_gemini_3_or_later(&request.model);
     let contents: Vec<Value> = request
         .messages
         .iter()
         .map(|Message { role, parts }| {
+            // The first call of each model step carries the signature, on
+            // the same part it arrived on.
+            let mut first_call = true;
             let parts: Vec<Value> = parts
                 .iter()
-                .map(|p| match p {
-                    crate::Part::Text(text) => serde_json::json!({ "text": text }),
+                .filter_map(|p| match p {
+                    crate::Part::Text(text) => Some(serde_json::json!({ "text": text })),
                     crate::Part::FunctionCall {
                         id,
                         name,
                         arguments,
+                        signature,
                     } => {
                         let mut call = serde_json::json!({ "name": name, "args": arguments });
                         if let Some(id) = id {
                             call["id"] = serde_json::json!(id);
                         }
-                        serde_json::json!({ "functionCall": call })
+                        let mut part = serde_json::json!({ "functionCall": call });
+                        let signature = match signature {
+                            Some(s) => Some(s.as_str()),
+                            None if first_call && signs_calls && *role == Role::Model => {
+                                Some(UNSIGNED_CALL)
+                            }
+                            None => None,
+                        };
+                        if let Some(s) = signature {
+                            part["thoughtSignature"] = serde_json::json!(s);
+                        }
+                        first_call = false;
+                        Some(part)
                     }
                     crate::Part::FunctionResponse { id, name, response } => {
                         let mut result = serde_json::json!({ "name": name, "response": response });
                         if let Some(id) = id {
                             result["id"] = serde_json::json!(id);
                         }
-                        serde_json::json!({ "functionResponse": result })
+                        Some(serde_json::json!({ "functionResponse": result }))
                     }
+                    // Another provider's blocks are never sent to Gemini.
+                    crate::Part::Replay { .. } => None,
                 })
                 .collect();
             serde_json::json!({
@@ -347,6 +374,8 @@ struct Part {
     text: Option<String>,
     function_call: Option<FunctionCall>,
     thought: Option<bool>,
+    #[serde(alias = "thought_signature")]
+    thought_signature: Option<String>,
 }
 
 #[derive(Deserialize)]

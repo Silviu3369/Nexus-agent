@@ -179,6 +179,7 @@ fn request_body(request: &ProviderRequest, with_reasoning: bool) -> Result<Value
                     id,
                     name,
                     arguments,
+                    ..
                 } => {
                     let call_id = id.clone().unwrap_or_else(|| {
                         generated += 1;
@@ -204,6 +205,8 @@ fn request_body(request: &ProviderRequest, with_reasoning: bool) -> Result<Value
                         "output": response.to_string(),
                     }));
                 }
+                // Another provider's blocks are never sent to OpenAI.
+                Part::Replay { .. } => {}
             }
         }
     }
@@ -268,6 +271,7 @@ fn handle_event(
                     id: item.call_id,
                     name: item.name.unwrap_or_default(),
                     arguments,
+                    signature: None,
                 });
             }
         }
@@ -422,6 +426,7 @@ mod tests {
                     parts: vec![
                         Part::Text("looking".into()),
                         Part::FunctionCall {
+                            signature: None,
                             id: Some("call_1".into()),
                             name: "fetch_url".into(),
                             arguments: json!({"url": "https://x"}),
@@ -483,7 +488,8 @@ mod tests {
             ProviderEvent::ToolProposal {
                 id: Some("call_9".into()),
                 name: "fetch_url".into(),
-                arguments: json!({"url": "https://a"})
+                arguments: json!({"url": "https://a"}),
+                signature: None,
             }
         );
         assert_eq!(
