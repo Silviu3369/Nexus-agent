@@ -444,6 +444,21 @@ export interface ContextNode {
   status: "active" | "waiting" | "failed" | "done";
 }
 
+/** What the Nexus Core draws, derived only from state the dashboard already
+ *  has. New sources (more agents, a planner) extend this, not the drawing. */
+export interface NexusCoreVisualState {
+  state: CoreState;
+  /** The context node the work flows to now: the tool in use, the model, or
+   *  the approval the core waits on. */
+  activeTool: NodeKind | null;
+  activeModel: string | null;
+  /** 0..1 while working: how many steps the current run has taken. */
+  activityIntensity: number;
+  hasPendingApproval: boolean;
+  /** How the followed run ended, while that is recent. */
+  lastResult: "success" | "error" | null;
+}
+
 export interface CoreView {
   state: CoreState;
   /** Nodes involved in the current run, in the order they were used. */
@@ -452,6 +467,7 @@ export interface CoreView {
   path: NodeKind[];
   active: NodeKind | null;
   label: string;
+  visual: NexusCoreVisualState;
 }
 
 const NODE_OF: Record<ItemKind, NodeKind> = {
@@ -542,7 +558,16 @@ export function deriveCore(input: {
     state = "ERROR";
     label = run.failure?.message ?? "The last run failed";
   }
-  return { state, nodes, path, active, label };
+  const finished = relevant && run !== null && run.finishedAt !== null;
+  const visual: NexusCoreVisualState = {
+    state,
+    activeTool: active,
+    activeModel: running?.model ?? (relevant ? (run?.model ?? null) : null),
+    activityIntensity: running ? Math.min(1, items.length / 6) : 0,
+    hasPendingApproval: input.pendingApprovals > 0 || waiting !== undefined,
+    lastResult: finished && run?.status === "completed" ? "success" : finished && run?.status === "failed" ? "error" : null,
+  };
+  return { state, nodes, path, active, label, visual };
 }
 
 function nodeLabel(id: NodeKind, item: TimelineItem): string {

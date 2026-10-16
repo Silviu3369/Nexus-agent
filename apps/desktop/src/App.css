@@ -1582,9 +1582,9 @@ button.approve:hover:not(:disabled) {
   stroke-width: 0.8;
 }
 
-.still-grid {
-  fill: none;
-  stroke: rgba(125, 211, 252, 0.14);
+.still-envelope {
+  fill: rgba(125, 211, 252, 0.08);
+  stroke: rgba(125, 211, 252, 0.35);
   stroke-width: 0.6;
 }
 
@@ -1657,6 +1657,20 @@ button.approve:hover:not(:disabled) {
   pointer-events: none;
 }
 
+.core-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.core-title {
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: #4f5b6b;
+}
+
 .core-state {
   font-size: 0.72rem;
   font-weight: 700;
@@ -1675,7 +1689,7 @@ button.approve:hover:not(:disabled) {
 
 .core-label {
   color: #a3acbb;
-  font-size: 0.9rem;
+  font-size: 0.84rem;
   max-width: 80%;
   overflow: hidden;
   text-overflow: ellipsis;

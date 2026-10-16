@@ -1,0 +1,81 @@
+<!doctype html>
+<!-- DEV ONLY: served by `pnpm dev` at /core-preview.html. `vite build` builds
+     index.html only, so this page never ships. See src/core/preview.ts. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nexus Core preview (dev only)</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #080a0e;
+        color: #a3acbb;
+        font: 13px system-ui, sans-serif;
+      }
+      #stage {
+        position: absolute;
+        inset: 0 0 52px 0;
+      }
+      #stage canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      .label {
+        position: absolute;
+        transform: translate(-50%, calc(-100% - 14px));
+        padding: 3px 9px;
+        border-radius: 6px;
+        border: 1px solid rgba(148, 163, 184, 0.22);
+        background: rgba(10, 13, 18, 0.78);
+        color: #c9d2de;
+        font-weight: 600;
+      }
+      #caption {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 40px;
+        text-align: center;
+        letter-spacing: 0.2em;
+        font-size: 11px;
+        color: #7dd3fc;
+      }
+      #bar {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 52px;
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        padding: 0 12px;
+        border-top: 1px solid rgba(148, 163, 184, 0.15);
+      }
+      #bar button {
+        font: inherit;
+        color: #c9d2de;
+        background: #131821;
+        border: 1px solid rgba(148, 163, 184, 0.22);
+        border-radius: 6px;
+        padding: 5px 9px;
+        cursor: pointer;
+      }
+      #bar button[aria-pressed="true"] {
+        color: #7dd3fc;
+        border-color: rgba(125, 211, 252, 0.5);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stage"><canvas id="core"></canvas><div id="caption"></div></div>
+    <div id="bar"></div>
+    <script type="module" src="/src/core/preview.ts"></script>
+  </body>
+</html>

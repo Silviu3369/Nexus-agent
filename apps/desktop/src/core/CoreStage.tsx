@@ -3,6 +3,7 @@
 // unavailable. The core reflects state; it never starts anything.
 
 import { useEffect, useRef, useState } from "react";
+import type { PointerEvent } from "react";
 import type { CoreView, NodeKind } from "../model/execution.ts";
 import { prefersReducedMotion, usePref } from "../state/prefs";
 import type { NexusCore, ScreenPoints } from "./NexusCore";
@@ -18,6 +19,9 @@ const STATE_TEXT: Record<CoreView["state"], string> = {
   SUCCESS: "Completed",
   ERROR: "Error",
 };
+
+/** Labels that only repeat the state; the caption leaves them out. */
+const REPEATS = new Set(["Idle", "Listening", "Done", "Waiting for your approval"]);
 
 export function CoreStage({ view, onNode }: { view: CoreView; onNode: (id: NodeKind) => void }) {
   const [mode] = usePref("core");
@@ -49,7 +53,7 @@ export function CoreStage({ view, onNode }: { view: CoreView; onNode: (id: NodeK
         observer.observe(box);
         fit();
         const v = latest.current;
-        instance.setState(v.state, v.nodes, v.active);
+        instance.setState(v.visual, v.nodes);
       })
       .catch(() => alive && setFailed(true));
     return () => {
@@ -67,13 +71,27 @@ export function CoreStage({ view, onNode }: { view: CoreView; onNode: (id: NodeK
   }, [reduced]);
 
   const nodeKey = view.nodes.map((n) => `${n.id}:${n.status}`).join("|");
+  const v = view.visual;
+  const visualKey = [v.state, v.activeTool, v.activeModel, v.activityIntensity, v.hasPendingApproval, v.lastResult].join("|");
   useEffect(() => {
-    core.current?.setState(view.state, view.nodes, view.active);
-    // nodeKey stands for the node list's contents.
-  }, [view.state, view.active, nodeKey]);
+    core.current?.setState(view.visual, view.nodes);
+    // The keys stand for the contents of the node list and the visual state.
+  }, [visualKey, nodeKey]);
+
+  // A restrained parallax: the core leans a few degrees towards the pointer.
+  const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
+    const box = e.currentTarget.getBoundingClientRect();
+    core.current?.setPointer(((e.clientX - box.left) / box.width) * 2 - 1, -(((e.clientY - box.top) / box.height) * 2 - 1));
+  };
+  const detail = REPEATS.has(view.label) ? null : view.label;
 
   return (
-    <div className={`core-stage core-${view.state.toLowerCase()}`} ref={host}>
+    <div
+      className={`core-stage core-${view.state.toLowerCase()}`}
+      ref={host}
+      onPointerMove={webgl && !reduced ? onPointerMove : undefined}
+      onPointerLeave={webgl && !reduced ? () => core.current?.setPointer(0, 0) : undefined}
+    >
       {webgl ? (
         <canvas ref={canvas} className="core-canvas" aria-hidden="true" />
       ) : (
@@ -99,8 +117,11 @@ export function CoreStage({ view, onNode }: { view: CoreView; onNode: (id: NodeK
         );
       })}
       <div className="core-caption" role="status" aria-live="polite">
-        <span className="core-state">{STATE_TEXT[view.state]}</span>
-        <span className="core-label">{view.label}</span>
+        <span className="core-heading">
+          <span className="core-title">Nexus Core</span>
+          <span className="core-state">{STATE_TEXT[view.state]}</span>
+        </span>
+        {detail && <span className="core-label">{detail}</span>}
       </div>
       {view.path.length > 0 && (
         <ol className="core-path" aria-label="Execution path">
@@ -136,10 +157,9 @@ function StillCore({ state }: { state: CoreView["state"] }) {
         </radialGradient>
       </defs>
       <circle r="62" className="still-shell" />
-      <ellipse rx="62" ry="20" className="still-grid" />
-      <ellipse rx="20" ry="62" className="still-grid" />
-      <circle r={state === "IDLE" || state === "WAITING_APPROVAL" ? 26 : 34} fill="url(#still-glow)" />
-      <circle r="5" className="still-core" />
+      <circle r={state === "IDLE" || state === "WAITING_APPROVAL" ? 24 : 30} fill="url(#still-glow)" />
+      <circle r="12" className="still-envelope" />
+      <circle r="3.5" className="still-core" />
     </svg>
   );
 }

@@ -1,10 +1,21 @@
 // The Nexus Core: a small Three.js scene whose motion encodes the state the
 // Host publishes. It owns no runtime state and grants nothing; it only draws.
 //
-// Cost control: the camera never moves, geometry is fixed (64 neural nodes,
-// ~130 paths, 220 particles), frames are rendered on demand at a per-state
-// rate (12 fps idle, 30 fps working, 5 fps unfocused, none while hidden), and
-// reduced motion renders one still frame per change.
+// Four layers, inside out: an energy core (one camera-facing shader quad:
+// nucleus, breathing envelope, falloff), active paths (signal packets that
+// travel node to node, often through the core between clusters), a neural
+// lattice (clustered nodes with local links, a few long-range ones and
+// spokes to the core, faded with depth) and an outer shell (a faint rim).
+// Context nodes outside the shell (model, Web read, Memory, Notes, You) are
+// joined to it by beams; a tool in use receives a stream of packets from the
+// core that continues along its beam.
+//
+// Cost control: the camera never moves, geometry is fixed (160 nodes, ~300
+// links, 180 particles, 24 packets), each layer is one draw call, nothing is
+// allocated per frame, and frames are rendered on demand at a per-state rate
+// (8 fps idle, 15 while an idle signal travels, 24-30 working, 5 unfocused,
+// 3 after 20 s idle, none while hidden); reduced motion renders one still
+// frame per change.
 
 import {
   AdditiveBlending,
@@ -20,10 +31,11 @@ import {
   Scene,
   ShaderMaterial,
   SphereGeometry,
+  Vector2,
   Vector3,
   WebGLRenderer,
 } from "three";
-import type { CoreState } from "../model/execution.ts";
+import type { CoreState, NexusCoreVisualState } from "../model/execution.ts";
 
 export type CoreNodeStatus = "active" | "waiting" | "failed" | "done";
 export interface CoreNodeInput {
@@ -33,45 +45,73 @@ export interface CoreNodeInput {
 export type ScreenPoints = Record<string, { x: number; y: number }>;
 
 interface Tuning {
+  /** Lattice rotation, rad/s. */
   spin: number;
-  fire: number;
+  /** Random packets per second. */
+  packets: number;
+  /** Cluster activations per second. */
+  clusters: number;
+  /** Lattice brightness, 0..1. */
   intensity: number;
+  /** Energy of the core, 0..1. */
+  core: number;
   breathe: number;
   breatheHz: number;
-  amber: number;
-  red: number;
-  jitter: number;
+  /** Speed of the bands in the core's envelope. */
+  bands: number;
+  /** Seconds between packets sent to the active tool; 0 sends none. */
+  flowEvery: number;
   fps: number;
-  branches: boolean;
 }
 
 const TUNING: Record<CoreState, Tuning> = {
-  IDLE: { spin: 0.035, fire: 0.25, intensity: 0.42, breathe: 0.045, breatheHz: 0.2, amber: 0, red: 0, jitter: 0, fps: 8, branches: false },
-  LISTENING: { spin: 0.05, fire: 0.9, intensity: 0.6, breathe: 0.06, breatheHz: 0.45, amber: 0, red: 0, jitter: 0, fps: 30, branches: false },
-  THINKING: { spin: 0.09, fire: 7, intensity: 0.85, breathe: 0.025, breatheHz: 0.8, amber: 0, red: 0, jitter: 0, fps: 30, branches: false },
-  PLANNING: { spin: 0.07, fire: 2.5, intensity: 0.8, breathe: 0.03, breatheHz: 0.6, amber: 0, red: 0, jitter: 0, fps: 30, branches: true },
-  USING_TOOL: { spin: 0.06, fire: 2, intensity: 0.72, breathe: 0.03, breatheHz: 0.5, amber: 0, red: 0, jitter: 0, fps: 30, branches: false },
-  EXECUTING: { spin: 0.08, fire: 4, intensity: 0.95, breathe: 0.03, breatheHz: 0.7, amber: 0, red: 0, jitter: 0, fps: 30, branches: false },
-  WAITING_APPROVAL: { spin: 0.012, fire: 0.12, intensity: 0.38, breathe: 0.035, breatheHz: 0.12, amber: 0.35, red: 0, jitter: 0, fps: 8, branches: false },
-  SUCCESS: { spin: 0.05, fire: 1.2, intensity: 0.8, breathe: 0.04, breatheHz: 0.3, amber: 0, red: 0, jitter: 0, fps: 30, branches: false },
-  ERROR: { spin: 0.02, fire: 0.25, intensity: 0.5, breathe: 0.03, breatheHz: 0.2, amber: 0, red: 0.45, jitter: 0.003, fps: 20, branches: false },
+  IDLE: { spin: 0.04, packets: 0.12, clusters: 0, intensity: 0.5, core: 0.55, breathe: 0.07, breatheHz: 0.16, bands: 0.18, flowEvery: 0, fps: 8 },
+  LISTENING: { spin: 0.05, packets: 0.35, clusters: 0, intensity: 0.62, core: 0.72, breathe: 0.08, breatheHz: 0.4, bands: 0.35, flowEvery: 0, fps: 30 },
+  THINKING: { spin: 0.075, packets: 3.6, clusters: 1.3, intensity: 0.78, core: 0.9, breathe: 0.09, breatheHz: 0.95, bands: 0.9, flowEvery: 1.2, fps: 30 },
+  PLANNING: { spin: 0.055, packets: 0.25, clusters: 0, intensity: 0.72, core: 0.85, breathe: 0.07, breatheHz: 0.6, bands: 0.55, flowEvery: 0, fps: 30 },
+  USING_TOOL: { spin: 0.05, packets: 0.5, clusters: 0, intensity: 0.7, core: 0.88, breathe: 0.06, breatheHz: 0.55, bands: 0.6, flowEvery: 0.32, fps: 30 },
+  EXECUTING: { spin: 0.045, packets: 0, clusters: 0, intensity: 0.82, core: 1, breathe: 0.035, breatheHz: 0.5, bands: 0.7, flowEvery: 0.3, fps: 30 },
+  WAITING_APPROVAL: { spin: 0.012, packets: 0.05, clusters: 0, intensity: 0.3, core: 0.82, breathe: 0.06, breatheHz: 0.12, bands: 0.08, flowEvery: 0, fps: 8 },
+  SUCCESS: { spin: 0.05, packets: 0.3, clusters: 0, intensity: 0.68, core: 0.85, breathe: 0.06, breatheHz: 0.3, bands: 0.3, flowEvery: 0, fps: 30 },
+  ERROR: { spin: 0.025, packets: 0.08, clusters: 0, intensity: 0.42, core: 0.65, breathe: 0.04, breatheHz: 0.2, bands: 0.15, flowEvery: 0, fps: 24 },
 };
 
-const UNFOCUSED_FPS = 5;
-/** After this long in IDLE the core only breathes, at a couple of frames a
- *  second (measured: each WebGL frame costs far more than its pixels). */
-const REST_AFTER_MS = 15_000;
-const REST_FPS = 2;
-const NEURAL_COUNT = 64;
-const PARTICLE_COUNT = 220;
+const NODE_COUNT = 160;
+const CLUSTER_COUNT = 10;
+const PER_CLUSTER = 12;
+/** Graph index of the energy core (not drawn as a node). */
+const CORE = NODE_COUNT;
+const DUST_COUNT = 180;
+const PACKET_COUNT = 24;
+const TAIL = 4;
 const SHELL_RADIUS = 1.28;
+const LATTICE_RADIUS = 1.12;
+/** The lattice is seen slightly from above, so its rotation shows depth. */
+const BASE_TILT = 0.3;
 
-// Colours are given in display (sRGB) values; the shaders output them as is.
-const ICE: [number, number, number] = [0.49, 0.83, 0.99];
-const ICE_DIM: [number, number, number] = [0.26, 0.42, 0.55];
-const AMBER: [number, number, number] = [0.98, 0.75, 0.32];
-const RED: [number, number, number] = [0.97, 0.45, 0.45];
-const DONE: [number, number, number] = [0.42, 0.55, 0.66];
+const UNFOCUSED_FPS = 5;
+/** While a packet, a wave or a beam is moving; calm states move slowly. */
+const MOTION_FPS = 24;
+const CALM_MOTION_FPS = 15;
+const POINTER_FPS = 30;
+/** After 20 s in IDLE the core mostly breathes, a few frames a second, with
+ *  a rare signal (measured: each WebGL frame costs far more than its pixels,
+ *  so the frame count is what the idle cost follows). */
+const REST_AFTER_MS = 20_000;
+const REST_FPS = 3;
+const REST_PACKETS = 0.03;
+
+// Colours are display (sRGB) values; the shaders output them as is.
+const ICE = new Vector3(0.49, 0.83, 0.99);
+const ICE_DIM = new Vector3(0.2, 0.33, 0.46);
+const NODE_DIM = new Vector3(0.3, 0.5, 0.66);
+const ENVELOPE = new Vector3(0.38, 0.78, 0.98);
+const AMBER = new Vector3(0.98, 0.75, 0.32);
+const RED = new Vector3(0.97, 0.45, 0.45);
+const GREEN = new Vector3(0.45, 0.93, 0.72);
+const DONE = new Vector3(0.42, 0.55, 0.66);
+const PACKET = new Vector3(0.82, 0.95, 1);
+const PACKET_DIM = new Vector3(0.36, 0.6, 0.78);
 
 /** Fixed slots, so a node never jumps when others appear. */
 const SLOT: Record<string, [number, number]> = {
@@ -93,7 +133,229 @@ function mulberry32(seed: number) {
   };
 }
 
-const POINT_VERTEX = /* glsl */ `
+// Depth cue shared by the lattice layers: the camera sits at z = 6.2 and the
+// shell spans about 4.9..7.5 in view depth; far nodes are smaller and dimmer.
+const DEPTH = /* glsl */ `
+  float depthOf(vec4 mv) { return clamp((-mv.z - 4.95) / 2.5, 0.0, 1.0); }
+`;
+
+// A wave front moving through the lattice (inward while listening, outward
+// on success): a radial band around uWave.
+const WAVE = /* glsl */ `
+  uniform float uWave;
+  uniform float uWaveAmp;
+  float waveAt(vec3 p) {
+    float d = (length(p) - uWave) / 0.17;
+    return uWaveAmp * exp(-d * d);
+  }
+`;
+
+const NODE_VERTEX = /* glsl */ `
+  attribute float aAct;
+  attribute float aSize;
+  attribute float aSeed;
+  uniform float uPixelRatio;
+  uniform float uTime;
+  uniform float uTwinkle;
+  varying float vAct;
+  varying float vDepth;
+  varying float vWave;
+  ${DEPTH}
+  ${WAVE}
+  void main() {
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    float depth = depthOf(mv);
+    vDepth = 1.0 - depth * 0.72;
+    vWave = waveAt(position);
+    vAct = aAct;
+    float twinkle = 1.0 + uTwinkle * sin(uTime * 0.7 + aSeed * 6.2831);
+    float size = aSize * twinkle + (aAct + vWave) * 9.0;
+    gl_PointSize = size * uPixelRatio * (6.0 / -mv.z) * (0.7 + 0.3 * vDepth);
+    gl_Position = projectionMatrix * mv;
+  }
+`;
+
+const NODE_FRAGMENT = /* glsl */ `
+  uniform vec3 uDim;
+  uniform vec3 uHot;
+  uniform vec3 uWaveColor;
+  uniform float uIntensity;
+  varying float vAct;
+  varying float vDepth;
+  varying float vWave;
+  void main() {
+    float r = length(gl_PointCoord - 0.5) * 2.0;
+    float act = clamp(vAct + vWave, 0.0, 1.0);
+    float dotA = smoothstep(0.55, 0.25, r);
+    float halo = pow(max(0.0, 1.0 - r), 2.0) * (0.2 + 0.7 * act);
+    vec3 c = mix(uDim, uHot, act);
+    c = mix(c, uWaveColor, clamp(vWave, 0.0, 1.0) * 0.6);
+    float light = (0.6 + uIntensity * 0.7 + act * 1.1) * vDepth;
+    gl_FragColor = vec4(c * (dotA + halo) * light, 1.0);
+  }
+`;
+
+const LINK_VERTEX = /* glsl */ `
+  attribute float aAct;
+  varying float vAct;
+  varying float vDepth;
+  varying float vWave;
+  ${DEPTH}
+  ${WAVE}
+  void main() {
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    vDepth = 1.0 - depthOf(mv) * 0.82;
+    vWave = waveAt(position);
+    vAct = aAct;
+    gl_Position = projectionMatrix * mv;
+  }
+`;
+
+const LINK_FRAGMENT = /* glsl */ `
+  uniform vec3 uDim;
+  uniform vec3 uHot;
+  uniform vec3 uWaveColor;
+  uniform float uIntensity;
+  varying float vAct;
+  varying float vDepth;
+  varying float vWave;
+  void main() {
+    float act = clamp(vAct + vWave, 0.0, 1.0);
+    vec3 c = mix(uDim, uHot, act);
+    c = mix(c, uWaveColor, clamp(vWave, 0.0, 1.0) * 0.6);
+    // A negative activation is a broken link: darker than at rest.
+    float a = max(0.0, 0.12 + uIntensity * 0.18 + vAct * 0.95 + vWave * 0.6) * vDepth;
+    gl_FragColor = vec4(c * a, 1.0);
+  }
+`;
+
+const PACKET_VERTEX = /* glsl */ `
+  attribute float aAct;
+  attribute float aSize;
+  attribute vec3 aColor;
+  uniform float uPixelRatio;
+  varying float vAct;
+  varying float vDepth;
+  varying vec3 vColor;
+  ${DEPTH}
+  void main() {
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    vDepth = 1.0 - depthOf(mv) * 0.6;
+    vAct = aAct;
+    vColor = aColor;
+    gl_PointSize = aSize * uPixelRatio * (6.0 / -mv.z);
+    gl_Position = projectionMatrix * mv;
+  }
+`;
+
+const PACKET_FRAGMENT = /* glsl */ `
+  varying float vAct;
+  varying float vDepth;
+  varying vec3 vColor;
+  void main() {
+    float r = length(gl_PointCoord - 0.5) * 2.0;
+    float a = smoothstep(1.0, 0.0, r);
+    a *= a;
+    gl_FragColor = vec4(vColor * a * vAct * 2.0 * vDepth, 1.0);
+  }
+`;
+
+const DUST_VERTEX = /* glsl */ `
+  attribute float aSize;
+  attribute float aSeed;
+  uniform float uPixelRatio;
+  uniform float uTime;
+  uniform float uPull;
+  varying float vDepth;
+  varying float vSeed;
+  ${DEPTH}
+  void main() {
+    vec3 p = position;
+    p += 0.04 * vec3(sin(uTime * 0.13 + aSeed * 12.0), sin(uTime * 0.11 + aSeed * 7.0), sin(uTime * 0.17 + aSeed * 3.0));
+    // Listening: a slow breath inward.
+    p *= 1.0 - uPull * 0.1 * (0.5 + 0.5 * sin(uTime * 2.6 - length(position) * 6.0));
+    vec4 mv = modelViewMatrix * vec4(p, 1.0);
+    vDepth = 1.0 - depthOf(mv) * 0.75;
+    vSeed = aSeed;
+    gl_PointSize = aSize * uPixelRatio * (6.0 / -mv.z);
+    gl_Position = projectionMatrix * mv;
+  }
+`;
+
+const DUST_FRAGMENT = /* glsl */ `
+  uniform vec3 uColor;
+  uniform float uIntensity;
+  varying float vDepth;
+  varying float vSeed;
+  void main() {
+    float r = length(gl_PointCoord - 0.5) * 2.0;
+    float a = smoothstep(1.0, 0.0, r);
+    gl_FragColor = vec4(uColor * a * (0.2 + uIntensity * 0.3) * (0.5 + 0.5 * vSeed) * vDepth, 1.0);
+  }
+`;
+
+const UV_VERTEX = /* glsl */ `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+// The energy core, in quad coordinates (-1..1 across the quad):
+// a small near-white nucleus, a translucent envelope with slow bands and a
+// brighter rim (so it reads as a volume), and a falloff into the lattice.
+const CORE_FRAGMENT = /* glsl */ `
+  uniform float uTime;
+  uniform float uEnergy;
+  uniform float uBreath;
+  uniform float uBands;
+  uniform vec3 uEnv;
+  uniform vec3 uAccent;
+  uniform float uAccentAmt;
+  varying vec2 vUv;
+  void main() {
+    vec2 p = (vUv - 0.5) * 2.0;
+    float r = length(p);
+    float nucleus = exp(-r * r * 1100.0) * 1.15 + exp(-r * r * 170.0) * 0.5;
+    float R = 0.27 * uBreath;
+    float inside = 1.0 - smoothstep(R * 0.82, R, r);
+    float rim = smoothstep(R * 0.5, R * 0.97, r) * inside;
+    float ang = atan(p.y, p.x);
+    float bands = 0.5 + 0.5 * sin(ang * 3.0 + uTime * uBands + sin(r * 26.0 - uTime * uBands * 1.7) * 0.9);
+    float swirl = 0.5 + 0.5 * sin(r * 38.0 - uTime * (0.4 + uBands * 1.4));
+    float env = inside * (0.035 + 0.17 * bands * swirl) + rim * rim * 0.42;
+    float fall = exp(-r * 6.0) * 0.2;
+    vec3 tint = mix(uEnv, uAccent, uAccentAmt);
+    vec3 c = vec3(0.9, 0.97, 1.0) * nucleus * (0.55 + 0.45 * uEnergy)
+      + tint * env * (0.45 + 0.6 * uEnergy)
+      + tint * fall * (0.35 + 0.65 * uEnergy);
+    gl_FragColor = vec4(c, 1.0);
+  }
+`;
+
+const SHELL_VERTEX = /* glsl */ `
+  varying float vRim;
+  void main() {
+    vec3 n = normalize(normalMatrix * normal);
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    vRim = 1.0 - abs(dot(n, normalize(-mv.xyz)));
+    gl_Position = projectionMatrix * mv;
+  }
+`;
+
+const SHELL_FRAGMENT = /* glsl */ `
+  uniform vec3 uColor;
+  uniform float uStrength;
+  varying float vRim;
+  void main() {
+    float a = (pow(vRim, 5.0) + pow(vRim, 1.5) * 0.04) * uStrength;
+    gl_FragColor = vec4(uColor * a, 1.0);
+  }
+`;
+
+// Beams to the context nodes keep their original look.
+const BEAM_POINT_VERTEX = /* glsl */ `
   attribute float aAct;
   attribute float aSize;
   uniform float uPixelRatio;
@@ -107,7 +369,7 @@ const POINT_VERTEX = /* glsl */ `
   }
 `;
 
-const POINT_FRAGMENT = /* glsl */ `
+const BEAM_POINT_FRAGMENT = /* glsl */ `
   uniform vec3 uDim;
   uniform vec3 uHot;
   uniform float uIntensity;
@@ -122,7 +384,7 @@ const POINT_FRAGMENT = /* glsl */ `
   }
 `;
 
-const LINE_VERTEX = /* glsl */ `
+const BEAM_LINE_VERTEX = /* glsl */ `
   attribute float aAct;
   varying float vAct;
   void main() {
@@ -131,7 +393,7 @@ const LINE_VERTEX = /* glsl */ `
   }
 `;
 
-const LINE_FRAGMENT = /* glsl */ `
+const BEAM_LINE_FRAGMENT = /* glsl */ `
   uniform vec3 uDim;
   uniform vec3 uHot;
   uniform float uIntensity;
@@ -156,32 +418,11 @@ const GLOW_FRAGMENT = /* glsl */ `
   }
 `;
 
-const UV_VERTEX = /* glsl */ `
-  varying vec2 vUv;
-  void main() {
-    vUv = uv;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }
-`;
-
-const SHELL_VERTEX = /* glsl */ `
-  varying float vRim;
-  void main() {
-    vec3 n = normalize(normalMatrix * normal);
-    vec4 mv = modelViewMatrix * vec4(position, 1.0);
-    vRim = 1.0 - abs(dot(n, normalize(-mv.xyz)));
-    gl_Position = projectionMatrix * mv;
-  }
-`;
-
-const SHELL_FRAGMENT = /* glsl */ `
+const FLAT_FRAGMENT = /* glsl */ `
   uniform vec3 uColor;
   uniform float uStrength;
-  varying float vRim;
-  void main() {
-    float a = pow(vRim, 3.0) * uStrength;
-    gl_FragColor = vec4(uColor * a, a);
-  }
+  varying vec2 vUv;
+  void main() { gl_FragColor = vec4(uColor * uStrength, uStrength); }
 `;
 
 function additive(vertexShader: string, fragmentShader: string, uniforms: Record<string, { value: unknown }>) {
@@ -196,11 +437,11 @@ function additive(vertexShader: string, fragmentShader: string, uniforms: Record
   });
 }
 
-const v3 = (c: [number, number, number]) => new Vector3(c[0], c[1], c[2]);
-
 interface Beam {
   id: string;
   target: Vector3;
+  /** Where the beam leaves the shell, towards its node. */
+  from: Vector3;
   line: LineSegments;
   lineMat: ShaderMaterial;
   head: Points;
@@ -216,36 +457,79 @@ interface Beam {
   removing: boolean;
 }
 
+/** A signal travelling along a route of lattice nodes (CORE included). */
+interface Packet {
+  alive: boolean;
+  route: number[];
+  seg: number;
+  /** Progress along the current segment, 0..1. */
+  t: number;
+  /** World units per second. */
+  speed: number;
+  strength: number;
+  color: Vector3;
+}
+
+const IDLE_VISUAL: NexusCoreVisualState = {
+  state: "IDLE",
+  activeTool: null,
+  activeModel: null,
+  activityIntensity: 0,
+  hasPendingApproval: false,
+  lastResult: null,
+};
+
 export class NexusCore {
   private readonly renderer: WebGLRenderer;
   private readonly scene = new Scene();
   private readonly camera = new PerspectiveCamera(38, 1, 0.1, 50);
-  private readonly brain = new Group();
+  /** Base tilt plus the pointer's parallax. */
+  private readonly orient = new Group();
+  private readonly lattice = new Group();
   private readonly dust = new Group();
   private readonly beams = new Map<string, Beam>();
   private readonly disposables: { dispose(): void }[] = [];
 
-  private readonly neuralPos: Vector3[] = [];
-  private readonly neighbours: number[][] = [];
-  private readonly act: Float32Array;
-  private readonly lineAct: Float32Array;
-  private readonly edges: [number, number][] = [];
-  private readonly neuralGeo: BufferGeometry;
-  private readonly lineGeo: BufferGeometry;
-  private readonly pending: { node: number; at: number; strength: number; depth: number; outward: boolean }[] = [];
+  // Lattice graph. Index CORE is the energy core at the origin.
+  private readonly nodes: Vector3[] = [];
+  private readonly cluster = new Int16Array(NODE_COUNT + 1).fill(-1);
+  private readonly hubs: number[] = [];
+  private readonly members: number[][] = [];
+  private readonly adj: number[][] = [];
+  private readonly edgeIndex = new Map<number, number>();
+  private edges = new Uint16Array(0);
+  private edgeCount = 0;
 
-  private readonly neuralMat: ShaderMaterial;
-  private readonly lineMat: ShaderMaterial;
+  private readonly act = new Float32Array(NODE_COUNT);
+  private edgeAct = new Float32Array(0);
+  private edgeBreak = new Float32Array(0);
+  private lineAct = new Float32Array(0);
+  private coreKick = 0;
+  // Breadth-first search buffers, reused for every route.
+  private readonly bfsPrev = new Int16Array(NODE_COUNT + 1);
+  private readonly bfsQueue = new Int16Array(NODE_COUNT + 1);
+
+  private readonly packets: Packet[] = [];
+  private alivePackets = 0;
+  private readonly packetPos = new Float32Array(PACKET_COUNT * TAIL * 3);
+  private readonly packetAct = new Float32Array(PACKET_COUNT * TAIL);
+  private readonly packetSize = new Float32Array(PACKET_COUNT * TAIL);
+  private readonly packetColor = new Float32Array(PACKET_COUNT * TAIL * 3);
+
+  private readonly nodeGeo: BufferGeometry;
+  private readonly linkGeo: BufferGeometry;
+  private readonly packetGeo: BufferGeometry;
+  private readonly nodeMat: ShaderMaterial;
+  private readonly linkMat: ShaderMaterial;
+  private readonly packetMat: ShaderMaterial;
   private readonly dustMat: ShaderMaterial;
-  private readonly glowMat: ShaderMaterial;
   private readonly coreMat: ShaderMaterial;
   private readonly shellMat: ShaderMaterial;
-  private readonly gridMat: ShaderMaterial;
-  private readonly pulseMat: ShaderMaterial;
-  private readonly pulse: Mesh;
-  private readonly glow: Mesh;
-  private readonly shell: Group;
+  private readonly pixelRatio: { value: number };
+  /** Shared by the node and link materials. */
+  private readonly wave = { r: { value: 0 }, amp: { value: 0 }, color: { value: ICE.clone() } };
 
+  private visual: NexusCoreVisualState = IDLE_VISUAL;
   private state: CoreState = "IDLE";
   private stateSince = performance.now();
   private tune: Tuning = { ...TUNING.IDLE };
@@ -255,13 +539,37 @@ export class NexusCore {
   private focused = true;
   private raf = 0;
   private sleep = 0;
+  private wakeAt = 0;
   private lastTick = 0;
   private time = 0;
-  private fireDebt = 0;
-  private pulseAge = -1;
+  private packetDebt = 0;
+  private clusterDebt = 0;
+  private flowTimer = 0;
+  private execIndex = 0;
+  // Waves: listening (inward, repeating) and success (outward, once).
+  private listenPhase = 0;
+  private successAge = -1;
+  // Error: links break, then mend.
+  private errorAge = -1;
+  private jitter = 0;
+  // Planning: try three routes, then follow one.
+  private planAge = -1;
+  private readonly planRoutes: number[][] = [];
+  private planChosen = -1;
+  // Accent colour in the core's envelope only (amber, red, green).
+  private readonly accentColor = AMBER.clone();
+  private accent = 0;
+  private accentGoal = 0;
+  // Pointer parallax.
+  private readonly pointer = new Vector2();
+  private readonly pointerGoal = new Vector2();
+  private pointerUntil = 0;
+
   private width = 1;
   private height = 1;
   private readonly rand = mulberry32(0x6e78);
+  private readonly tmp = new Vector3();
+  private readonly tmp2 = new Vector3();
   private disposed = false;
   private readonly onLayout: (points: ScreenPoints) => void;
 
@@ -273,186 +581,136 @@ export class NexusCore {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     this.camera.position.set(0, 0, 6.2);
     this.camera.lookAt(0, 0, 0);
+    this.pixelRatio = { value: this.renderer.getPixelRatio() };
 
-    const pixelRatio = { value: this.renderer.getPixelRatio() };
+    this.buildLattice();
+    const time = { value: 0 };
 
-    // Neural nodes on jittered shells, joined to their nearest neighbours.
-    for (let i = 0; i < NEURAL_COUNT; i++) {
-      const y = 1 - (2 * (i + 0.5)) / NEURAL_COUNT;
-      const ring = Math.sqrt(1 - y * y);
-      const theta = i * 2.399963;
-      const radius = 0.38 + 0.72 * Math.cbrt(this.rand());
-      this.neuralPos.push(
-        new Vector3(Math.cos(theta) * ring, y, Math.sin(theta) * ring).multiplyScalar(radius).addScalar((this.rand() - 0.5) * 0.08),
-      );
+    // Nodes.
+    const nodePositions = new Float32Array(NODE_COUNT * 3);
+    const nodeSizes = new Float32Array(NODE_COUNT);
+    const nodeSeeds = new Float32Array(NODE_COUNT);
+    for (let i = 0; i < NODE_COUNT; i++) {
+      this.nodes[i].toArray(nodePositions, i * 3);
+      const hub = this.hubs.includes(i);
+      nodeSizes[i] = hub ? 8.5 + this.rand() * 2 : this.cluster[i] >= 0 ? 3.6 + this.rand() * 3 : 2.6 + this.rand() * 2.4;
+      nodeSeeds[i] = this.rand();
     }
-    const seen = new Set<string>();
-    for (let i = 0; i < NEURAL_COUNT; i++) {
-      const near = this.neuralPos
-        .map((p, j) => ({ j, d: p.distanceToSquared(this.neuralPos[i]) }))
-        .filter((x) => x.j !== i)
-        .sort((a, b) => a.d - b.d)
-        .slice(0, 3);
-      this.neighbours.push(near.map((x) => x.j));
-      for (const { j } of near) {
-        const key = i < j ? `${i}-${j}` : `${j}-${i}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          this.edges.push([i, j]);
-        }
-      }
+    this.nodeGeo = new BufferGeometry();
+    this.nodeGeo.setAttribute("position", new BufferAttribute(nodePositions, 3));
+    this.nodeGeo.setAttribute("aAct", new BufferAttribute(this.act, 1));
+    this.nodeGeo.setAttribute("aSize", new BufferAttribute(nodeSizes, 1));
+    this.nodeGeo.setAttribute("aSeed", new BufferAttribute(nodeSeeds, 1));
+    this.nodeMat = additive(NODE_VERTEX, NODE_FRAGMENT, {
+      uPixelRatio: this.pixelRatio,
+      uTime: time,
+      uTwinkle: { value: 0.15 },
+      uDim: { value: NODE_DIM.clone() },
+      uHot: { value: ICE.clone() },
+      uIntensity: { value: 0.5 },
+      uWave: this.wave.r,
+      uWaveAmp: this.wave.amp,
+      uWaveColor: this.wave.color,
+    });
+
+    // Links.
+    const linkPositions = new Float32Array(this.edgeCount * 6);
+    for (let e = 0; e < this.edgeCount; e++) {
+      this.nodes[this.edges[e * 2]].toArray(linkPositions, e * 6);
+      this.nodes[this.edges[e * 2 + 1]].toArray(linkPositions, e * 6 + 3);
     }
-    for (let i = 0; i < NEURAL_COUNT; i++) {
-      for (const [a, b] of this.edges) {
-        if (a === i && !this.neighbours[i].includes(b)) this.neighbours[i].push(b);
-        if (b === i && !this.neighbours[i].includes(a)) this.neighbours[i].push(a);
-      }
+    this.linkGeo = new BufferGeometry();
+    this.linkGeo.setAttribute("position", new BufferAttribute(linkPositions, 3));
+    this.linkGeo.setAttribute("aAct", new BufferAttribute(this.lineAct, 1));
+    this.linkMat = additive(LINK_VERTEX, LINK_FRAGMENT, {
+      uDim: { value: ICE_DIM.clone() },
+      uHot: { value: ICE.clone() },
+      uIntensity: { value: 0.5 },
+      uWave: this.wave.r,
+      uWaveAmp: this.wave.amp,
+      uWaveColor: this.wave.color,
+    });
+
+    // Packets: a short tail of points each; unused points have no size.
+    for (let i = 0; i < PACKET_COUNT; i++) {
+      this.packets.push({ alive: false, route: [], seg: 0, t: 0, speed: 1, strength: 1, color: PACKET });
     }
+    this.packetGeo = new BufferGeometry();
+    this.packetGeo.setAttribute("position", new BufferAttribute(this.packetPos, 3));
+    this.packetGeo.setAttribute("aAct", new BufferAttribute(this.packetAct, 1));
+    this.packetGeo.setAttribute("aSize", new BufferAttribute(this.packetSize, 1));
+    this.packetGeo.setAttribute("aColor", new BufferAttribute(this.packetColor, 3));
+    this.packetMat = additive(PACKET_VERTEX, PACKET_FRAGMENT, { uPixelRatio: this.pixelRatio });
+    this.packetAttributes = ["position", "aAct", "aSize", "aColor"].map((n) => this.packetGeo.getAttribute(n) as BufferAttribute);
 
-    this.act = new Float32Array(NEURAL_COUNT);
-    const neuralPositions = new Float32Array(NEURAL_COUNT * 3);
-    const neuralSizes = new Float32Array(NEURAL_COUNT);
-    this.neuralPos.forEach((p, i) => {
-      p.toArray(neuralPositions, i * 3);
-      neuralSizes[i] = 5 + this.rand() * 4;
-    });
-    this.neuralGeo = new BufferGeometry();
-    this.neuralGeo.setAttribute("position", new BufferAttribute(neuralPositions, 3));
-    this.neuralGeo.setAttribute("aAct", new BufferAttribute(this.act, 1));
-    this.neuralGeo.setAttribute("aSize", new BufferAttribute(neuralSizes, 1));
-    this.neuralMat = additive(POINT_VERTEX, POINT_FRAGMENT, {
-      uPixelRatio: pixelRatio,
-      uBase: { value: 14 },
-      uDim: { value: v3(ICE_DIM) },
-      uHot: { value: v3(ICE) },
-      uIntensity: { value: 0.4 },
-      uAlpha: { value: 1 },
-    });
-    this.brain.add(new Points(this.neuralGeo, this.neuralMat));
+    this.lattice.add(new LineSegments(this.linkGeo, this.linkMat));
+    this.lattice.add(new Points(this.nodeGeo, this.nodeMat));
+    const packets = new Points(this.packetGeo, this.packetMat);
+    packets.frustumCulled = false;
+    this.lattice.add(packets);
+    this.orient.add(this.lattice);
 
-    const linePositions = new Float32Array(this.edges.length * 6);
-    this.lineAct = new Float32Array(this.edges.length * 2);
-    this.edges.forEach(([a, b], k) => {
-      this.neuralPos[a].toArray(linePositions, k * 6);
-      this.neuralPos[b].toArray(linePositions, k * 6 + 3);
-    });
-    this.lineGeo = new BufferGeometry();
-    this.lineGeo.setAttribute("position", new BufferAttribute(linePositions, 3));
-    this.lineGeo.setAttribute("aAct", new BufferAttribute(this.lineAct, 1));
-    this.lineMat = additive(LINE_VERTEX, LINE_FRAGMENT, {
-      uDim: { value: v3(ICE_DIM) },
-      uHot: { value: v3(ICE) },
-      uIntensity: { value: 0.4 },
-      uAlpha: { value: 1 },
-    });
-    this.brain.add(new LineSegments(this.lineGeo, this.lineMat));
-    this.scene.add(this.brain);
-
-    // Dust: slow particles between the brain and the shell.
-    const dustPos = new Float32Array(PARTICLE_COUNT * 3);
-    const dustSize = new Float32Array(PARTICLE_COUNT);
-    const dustAct = new Float32Array(PARTICLE_COUNT);
-    for (let i = 0; i < PARTICLE_COUNT; i++) {
-      const dir = new Vector3(this.rand() * 2 - 1, this.rand() * 2 - 1, this.rand() * 2 - 1).normalize();
-      dir.multiplyScalar(0.6 + this.rand() * 0.62).toArray(dustPos, i * 3);
-      dustSize[i] = 1.2 + this.rand() * 1.8;
-      dustAct[i] = this.rand() * 0.25;
+    // Micro particles between the lattice and the shell, drifting on the GPU.
+    const dustPos = new Float32Array(DUST_COUNT * 3);
+    const dustSize = new Float32Array(DUST_COUNT);
+    const dustSeed = new Float32Array(DUST_COUNT);
+    for (let i = 0; i < DUST_COUNT; i++) {
+      this.tmp.set(this.rand() * 2 - 1, this.rand() * 2 - 1, this.rand() * 2 - 1).normalize();
+      this.tmp.multiplyScalar(0.3 + Math.cbrt(this.rand()) * 0.92).toArray(dustPos, i * 3);
+      dustSize[i] = 1.6 + this.rand() * 2.2;
+      dustSeed[i] = this.rand();
     }
     const dustGeo = new BufferGeometry();
     dustGeo.setAttribute("position", new BufferAttribute(dustPos, 3));
     dustGeo.setAttribute("aSize", new BufferAttribute(dustSize, 1));
-    dustGeo.setAttribute("aAct", new BufferAttribute(dustAct, 1));
-    this.dustMat = additive(POINT_VERTEX, POINT_FRAGMENT, {
-      uPixelRatio: pixelRatio,
-      uBase: { value: 2 },
-      uDim: { value: v3(ICE_DIM) },
-      uHot: { value: v3(ICE) },
-      uIntensity: { value: 0.3 },
-      uAlpha: { value: 0.55 },
+    dustGeo.setAttribute("aSeed", new BufferAttribute(dustSeed, 1));
+    this.dustMat = additive(DUST_VERTEX, DUST_FRAGMENT, {
+      uPixelRatio: this.pixelRatio,
+      uTime: time,
+      uPull: { value: 0 },
+      uColor: { value: ICE.clone() },
+      uIntensity: { value: 0.5 },
     });
     this.dust.add(new Points(dustGeo, this.dustMat));
-    this.scene.add(this.dust);
-    this.disposables.push(dustGeo);
+    this.orient.add(this.dust);
+    this.orient.rotation.x = BASE_TILT;
+    this.scene.add(this.orient);
 
-    // Energy core: two camera-facing glows (the camera never moves).
-    const glowGeo = new PlaneGeometry(1, 1);
-    this.glowMat = additive(UV_VERTEX, GLOW_FRAGMENT, {
-      uColor: { value: v3(ICE) },
-      uStrength: { value: 0.35 },
-      uFalloff: { value: 2.6 },
+    // Energy core: one camera-facing quad (the camera never moves).
+    const coreGeo = new PlaneGeometry(1, 1);
+    this.coreMat = additive(UV_VERTEX, CORE_FRAGMENT, {
+      uTime: time,
+      uEnergy: { value: 0.55 },
+      uBreath: { value: 1 },
+      uBands: { value: 0.2 },
+      uEnv: { value: ENVELOPE.clone() },
+      uAccent: { value: AMBER.clone() },
+      uAccentAmt: { value: 0 },
     });
-    this.glow = new Mesh(glowGeo, this.glowMat);
-    this.glow.scale.setScalar(2.4);
-    this.scene.add(this.glow);
-    this.coreMat = additive(UV_VERTEX, GLOW_FRAGMENT, {
-      uColor: { value: v3([0.85, 0.96, 1]) },
-      uStrength: { value: 0.9 },
-      uFalloff: { value: 5 },
-    });
-    const coreGlow = new Mesh(glowGeo, this.coreMat);
-    coreGlow.scale.setScalar(0.85);
-    this.scene.add(coreGlow);
-    this.disposables.push(glowGeo);
+    const core = new Mesh(coreGeo, this.coreMat);
+    core.scale.setScalar(1.7);
+    this.scene.add(core);
 
-    // Transparent shell: a rim glow plus a sparse latitude/longitude grid.
-    this.shell = new Group();
+    // Outer shell: a faint rim, so the volume reads without a glass ball.
     const shellGeo = new SphereGeometry(SHELL_RADIUS, 48, 32);
-    this.shellMat = additive(SHELL_VERTEX, SHELL_FRAGMENT, { uColor: { value: v3(ICE) }, uStrength: { value: 0.32 } });
-    this.shell.add(new Mesh(shellGeo, this.shellMat));
-    const grid: number[] = [];
-    const seg = 64;
-    for (const lat of [-0.66, -0.33, 0, 0.33, 0.66]) {
-      const r = Math.sqrt(1 - lat * lat) * SHELL_RADIUS;
-      const y = lat * SHELL_RADIUS;
-      for (let k = 0; k < seg; k++) {
-        const a0 = (k / seg) * Math.PI * 2;
-        const a1 = ((k + 1) / seg) * Math.PI * 2;
-        grid.push(Math.cos(a0) * r, y, Math.sin(a0) * r, Math.cos(a1) * r, y, Math.sin(a1) * r);
-      }
-    }
-    for (let m = 0; m < 6; m++) {
-      const phi = (m / 6) * Math.PI;
-      for (let k = 0; k < seg; k++) {
-        const t0 = (k / seg) * Math.PI * 2;
-        const t1 = ((k + 1) / seg) * Math.PI * 2;
-        const p = (t: number) => [Math.cos(t) * Math.cos(phi) * SHELL_RADIUS, Math.sin(t) * SHELL_RADIUS, Math.cos(t) * Math.sin(phi) * SHELL_RADIUS];
-        grid.push(...p(t0), ...p(t1));
-      }
-    }
-    const gridGeo = new BufferGeometry();
-    gridGeo.setAttribute("position", new BufferAttribute(new Float32Array(grid), 3));
-    gridGeo.setAttribute("aAct", new BufferAttribute(new Float32Array(grid.length / 3), 1));
-    this.gridMat = additive(LINE_VERTEX, LINE_FRAGMENT, { uDim: { value: v3(ICE_DIM) }, uHot: { value: v3(ICE) }, uIntensity: { value: -0.55 }, uAlpha: { value: 1 } });
-    this.shell.add(new LineSegments(gridGeo, this.gridMat));
-    this.shell.rotation.x = 0.35;
-    this.scene.add(this.shell);
-    this.disposables.push(shellGeo, gridGeo);
-
-    // Success: one ring that widens and fades.
-    const pulseGeo = new RingGeometry(0.96, 1, 96);
-    this.pulseMat = additive(UV_VERTEX, /* glsl */ `
-      uniform vec3 uColor;
-      uniform float uStrength;
-      varying vec2 vUv;
-      void main() { gl_FragColor = vec4(uColor * uStrength, uStrength); }
-    `, { uColor: { value: v3(ICE) }, uStrength: { value: 0 } });
-    this.pulse = new Mesh(pulseGeo, this.pulseMat);
-    this.pulse.visible = false;
-    this.scene.add(this.pulse);
-    this.disposables.push(pulseGeo);
+    this.shellMat = additive(SHELL_VERTEX, SHELL_FRAGMENT, { uColor: { value: ICE.clone() }, uStrength: { value: 0.3 } });
+    this.scene.add(new Mesh(shellGeo, this.shellMat));
 
     this.disposables.push(
-      this.neuralGeo,
-      this.lineGeo,
-      this.neuralMat,
-      this.lineMat,
+      this.nodeGeo,
+      this.linkGeo,
+      this.packetGeo,
+      dustGeo,
+      coreGeo,
+      shellGeo,
+      this.nodeMat,
+      this.linkMat,
+      this.packetMat,
       this.dustMat,
-      this.glowMat,
       this.coreMat,
       this.shellMat,
-      this.gridMat,
-      this.pulseMat,
     );
+    this.timeUniform = time;
 
     canvas.addEventListener("webglcontextlost", this.handleContextLost);
     window.addEventListener("focus", this.handleFocus);
@@ -461,18 +719,24 @@ export class NexusCore {
     this.focused = document.hasFocus();
   }
 
+  private readonly timeUniform: { value: number };
+  private readonly packetAttributes: BufferAttribute[];
+
   /** Called when the GPU context is lost; the stage switches to its still fallback. */
   onContextLost: (() => void) | null = null;
 
-  setState(state: CoreState, nodes: CoreNodeInput[], active: string | null) {
-    if (state === "SUCCESS" && this.state !== "SUCCESS") this.pulseAge = 0;
-    // A short disruption that settles, never a flashing alarm.
-    if (state === "ERROR" && this.state !== "ERROR") this.tune.jitter = 0.018;
+  setState(visual: NexusCoreVisualState, nodes: CoreNodeInput[]) {
+    const state = visual.state;
     const changed = state !== this.state;
-    if (changed) this.stateSince = performance.now();
+    if (changed) {
+      this.enter(state);
+      this.stateSince = performance.now();
+    }
+    this.visual = visual;
     this.state = state;
     this.target = TUNING[state];
-    this.activeId = active;
+    this.activeId = visual.activeTool;
+    this.accentGoal = this.restingAccent();
     this.syncBeams(nodes);
     if (this.reduced) {
       this.stillFrame();
@@ -491,6 +755,17 @@ export class NexusCore {
     } else {
       this.kick();
     }
+  }
+
+  /** Pointer over the stage, -1..1 on both axes; (0, 0) when it leaves. */
+  setPointer(x: number, y: number) {
+    if (this.reduced) return;
+    this.pointerGoal.set(Math.max(-1, Math.min(1, x)), Math.max(-1, Math.min(1, y)));
+    const now = performance.now();
+    this.pointerUntil = now + 900;
+    // Wake a long rest sleep, but never render faster than the pointer rate.
+    if (this.sleep && this.wakeAt - now > 1000 / POINTER_FPS) this.halt();
+    this.kick();
   }
 
   resize(width: number, height: number) {
@@ -520,13 +795,340 @@ export class NexusCore {
     this.renderer.dispose();
   }
 
+  // ---------- lattice ----------
+
+  /** Clusters of nodes around hubs, some scattered nodes, local links, a
+   *  backbone between hubs, a few long links and spokes to the core. */
+  private buildLattice() {
+    const rand = this.rand;
+    const gauss = () => {
+      let u = 0;
+      while (u === 0) u = rand();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rand());
+    };
+    const fit = (p: Vector3) => {
+      const len = p.length();
+      if (len > LATTICE_RADIUS) p.multiplyScalar(LATTICE_RADIUS / len);
+      if (len < 0.32) p.multiplyScalar(0.32 / Math.max(len, 1e-3));
+      return p;
+    };
+
+    let i = 0;
+    for (let c = 0; c < CLUSTER_COUNT; c++) {
+      const y = 1 - (2 * (c + 0.5)) / CLUSTER_COUNT;
+      const ring = Math.sqrt(1 - y * y);
+      const theta = c * 2.399963 + rand() * 0.6;
+      const centre = new Vector3(Math.cos(theta) * ring, y * 0.85, Math.sin(theta) * ring)
+        .normalize()
+        .multiplyScalar(0.5 + rand() * 0.45);
+      this.members.push([]);
+      for (let k = 0; k < PER_CLUSTER; k++, i++) {
+        const p = k === 0 ? centre.clone() : fit(centre.clone().add(this.tmp.set(gauss(), gauss(), gauss()).multiplyScalar(0.12)));
+        this.nodes.push(p);
+        this.cluster[i] = c;
+        this.members[c].push(i);
+        if (k === 0) this.hubs.push(i);
+      }
+    }
+    for (; i < NODE_COUNT; i++) {
+      const dir = new Vector3(rand() * 2 - 1, rand() * 2 - 1, rand() * 2 - 1).normalize();
+      this.nodes.push(dir.multiplyScalar(0.36 + Math.cbrt(rand()) * (LATTICE_RADIUS - 0.36)));
+    }
+    this.nodes.push(new Vector3(0, 0, 0)); // CORE
+    for (let n = 0; n <= NODE_COUNT; n++) this.adj.push([]);
+
+    const pairs: number[] = [];
+    const link = (a: number, b: number) => {
+      if (a === b) return;
+      const lo = Math.min(a, b);
+      const hi = Math.max(a, b);
+      const key = lo * 1024 + hi;
+      if (this.edgeIndex.has(key)) return;
+      this.edgeIndex.set(key, pairs.length / 2);
+      pairs.push(lo, hi);
+      this.adj[lo].push(hi);
+      this.adj[hi].push(lo);
+    };
+    const nearest = (n: number, among: number[], count: number) =>
+      among
+        .filter((m) => m !== n)
+        .map((m) => ({ m, d: this.nodes[m].distanceToSquared(this.nodes[n]) }))
+        .sort((a, b) => a.d - b.d)
+        .slice(0, count);
+    const everyone = Array.from({ length: NODE_COUNT }, (_, n) => n);
+
+    for (let n = 0; n < NODE_COUNT; n++) {
+      const c = this.cluster[n];
+      if (c >= 0) for (const { m } of nearest(n, this.members[c], 2)) link(n, m);
+      const [close] = nearest(n, everyone, 1);
+      if (close && close.d < 0.36 * 0.36) link(n, close.m);
+    }
+    for (const h of this.hubs) for (const { m } of nearest(h, this.hubs, 2)) link(h, m);
+    for (let tries = 0, long = 0; long < 5 && tries < 60; tries++) {
+      const a = this.hubs[Math.floor(rand() * this.hubs.length)];
+      const b = this.hubs[Math.floor(rand() * this.hubs.length)];
+      const key = Math.min(a, b) * 1024 + Math.max(a, b);
+      if (a !== b && !this.edgeIndex.has(key) && this.nodes[a].distanceTo(this.nodes[b]) > 1) {
+        link(a, b);
+        long++;
+      }
+    }
+    const inner = [...this.hubs].sort((a, b) => this.nodes[a].lengthSq() - this.nodes[b].lengthSq());
+    for (const h of inner.slice(0, 5)) link(h, CORE);
+    for (const { m } of nearest(CORE, everyone, 2)) link(m, CORE);
+
+    // Every node must be reachable from the core, so routes always exist.
+    for (;;) {
+      const reached = this.reachable();
+      const lost = everyone.filter((n) => !reached[n]);
+      if (lost.length === 0) break;
+      const found = everyone.filter((n) => reached[n]);
+      const [to] = nearest(lost[0], found, 1);
+      link(lost[0], to.m);
+    }
+
+    this.edges = Uint16Array.from(pairs);
+    this.edgeCount = pairs.length / 2;
+    this.edgeAct = new Float32Array(this.edgeCount);
+    this.edgeBreak = new Float32Array(this.edgeCount);
+    this.lineAct = new Float32Array(this.edgeCount * 2);
+  }
+
+  private reachable(): boolean[] {
+    const seen = new Array<boolean>(NODE_COUNT + 1).fill(false);
+    const stack = [CORE];
+    seen[CORE] = true;
+    while (stack.length > 0) {
+      const n = stack.pop()!;
+      for (const m of this.adj[n]) {
+        if (!seen[m]) {
+          seen[m] = true;
+          stack.push(m);
+        }
+      }
+    }
+    return seen;
+  }
+
+  /** Shortest route between two nodes (CORE included), or null. */
+  private route(from: number, to: number): number[] | null {
+    if (from === to) return null;
+    const prev = this.bfsPrev.fill(-1);
+    const queue = this.bfsQueue;
+    let head = 0;
+    let tail = 0;
+    queue[tail++] = from;
+    prev[from] = from;
+    while (head < tail) {
+      const n = queue[head++];
+      if (n === to) break;
+      for (const m of this.adj[n]) {
+        if (prev[m] === -1) {
+          prev[m] = n;
+          queue[tail++] = m;
+        }
+      }
+    }
+    if (prev[to] === -1) return null;
+    const out: number[] = [];
+    for (let n = to; n !== from; n = prev[n]) out.push(n);
+    out.push(from);
+    return out.reverse();
+  }
+
+  private randomNode(): number {
+    return Math.floor(this.rand() * NODE_COUNT);
+  }
+
+  private randomMember(c: number): number {
+    const list = this.members[c];
+    return list[Math.floor(this.rand() * list.length)];
+  }
+
+  /** Thinking in the background: a short local walk, a hop to another
+   *  cluster, or a passage through the core between two clusters. */
+  private randomRoute(local: boolean): number[] | null {
+    const pick = local ? 0 : this.rand();
+    const start = this.randomNode();
+    if (pick < 0.4) {
+      const walk = [start];
+      let prev = -1;
+      for (let hop = 0; hop < 3 + Math.floor(this.rand() * 2); hop++) {
+        const here = walk[walk.length - 1];
+        const options = this.adj[here].filter((m) => m !== prev && m !== CORE);
+        if (options.length === 0) break;
+        prev = here;
+        walk.push(options[Math.floor(this.rand() * options.length)]);
+      }
+      return walk.length > 1 ? walk : null;
+    }
+    const otherCluster = Math.floor(this.rand() * CLUSTER_COUNT);
+    const end = this.randomMember(otherCluster);
+    if (pick < 0.7) return this.route(start, end);
+    const toCore = this.route(start, CORE);
+    const fromCore = this.route(CORE, end);
+    if (!toCore || !fromCore) return null;
+    return toCore.concat(fromCore.slice(1));
+  }
+
+  /** The node nearest the shell in the direction of a context node, given
+   *  the lattice's current rotation. */
+  private exitNode(direction: Vector3): number {
+    this.lattice.updateMatrixWorld();
+    let best = 0;
+    let bestScore = -Infinity;
+    for (let n = 0; n < NODE_COUNT; n++) {
+      const score = this.tmp.copy(this.nodes[n]).applyMatrix4(this.lattice.matrixWorld).dot(direction);
+      if (score > bestScore) {
+        bestScore = score;
+        best = n;
+      }
+    }
+    return best;
+  }
+
+  private spawn(route: number[] | null, strength: number, speed: number, color: Vector3) {
+    if (!route || route.length < 2) return;
+    const p = this.packets.find((x) => !x.alive);
+    if (!p) return;
+    p.alive = true;
+    p.route = route;
+    p.seg = 0;
+    p.t = 0;
+    p.speed = speed;
+    p.strength = strength;
+    p.color = color;
+    this.alivePackets++;
+    this.touchEdge(route[0], route[1], strength * 0.9);
+    this.light(route[0], strength * 0.8);
+  }
+
+  private light(node: number, strength: number) {
+    if (node === CORE) this.coreKick = Math.max(this.coreKick, strength * 0.7);
+    else this.act[node] = Math.max(this.act[node], strength);
+  }
+
+  private touchEdge(a: number, b: number, strength: number) {
+    const e = this.edgeIndex.get(Math.min(a, b) * 1024 + Math.max(a, b));
+    if (e !== undefined) this.edgeAct[e] = Math.max(this.edgeAct[e], strength);
+  }
+
+  // ---------- states ----------
+
+  /** One-off effects when a state begins. */
+  private enter(state: CoreState) {
+    if (state === "SUCCESS") {
+      // One wave from the centre outward; the nodes it crosses light together.
+      this.successAge = 0;
+      this.wave.color.value.copy(GREEN);
+      this.accentColor.copy(GREEN);
+      this.accent = Math.max(this.accent, 0.55);
+    }
+    if (state === "ERROR") {
+      // A short disruption: links around two clusters break, packets in
+      // flight are dropped, a red signal in the core; then it settles.
+      this.errorAge = 0;
+      this.jitter = 0.012;
+      this.accentColor.copy(RED);
+      this.accent = Math.max(this.accent, 0.85);
+      const hit = Math.floor(this.rand() * CLUSTER_COUNT);
+      for (let e = 0; e < this.edgeCount; e++) {
+        const near = this.cluster[this.edges[e * 2]] === hit || this.cluster[this.edges[e * 2 + 1]] === hit;
+        if (near || this.rand() < 0.04) this.edgeBreak[e] = 1;
+      }
+      for (const p of this.packets) p.alive = false;
+      this.alivePackets = 0;
+    }
+    if (state === "PLANNING") {
+      this.planAge = 0;
+      this.startPlan();
+    } else {
+      this.planAge = -1;
+    }
+    if (state === "LISTENING") this.listenPhase = 0;
+  }
+
+  /** The accent the envelope settles on in this state. */
+  private restingAccent(): number {
+    switch (this.state) {
+      case "WAITING_APPROVAL":
+        this.accentColor.copy(AMBER);
+        return 0.8;
+      case "ERROR":
+        return 0.25;
+      case "SUCCESS":
+        return 0;
+      default:
+        if (this.visual.hasPendingApproval) {
+          this.accentColor.copy(AMBER);
+          return 0.15;
+        }
+        return 0;
+    }
+  }
+
+  /** Planning: three candidate routes leave the core at once, dim. */
+  private startPlan() {
+    this.planRoutes.length = 0;
+    this.planChosen = -1;
+    const used = new Set<number>();
+    while (this.planRoutes.length < 3 && used.size < CLUSTER_COUNT) {
+      const c = Math.floor(this.rand() * CLUSTER_COUNT);
+      if (used.has(c)) continue;
+      used.add(c);
+      const r = this.route(CORE, this.randomMember(c));
+      if (r) this.planRoutes.push(r);
+    }
+    for (const r of this.planRoutes) this.spawn(r, 0.45, 0.8, PACKET_DIM);
+  }
+
+  private stepPlan(dt: number) {
+    if (this.planAge < 0) return;
+    this.planAge += dt;
+    if (this.planChosen < 0 && this.planAge > 1.2 && this.planRoutes.length > 0) {
+      // One route becomes dominant: followed again, bright, three times.
+      this.planChosen = Math.floor(this.rand() * this.planRoutes.length);
+      const r = this.planRoutes[this.planChosen];
+      this.spawn(r, 1, 1.15, PACKET);
+      this.planFollowUps = 2;
+      this.planNext = this.planAge + 0.28;
+    }
+    if (this.planChosen >= 0 && this.planFollowUps > 0 && this.planAge >= this.planNext) {
+      this.spawn(this.planRoutes[this.planChosen], 0.9, 1.15, PACKET);
+      this.planFollowUps--;
+      this.planNext = this.planAge + 0.28;
+    }
+    if (this.planChosen >= 0) {
+      // The chosen route stays lit while it is followed.
+      const r = this.planRoutes[this.planChosen];
+      for (let k = 0; k + 1 < r.length; k++) this.touchEdge(r[k], r[k + 1], 0.45);
+    }
+    if (this.planAge > 3.4) {
+      this.planAge = 0;
+      this.startPlan();
+    }
+  }
+
+  private planFollowUps = 0;
+  private planNext = 0;
+
+  /** Packets from the core to the node of the tool in use, continuing
+   *  along its beam. */
+  private flowToActive(strength: number, speed: number) {
+    const beam = this.activeId ? this.beams.get(this.activeId) : undefined;
+    if (!beam || beam.removing) return false;
+    const dir = this.tmp2.copy(beam.target).normalize();
+    this.spawn(this.route(CORE, this.exitNode(dir)), strength, speed, PACKET);
+    return true;
+  }
+
   // ---------- context nodes ----------
 
-  private slotPosition(id: string): Vector3 {
+  private slotPosition(id: string, out: Vector3): Vector3 {
     const [sx, sy] = SLOT[id] ?? [0, 1];
     const halfH = Math.tan((this.camera.fov * Math.PI) / 360) * this.camera.position.z;
     const halfW = halfH * this.camera.aspect;
-    return new Vector3(sx * Math.min(2.65, halfW * 0.8), sy * Math.min(1.9, halfH * 1.25), 0);
+    return out.set(sx * Math.min(2.65, halfW * 0.8), sy * Math.min(1.9, halfH * 1.25), 0);
   }
 
   private syncBeams(nodes: CoreNodeInput[]) {
@@ -549,47 +1151,64 @@ export class NexusCore {
     const lineGeo = new BufferGeometry();
     lineGeo.setAttribute("position", new BufferAttribute(new Float32Array(6), 3));
     lineGeo.setAttribute("aAct", new BufferAttribute(new Float32Array([0.2, 1]), 1));
-    const lineMat = additive(LINE_VERTEX, LINE_FRAGMENT, { uDim: { value: v3(DONE) }, uHot: { value: v3(ICE) }, uIntensity: { value: 0 }, uAlpha: { value: 0 } });
+    const lineMat = additive(BEAM_LINE_VERTEX, BEAM_LINE_FRAGMENT, {
+      uDim: { value: DONE.clone() },
+      uHot: { value: ICE.clone() },
+      uIntensity: { value: 0 },
+      uAlpha: { value: 0 },
+    });
     const line = new LineSegments(lineGeo, lineMat);
 
     const headGeo = new BufferGeometry();
     headGeo.setAttribute("position", new BufferAttribute(new Float32Array(9), 3));
     headGeo.setAttribute("aAct", new BufferAttribute(new Float32Array([1, 0.7, 0.45]), 1));
     headGeo.setAttribute("aSize", new BufferAttribute(new Float32Array([7, 5, 4]), 1));
-    const headMat = additive(POINT_VERTEX, POINT_FRAGMENT, {
-      uPixelRatio: { value: this.renderer.getPixelRatio() },
+    const headMat = additive(BEAM_POINT_VERTEX, BEAM_POINT_FRAGMENT, {
+      uPixelRatio: this.pixelRatio,
       uBase: { value: 4 },
-      uDim: { value: v3(ICE) },
-      uHot: { value: v3(ICE) },
+      uDim: { value: ICE.clone() },
+      uHot: { value: ICE.clone() },
       uIntensity: { value: 1 },
       uAlpha: { value: 0 },
     });
     const head = new Points(headGeo, headMat);
+    head.frustumCulled = false;
 
     const nodeGeo = new PlaneGeometry(1, 1);
-    const nodeMat = additive(UV_VERTEX, GLOW_FRAGMENT, { uColor: { value: v3(ICE) }, uStrength: { value: 0 }, uFalloff: { value: 3 } });
+    const nodeMat = additive(UV_VERTEX, GLOW_FRAGMENT, { uColor: { value: ICE.clone() }, uStrength: { value: 0 }, uFalloff: { value: 3 } });
     const node = new Mesh(nodeGeo, nodeMat);
     node.scale.setScalar(0.55);
     const ringGeo = new RingGeometry(0.15, 0.162, 48);
-    const ringMat = additive(UV_VERTEX, `
-      uniform vec3 uColor;
-      uniform float uStrength;
-      varying vec2 vUv;
-      void main() { gl_FragColor = vec4(uColor * uStrength, uStrength); }
-    `, { uColor: { value: v3(ICE) }, uStrength: { value: 0 } });
+    const ringMat = additive(UV_VERTEX, FLAT_FRAGMENT, { uColor: { value: ICE.clone() }, uStrength: { value: 0 } });
     const ring = new Mesh(ringGeo, ringMat);
 
     this.scene.add(line, head, node, ring);
-    const beam: Beam = { id, target: new Vector3(), line, lineMat, head, headMat, node, nodeMat, ring, ringMat, status: "done", active: false, presence: 0, removing: false };
+    const beam: Beam = {
+      id,
+      target: new Vector3(),
+      from: new Vector3(),
+      line,
+      lineMat,
+      head,
+      headMat,
+      node,
+      nodeMat,
+      ring,
+      ringMat,
+      status: "done",
+      active: false,
+      presence: 0,
+      removing: false,
+    };
     this.placeBeam(beam);
     return beam;
   }
 
   private placeBeam(beam: Beam) {
-    beam.target.copy(this.slotPosition(beam.id));
-    const from = beam.target.clone().normalize().multiplyScalar(SHELL_RADIUS * 0.98);
+    this.slotPosition(beam.id, beam.target);
+    beam.from.copy(beam.target).normalize().multiplyScalar(SHELL_RADIUS * 0.98);
     const pos = beam.line.geometry.getAttribute("position") as BufferAttribute;
-    pos.setXYZ(0, from.x, from.y, from.z);
+    pos.setXYZ(0, beam.from.x, beam.from.y, beam.from.z);
     pos.setXYZ(1, beam.target.x, beam.target.y, beam.target.z);
     pos.needsUpdate = true;
     beam.node.position.copy(beam.target);
@@ -608,7 +1227,7 @@ export class NexusCore {
     const margin = Math.min(80, this.width / 4);
     for (const [id, beam] of this.beams) {
       if (beam.removing) continue;
-      const p = beam.target.clone().project(this.camera);
+      const p = this.tmp.copy(beam.target).project(this.camera);
       const x = ((p.x + 1) / 2) * this.width;
       points[id] = { x: Math.max(margin, Math.min(this.width - margin, x)), y: ((1 - p.y) / 2) * this.height };
     }
@@ -633,18 +1252,16 @@ export class NexusCore {
   private readonly frame = (now: number) => {
     this.raf = 0;
     if (this.disposed || this.reduced || document.hidden) return;
-    const dt = Math.min(0.1, (now - this.lastTick) / 1000);
+    // Slow frame rates (unfocused, resting) still advance in real time.
+    const dt = Math.min(0.25, (now - this.lastTick) / 1000);
     this.lastTick = now;
-    this.step(dt);
+    this.step(dt, now);
     this.renderer.render(this.scene, this.camera);
     // Sleep until the next frame this state needs instead of waking at
     // the display's refresh rate.
-    const settled = [...this.beams.values()].every((b) => (b.removing ? b.presence < 0.02 : b.presence > 0.98));
-    const resting = this.state === "IDLE" && now - this.stateSince > REST_AFTER_MS && this.pulseAge < 0 && settled;
-    let fps = this.focused ? this.target.fps : Math.min(UNFOCUSED_FPS, this.target.fps);
-    if (resting) fps = Math.min(fps, REST_FPS);
-    const wait = 1000 / fps - (performance.now() - now);
+    const wait = 1000 / this.frameRate(now) - (performance.now() - now);
     if (wait > 12) {
+      this.wakeAt = performance.now() + wait - 6;
       this.sleep = window.setTimeout(() => {
         this.sleep = 0;
         if (!this.disposed && !this.reduced && !document.hidden) this.raf = requestAnimationFrame(this.frame);
@@ -654,18 +1271,51 @@ export class NexusCore {
     }
   };
 
+  private resting(now: number): boolean {
+    return this.state === "IDLE" && now - this.stateSince > REST_AFTER_MS;
+  }
+
+  private frameRate(now: number): number {
+    let settled = true;
+    for (const b of this.beams.values()) {
+      if (b.removing ? b.presence >= 0.02 : b.presence <= 0.98) {
+        settled = false;
+        break;
+      }
+    }
+    const moving = this.alivePackets > 0 || this.wave.amp.value > 0.01 || this.jitter > 0.0005 || !settled;
+    let fps = this.resting(now) ? REST_FPS : this.target.fps;
+    const calm = this.state === "IDLE" || this.state === "WAITING_APPROVAL";
+    if (moving) fps = Math.max(fps, calm ? CALM_MOTION_FPS : MOTION_FPS);
+    if (this.focused && now < this.pointerUntil) fps = Math.max(fps, POINTER_FPS);
+    if (!this.focused) fps = Math.min(fps, UNFOCUSED_FPS);
+    return fps;
+  }
+
   private stillFrame() {
     if (this.disposed) return;
     // A representative, motionless picture of the state.
     this.tune = { ...this.target };
-    const lit = this.target.fire > 3 ? 0.45 : this.target.fire > 1 ? 0.25 : 0.1;
-    for (let i = 0; i < NEURAL_COUNT; i++) this.act[i] = (i * 7) % 10 < lit * 10 ? 0.75 : 0;
-    this.syncActivation();
-    this.pending.length = 0;
-    this.pulseAge = -1;
-    this.pulse.visible = false;
-    this.shell.position.set(0, 0, 0);
-    this.applyUniforms(0);
+    const lit = this.target.packets > 1.5 ? 0.35 : this.target.flowEvery > 0 ? 0.2 : 0.08;
+    for (let i = 0; i < NODE_COUNT; i++) this.act[i] = (i * 7) % 20 < lit * 20 ? 0.7 : 0;
+    this.edgeAct.fill(0);
+    this.edgeBreak.fill(0);
+    for (const p of this.packets) p.alive = false;
+    this.alivePackets = 0;
+    this.successAge = -1;
+    this.errorAge = -1;
+    this.planAge = -1;
+    this.jitter = 0;
+    this.wave.amp.value = 0;
+    this.accent = this.state === "ERROR" ? 0.45 : this.state === "SUCCESS" ? 0.4 : this.accentGoal;
+    if (this.state === "SUCCESS") this.accentColor.copy(GREEN);
+    if (this.state === "ERROR") this.accentColor.copy(RED);
+    this.pointer.set(0, 0);
+    this.orient.position.set(0, 0, 0);
+    this.orient.rotation.set(BASE_TILT, 0, 0);
+    this.syncLinks();
+    this.writePackets();
+    this.applyUniforms();
     for (const beam of this.beams.values()) {
       beam.presence = beam.removing ? 0 : 1;
       this.styleBeam(beam, 0, true);
@@ -674,66 +1324,116 @@ export class NexusCore {
     this.renderer.render(this.scene, this.camera);
   }
 
-  private step(dt: number) {
+  private step(dt: number, now: number) {
     this.time += dt;
     const k = 1 - Math.exp(-dt * 3.5);
     const t = this.tune;
     const g = this.target;
     t.spin += (g.spin - t.spin) * k;
-    t.fire += (g.fire - t.fire) * k;
+    t.packets += (g.packets - t.packets) * k;
+    t.clusters += (g.clusters - t.clusters) * k;
     t.intensity += (g.intensity - t.intensity) * k;
+    t.core += (g.core - t.core) * k;
     t.breathe += (g.breathe - t.breathe) * k;
     t.breatheHz += (g.breatheHz - t.breatheHz) * k;
-    t.amber += (g.amber - t.amber) * k;
-    t.red += (g.red - t.red) * k;
-    t.jitter += (g.jitter - t.jitter) * (1 - Math.exp(-dt * 1.5));
-    t.branches = g.branches;
+    t.bands += (g.bands - t.bands) * k;
+    t.flowEvery = g.flowEvery;
 
-    this.brain.rotation.y += t.spin * dt;
-    this.dust.rotation.y -= t.spin * 0.6 * dt;
-    this.shell.rotation.y += t.spin * 0.35 * dt;
-    if (t.jitter > 0.0005) {
-      this.shell.position.set(Math.sin(this.time * 37) * t.jitter, Math.cos(this.time * 29) * t.jitter, 0);
+    // Rotation and the pointer's parallax (the dust moves a little more,
+    // which reads as depth).
+    this.lattice.rotation.y += t.spin * dt;
+    this.dust.rotation.y -= t.spin * 0.5 * dt;
+    this.pointer.lerp(this.pointerGoal, 1 - Math.exp(-dt * 4));
+    if (now > this.pointerUntil) this.pointerGoal.set(0, 0);
+    this.orient.rotation.x = BASE_TILT + this.pointer.y * 0.12;
+    this.orient.rotation.y = this.pointer.x * 0.16;
+    this.dust.rotation.x = this.pointer.y * 0.05;
+    this.jitter *= Math.exp(-dt / 0.25);
+    if (this.jitter > 0.0005) {
+      this.orient.position.set(Math.sin(this.time * 37) * this.jitter, Math.cos(this.time * 29) * this.jitter, 0);
     } else {
-      this.shell.position.set(0, 0, 0);
+      this.orient.position.set(0, 0, 0);
     }
 
-    // Firing: new impulses at the state's rate, spreading to neighbours.
-    this.fireDebt += t.fire * dt;
-    while (this.fireDebt >= 1) {
-      this.fireDebt -= 1;
-      this.ignite();
+    // Activity by state.
+    const intensity = 0.7 + 0.6 * this.visual.activityIntensity;
+    const rate = this.resting(now) ? REST_PACKETS : t.packets * intensity;
+    const slow = this.state === "WAITING_APPROVAL" ? 0.45 : 1;
+    this.packetDebt += rate * dt;
+    while (this.packetDebt >= 1) {
+      this.packetDebt -= 1;
+      const calm = this.state === "IDLE" || this.state === "WAITING_APPROVAL";
+      this.spawn(this.randomRoute(calm), 0.55 + this.rand() * 0.4, (calm ? 1.1 : 0.85) * slow, PACKET);
     }
-    for (let i = this.pending.length - 1; i >= 0; i--) {
-      const p = this.pending[i];
-      if (p.at > this.time) continue;
-      this.pending.splice(i, 1);
-      this.act[p.node] = Math.min(1, Math.max(this.act[p.node], p.strength));
-      if (p.depth > 0) {
-        const next = this.neighbours[p.node].filter((n) => !p.outward || this.neuralPos[n].lengthSq() > this.neuralPos[p.node].lengthSq());
-        const fan = p.outward ? next.slice(0, 2) : next.slice(0, 1 + Math.floor(this.rand() * 2));
-        for (const n of fan) this.pending.push({ node: n, at: this.time + 0.09 + this.rand() * 0.08, strength: p.strength * 0.78, depth: p.depth - 1, outward: p.outward });
+    this.clusterDebt += t.clusters * dt;
+    while (this.clusterDebt >= 1) {
+      this.clusterDebt -= 1;
+      for (const n of this.members[Math.floor(this.rand() * CLUSTER_COUNT)]) {
+        this.act[n] = Math.max(this.act[n], 0.45 + this.rand() * 0.3);
       }
     }
-    const decay = Math.exp(-dt / 0.55);
-    for (let i = 0; i < NEURAL_COUNT; i++) this.act[i] *= decay;
-    this.syncActivation();
+    if (t.flowEvery > 0) {
+      this.flowTimer -= dt;
+      if (this.flowTimer <= 0) {
+        this.flowTimer = t.flowEvery;
+        if (this.state === "EXECUTING") {
+          // Deterministic: the core's routes to each hub in turn, plus the
+          // stream to the node being written.
+          const hub = this.hubs[this.execIndex++ % this.hubs.length];
+          this.spawn(this.route(CORE, hub), 0.85, 1.25, PACKET);
+          this.flowToActive(1, 1.3);
+        } else {
+          this.flowToActive(this.state === "THINKING" ? 0.7 : 1, 1.3);
+        }
+      }
+    }
+    this.stepPlan(dt);
+    this.stepPackets(dt);
 
-    this.applyUniforms(this.time);
-
-    // Success pulse.
-    if (this.pulseAge >= 0) {
-      this.pulseAge += dt;
-      const p = this.pulseAge / 1.2;
+    // Waves.
+    if (this.state === "LISTENING") {
+      this.listenPhase = (this.listenPhase + dt / 2.4) % 1;
+      this.wave.color.value.copy(ICE);
+      this.wave.r.value = 1.25 - this.listenPhase * 1.05;
+      this.wave.amp.value = 0.4 * Math.sin(Math.PI * this.listenPhase);
+    } else if (this.successAge >= 0) {
+      this.successAge += dt;
+      const p = this.successAge / 1.4;
       if (p >= 1) {
-        this.pulseAge = -1;
-        this.pulse.visible = false;
+        this.successAge = -1;
+        this.wave.amp.value = 0;
       } else {
-        this.pulse.visible = true;
-        this.pulse.scale.setScalar(SHELL_RADIUS * (1 + p * 0.55));
-        this.pulseMat.uniforms.uStrength.value = (1 - p) * 0.55;
+        this.wave.r.value = 0.12 + p * 1.3;
+        this.wave.amp.value = 0.95 * (1 - p * 0.7);
+      }
+    } else {
+      this.wave.amp.value *= Math.exp(-dt / 0.2);
+    }
+
+    // Error: links stay broken briefly, then mend.
+    if (this.errorAge >= 0) {
+      this.errorAge += dt;
+      if (this.errorAge > 0.8) {
+        const mend = Math.exp(-dt / 0.9);
+        for (let e = 0; e < this.edgeCount; e++) this.edgeBreak[e] *= mend;
+      }
+      if (this.errorAge > 6) {
+        this.edgeBreak.fill(0);
+        this.errorAge = -1;
       }
     }
+
+    // Decay.
+    const nodeDecay = Math.exp(-dt / 0.6);
+    for (let i = 0; i < NODE_COUNT; i++) this.act[i] *= nodeDecay;
+    const edgeDecay = Math.exp(-dt / 0.5);
+    for (let e = 0; e < this.edgeCount; e++) this.edgeAct[e] *= edgeDecay;
+    this.coreKick *= Math.exp(-dt / 0.4);
+    this.accent += (this.accentGoal - this.accent) * (1 - Math.exp(-dt / 1.2));
+
+    this.syncLinks();
+    this.writePackets();
+    this.applyUniforms();
 
     for (const beam of this.beams.values()) {
       beam.presence += ((beam.removing ? 0 : 1) - beam.presence) * (1 - Math.exp(-dt * 5));
@@ -742,68 +1442,106 @@ export class NexusCore {
     this.pruneBeams();
   }
 
-  /** Paths take the activation of the nodes they join. */
-  private syncActivation() {
-    this.edges.forEach(([a, b], e) => {
-      this.lineAct[e * 2] = this.act[a];
-      this.lineAct[e * 2 + 1] = this.act[b];
-    });
-    (this.neuralGeo.getAttribute("aAct") as BufferAttribute).needsUpdate = true;
-    (this.lineGeo.getAttribute("aAct") as BufferAttribute).needsUpdate = true;
-  }
-
-  private ignite() {
-    if (this.tune.branches) {
-      // Several branches leaving the centre at once.
-      const inner = this.neuralPos.map((p, i) => ({ i, d: p.lengthSq() })).sort((a, b) => a.d - b.d).slice(0, 8);
-      for (let b = 0; b < 3; b++) {
-        const start = inner[Math.floor(this.rand() * inner.length)].i;
-        this.pending.push({ node: start, at: this.time + b * 0.05, strength: 1, depth: 4, outward: true });
+  private stepPackets(dt: number) {
+    for (const p of this.packets) {
+      if (!p.alive) continue;
+      const a = this.nodes[p.route[p.seg]];
+      const b = this.nodes[p.route[p.seg + 1]];
+      p.t += (p.speed * dt) / Math.max(0.05, a.distanceTo(b));
+      while (p.t >= 1) {
+        p.t -= 1;
+        p.seg++;
+        const arrived = p.route[p.seg];
+        this.light(arrived, p.strength);
+        if (p.seg >= p.route.length - 1) {
+          p.alive = false;
+          this.alivePackets--;
+          break;
+        }
+        // A broken link stops the signal.
+        const e = this.edgeIndex.get(Math.min(arrived, p.route[p.seg + 1]) * 1024 + Math.max(arrived, p.route[p.seg + 1]));
+        if (e !== undefined && this.edgeBreak[e] > 0.5) {
+          p.alive = false;
+          this.alivePackets--;
+          break;
+        }
+        this.touchEdge(arrived, p.route[p.seg + 1], p.strength * 0.9);
       }
-      return;
     }
-    const node = Math.floor(this.rand() * NEURAL_COUNT);
-    this.pending.push({ node, at: this.time, strength: 0.6 + this.rand() * 0.4, depth: 2 + Math.floor(this.rand() * 2), outward: false });
   }
 
-  private tint(base: [number, number, number]): Vector3 {
-    const t = this.tune;
-    const out = v3(base);
-    out.lerp(v3(AMBER), t.amber * 0.6);
-    out.lerp(v3(RED), t.red * 0.7);
-    return out;
+  /** Each link shows the brighter of its ends and the signals on it; a
+   *  broken link goes darker than at rest. */
+  private syncLinks() {
+    const coreAct = 0.2 + this.tune.core * 0.35 + this.coreKick;
+    for (let e = 0; e < this.edgeCount; e++) {
+      const a = this.edges[e * 2];
+      const b = this.edges[e * 2 + 1];
+      const ea = this.edgeAct[e];
+      const broken = this.edgeBreak[e];
+      const actA = a === CORE ? coreAct : this.act[a] * 0.85;
+      const actB = b === CORE ? coreAct : this.act[b] * 0.85;
+      this.lineAct[e * 2] = Math.max(actA, ea) * (1 - broken) - broken * 1.5;
+      this.lineAct[e * 2 + 1] = Math.max(actB, ea) * (1 - broken) - broken * 1.5;
+    }
+    (this.nodeGeo.getAttribute("aAct") as BufferAttribute).needsUpdate = true;
+    (this.linkGeo.getAttribute("aAct") as BufferAttribute).needsUpdate = true;
   }
 
-  private applyUniforms(time: number) {
-    const t = this.tune;
-    const breath = 1 + Math.sin(time * Math.PI * 2 * t.breatheHz) * t.breathe;
-    this.glow.scale.setScalar(2.4 * breath);
-    this.glowMat.uniforms.uStrength.value = 0.18 + t.intensity * 0.32;
-    this.glowMat.uniforms.uColor.value = this.tint(ICE);
-    this.coreMat.uniforms.uStrength.value = 0.45 + t.intensity * 0.55 * breath;
-    this.shellMat.uniforms.uStrength.value = 0.22 + t.intensity * 0.18;
-    this.shellMat.uniforms.uColor.value = this.tint(ICE);
-    this.gridMat.uniforms.uDim.value = this.tint(ICE_DIM);
-    for (const m of [this.neuralMat, this.lineMat]) {
-      m.uniforms.uIntensity.value = t.intensity;
-      m.uniforms.uHot.value = this.tint(ICE);
-      m.uniforms.uDim.value = this.tint(ICE_DIM);
+  private writePackets() {
+    for (let i = 0; i < PACKET_COUNT; i++) {
+      const p = this.packets[i];
+      for (let k = 0; k < TAIL; k++) {
+        const v = i * TAIL + k;
+        if (!p.alive) {
+          this.packetAct[v] = 0;
+          this.packetSize[v] = 0;
+          continue;
+        }
+        const a = this.nodes[p.route[p.seg]];
+        const b = this.nodes[p.route[p.seg + 1]];
+        const f = Math.max(0, p.t - k * 0.09);
+        this.tmp.copy(a).lerp(b, f).toArray(this.packetPos, v * 3);
+        p.color.toArray(this.packetColor, v * 3);
+        this.packetAct[v] = p.strength * (1 - k / TAIL);
+        this.packetSize[v] = 12 - k * 2.5;
+      }
     }
-    this.dustMat.uniforms.uIntensity.value = t.intensity * 0.6;
+    for (const attribute of this.packetAttributes) attribute.needsUpdate = true;
+  }
+
+  private applyUniforms() {
+    const t = this.tune;
+    this.timeUniform.value = this.time;
+    const breath = 1 + Math.sin(this.time * Math.PI * 2 * t.breatheHz) * t.breathe;
+    const core = this.coreMat.uniforms;
+    core.uEnergy.value = Math.min(1.4, t.core + this.coreKick * 0.5);
+    core.uBreath.value = breath;
+    core.uBands.value = t.bands;
+    (core.uAccent.value as Vector3).copy(this.accentColor);
+    core.uAccentAmt.value = this.accent;
+    for (const m of [this.nodeMat, this.linkMat]) m.uniforms.uIntensity.value = t.intensity;
+    this.nodeMat.uniforms.uTwinkle.value = this.state === "WAITING_APPROVAL" ? 0.05 : 0.15;
+    this.dustMat.uniforms.uIntensity.value = t.intensity;
+    this.dustMat.uniforms.uPull.value = this.state === "LISTENING" ? 1 : 0;
+    // The success wave brightens the rim as it reaches it.
+    const atRim = this.successAge >= 0 ? this.wave.amp.value * Math.max(0, this.wave.r.value - 1) * 1.2 : 0;
+    this.shellMat.uniforms.uStrength.value = 0.13 + t.intensity * 0.08 + atRim;
   }
 
   private styleBeam(beam: Beam, time: number, still: boolean) {
     const color = beam.status === "waiting" ? AMBER : beam.status === "failed" ? RED : beam.status === "active" ? ICE : DONE;
     const strong = beam.active || beam.status === "waiting";
     const p = beam.presence;
-    beam.lineMat.uniforms.uHot.value = v3(color);
-    beam.lineMat.uniforms.uDim.value = v3(color).multiplyScalar(0.35);
-    beam.lineMat.uniforms.uIntensity.value = strong ? 0.6 : 0.05;
-    beam.lineMat.uniforms.uAlpha.value = p * (strong ? 1 : 0.5);
+    const line = beam.lineMat.uniforms;
+    (line.uHot.value as Vector3).copy(color);
+    (line.uDim.value as Vector3).copy(color).multiplyScalar(0.35);
+    line.uIntensity.value = strong ? 0.6 : 0.05;
+    line.uAlpha.value = p * (strong ? 1 : 0.5);
     const throb = still ? 1 : 0.75 + 0.25 * Math.sin(time * (beam.status === "waiting" ? 1.6 : 4));
-    beam.nodeMat.uniforms.uColor.value = v3(color);
+    (beam.nodeMat.uniforms.uColor.value as Vector3).copy(color);
     beam.nodeMat.uniforms.uStrength.value = (strong ? 0.9 * throb : 0.45) * p;
-    beam.ringMat.uniforms.uColor.value = v3(color);
+    (beam.ringMat.uniforms.uColor.value as Vector3).copy(color);
     beam.ringMat.uniforms.uStrength.value = (strong ? 0.7 : 0.3) * p;
     beam.ring.scale.setScalar(strong && !still ? 1 + 0.12 * Math.sin(time * 2.2) : 1);
 
@@ -811,18 +1549,17 @@ export class NexusCore {
     // approval (the core depends on it).
     const moving = !still && (beam.active || beam.status === "waiting");
     beam.headMat.uniforms.uAlpha.value = moving ? p : 0;
-    beam.headMat.uniforms.uHot.value = v3(color);
-    beam.headMat.uniforms.uDim.value = v3(color);
+    (beam.headMat.uniforms.uHot.value as Vector3).copy(color);
+    (beam.headMat.uniforms.uDim.value as Vector3).copy(color);
     if (moving) {
-      const from = beam.target.clone().normalize().multiplyScalar(SHELL_RADIUS);
       const speed = beam.status === "waiting" ? 0.35 : 0.9;
       const pos = beam.head.geometry.getAttribute("position") as BufferAttribute;
       for (let i = 0; i < 3; i++) {
         let f = (time * speed - i * 0.045) % 1;
         if (f < 0) f += 1;
         if (beam.status === "waiting") f = 1 - f;
-        const at = from.clone().lerp(beam.target, f);
-        pos.setXYZ(i, at.x, at.y, at.z);
+        this.tmp.copy(beam.from).lerp(beam.target, f);
+        pos.setXYZ(i, this.tmp.x, this.tmp.y, this.tmp.z);
       }
       pos.needsUpdate = true;
     }

@@ -121,6 +121,14 @@ test("a reply thinking after a web read maps to a running run with the path it t
   assert.deepEqual(core.nodes.map((n) => n.id), ["model", "web"]);
   assert.equal(core.active, "model");
   assert.equal(core.nodes[0].status, "active");
+  assert.deepEqual(core.visual, {
+    state: "THINKING",
+    activeTool: "model",
+    activeModel: "gemini-3.8-flash",
+    activityIntensity: 0.5,
+    hasPendingApproval: false,
+    lastResult: null,
+  }, "the core's visual state comes only from the recorded steps");
 });
 
 test("a running web read is shown as using a tool", () => {
@@ -128,6 +136,7 @@ test("a running web read is shown as using a tool", () => {
   const core = deriveCore({ run, pendingApprovals: 0, composing: false, now: T0 + 1000 });
   assert.equal(core.state, "USING_TOOL");
   assert.equal(core.active, "web");
+  assert.equal(core.visual.activeTool, "web", "the flow goes to the tool in use");
   assert.match(nextLine(run), /page text goes back to the model/);
 });
 
@@ -141,6 +150,8 @@ test("a proposed note waits on the approval, then the write, from the real run s
   const core = deriveCore({ run, pendingApprovals: 1, composing: true, now: T0 + 999_999 });
   assert.equal(core.state, "WAITING_APPROVAL", "approval outranks typing, and keeps the nodes on screen");
   assert.equal(core.active, "approval");
+  assert.equal(core.visual.hasPendingApproval, true);
+  assert.equal(core.visual.activityIntensity, 0, "nothing runs while it waits");
   assert.equal(core.nodes.find((n) => n.id === "approval")?.status, "waiting");
   assert.match(nextLine(run), /Nothing is written until you approve/);
 
@@ -168,6 +179,7 @@ test("success pulses briefly, errors linger a little, and finished runs leave th
   const [run] = buildRuns(conversation(done), new Map(), "Nexus");
   assert.equal(run.finishedAt, T0 + 1000);
   assert.equal(deriveCore({ run, pendingApprovals: 0, composing: false, now: T0 + 2000 }).state, "SUCCESS");
+  assert.equal(deriveCore({ run, pendingApprovals: 0, composing: false, now: T0 + 2000 }).visual.lastResult, "success");
   const later = deriveCore({ run, pendingApprovals: 0, composing: false, now: T0 + 5000 });
   assert.equal(later.state, "IDLE");
   assert.equal(later.nodes.length, 1, "a recent run keeps its nodes");
@@ -181,6 +193,7 @@ test("success pulses briefly, errors linger a little, and finished runs leave th
   const [bad] = buildRuns(conversation(failed), new Map(), "Nexus");
   const core = deriveCore({ run: bad, pendingApprovals: 0, composing: false, now: T0 + 3000 });
   assert.equal(core.state, "ERROR");
+  assert.equal(core.visual.lastResult, "error");
   assert.equal(core.label, "quota");
   assert.equal(core.nodes[0].status, "failed");
 });
