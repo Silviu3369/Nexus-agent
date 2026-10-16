@@ -1,11 +1,12 @@
 // Models: which providers exist, which model does what and why, and how
 // fast it has actually been — measured from the recorded model calls.
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import type { BackupModelView } from "@nexus/contracts";
 import { PROVIDERS } from "../model/catalog.ts";
 import { modelStats } from "../model/execution.ts";
 import { ago, seconds } from "../model/format.ts";
-import { ConnectionsCard } from "../Settings";
+import { BackupModelCard, ConnectionsCard } from "../Settings";
 import { useDerived, useNexus, useNow } from "../state/store";
 import { Empty, Panel, StatusPill } from "../ui";
 import { PlugIcon, PulseIcon, RouteIcon } from "../icons";
@@ -15,7 +16,7 @@ export function ModelsView() {
   const { active, ready } = useDerived();
   const now = useNow(5000);
   const stats = useMemo(() => modelStats(d.steps ?? []), [d.steps]);
-  const connected = (d.connections ?? []).filter((c) => c.provider.toLowerCase() === "gemini");
+  const [backup, setBackup] = useState<BackupModelView | null>(null);
 
   return (
     <div className="models">
@@ -32,7 +33,8 @@ export function ModelsView() {
             </thead>
             <tbody>
               {PROVIDERS.map((p) => {
-                const conn = p.id === "gemini" ? (connected.find((c) => c.active) ?? connected[0]) : undefined;
+                const own = (d.connections ?? []).filter((c) => c.provider === p.stored);
+                const conn = own.find((c) => c.active) ?? own[0];
                 const status = !p.adapter
                   ? <span className="pill pill-unknown">No adapter</span>
                   : !conn
@@ -73,15 +75,24 @@ export function ModelsView() {
                 <td className="mono">{ready && active ? active.model : "—"}</td>
                 <td className="muted">
                   {ready && active
-                    ? `Chosen by you on “${active.display_name}”, thinking ${active.thinking_level}.`
+                    ? `Chosen by you on “${active.display_name}”, reasoning ${active.thinking_level}.`
                     : "No model is chosen, so nothing is sent."}
+                </td>
+              </tr>
+              <tr>
+                <td>When that model stays overloaded</td>
+                <td className="mono">{backup ? backup.model : "—"}</td>
+                <td className="muted">
+                  {backup
+                    ? `Your backup on “${backup.display_name}”, after up to three tries of the active model.`
+                    : "No backup chosen: after up to three tries the task stops and says why."}
                 </td>
               </tr>
             </tbody>
           </table>
           <p className="muted small">
-            Nexus does not route between models yet: every request uses the model you chose, and there is no fallback to
-            another provider when it fails.
+            Nexus does not pick models on its own: the active model answers, and only the backup you chose can take over —
+            visibly, as a step.
           </p>
         </Panel>
       </div>
@@ -121,6 +132,7 @@ export function ModelsView() {
       </Panel>
 
       <ConnectionsCard />
+      <BackupModelCard connections={d.connections ?? []} onChange={setBackup} />
     </div>
   );
 }

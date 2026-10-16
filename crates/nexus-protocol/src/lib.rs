@@ -19,10 +19,10 @@ pub use runs::{
 };
 
 pub use chat::{
-    AgentStepDetail, AgentStepStatus, AgentStepView, ChatMessageView, ChatRole, ChatStatus,
-    ConnectionView, ConversationSummary, ConversationView, ModelView, PersonaView,
-    SaveGeminiConnectionRequest, SavePersonaRequest, SendMessageRequest, SendMessageResponse,
-    ThinkingLevel,
+    AgentStepDetail, AgentStepStatus, AgentStepView, BackupModelView, ChatMessageView, ChatRole,
+    ChatStatus, ConnectionView, ConversationSummary, ConversationView, ModelView, PersonaView,
+    ProviderChoice, SaveConnectionRequest, SavePersonaRequest, SendMessageRequest,
+    SendMessageResponse, ThinkingLevel,
 };
 pub use error::{ErrorCode, NexusError};
 pub use handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse, HealthStatus};

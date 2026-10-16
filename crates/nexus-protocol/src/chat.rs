@@ -1,6 +1,6 @@
 //! DTOs for M2: AI provider connections, persona and conversations
 //! (`PLAN_NEXUS_RO.md` M2, `CONTRACTE_NEXUS_RO.md` §8, §11). An API key
-//! travels to the host once, in `SaveGeminiConnectionRequest`, and no DTO
+//! travels to the host once, in `SaveConnectionRequest`, and no DTO
 //! ever carries it back.
 
 use serde::{Deserialize, Serialize};
@@ -32,15 +32,42 @@ pub struct ConnectionView {
     pub thinking_level: ThinkingLevel,
 }
 
+/// The AI providers this build can talk to. `ConnectionView::provider`
+/// carries the same names as text ("Gemini", "OpenAI", "Anthropic",
+/// "DeepSeek").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub enum ProviderChoice {
+    Gemini,
+    OpenAi,
+    Anthropic,
+    DeepSeek,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
-pub struct SaveGeminiConnectionRequest {
+pub struct SaveConnectionRequest {
     /// `None` creates a connection; `Some` updates that one.
     pub connection_id: Option<ConnectionId>,
-    pub display_name: String,
+    /// `None` names it after the provider.
+    pub display_name: Option<String>,
+    /// `None` lets the host read the provider from the key's format; when
+    /// the format does not settle it, the request is refused and the user
+    /// chooses. Ignored for an existing connection (it keeps its provider).
+    pub provider: Option<ProviderChoice>,
+    /// Declared by the user; only meaningful for Google AI Studio keys.
     pub free_tier: bool,
     /// Sent once; stored in the Windows vault; never returned. `None` keeps
     /// the key already stored for an existing connection.
     pub api_key: Option<String>,
+}
+
+/// The model used only when the active one is overloaded, chosen by the
+/// user. There is no other fallback.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct BackupModelView {
+    pub connection_id: ConnectionId,
+    pub display_name: String,
+    pub provider: String,
+    pub model: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -119,6 +146,12 @@ pub enum AgentStepDetail {
         first_byte_ms: Option<u32>,
         duration_ms: Option<u32>,
         error: Option<String>,
+        /// 2 or 3 when this call repeats one the provider answered with a
+        /// temporary outage; absent for a first try.
+        attempt: Option<u32>,
+        /// True when the user's backup model answered because the active
+        /// one stayed unavailable.
+        backup: Option<bool>,
     },
     Fetch {
         url: String,

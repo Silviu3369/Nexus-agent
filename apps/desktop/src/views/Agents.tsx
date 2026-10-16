@@ -103,8 +103,8 @@ export function AgentsView() {
                 rows={[
                   ["Model", active?.model ? <span className="mono">{active.model}</span> : "not chosen"],
                   ["Connection", active ? active.display_name : "none"],
-                  ["Thinking", active?.thinking_level ?? "—"],
-                  ["Why this model", "You chose it. There is no automatic routing and no fallback to another provider."],
+                  ["Reasoning effort", active?.thinking_level ?? "—"],
+                  ["Why this model", "You chose it. Nexus does not pick models on its own; only a backup model you choose in Models can take over, as a visible step."],
                 ]}
               />
               <button type="button" className="link" onClick={() => goTo({ section: "models" })}>

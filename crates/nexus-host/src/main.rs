@@ -40,14 +40,23 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Release builds always talk to Google's endpoint. Debug builds may point
-/// at a local test server (the adapter still refuses anything but loopback).
+/// Release builds always talk to each provider's own endpoint. Debug builds
+/// may point a provider at a local test server (its adapter still refuses
+/// anything but loopback).
 fn runtime_config() -> nexus_host::RuntimeConfig {
     #[allow(unused_mut)]
     let mut config = nexus_host::RuntimeConfig::default();
     #[cfg(debug_assertions)]
-    if let Ok(url) = std::env::var("NEXUS_GEMINI_BASE_URL") {
-        config.gemini_base_url = url;
+    {
+        let set = |name: &str, field: &mut String| {
+            if let Ok(url) = std::env::var(name) {
+                *field = url;
+            }
+        };
+        set("NEXUS_GEMINI_BASE_URL", &mut config.gemini_base_url);
+        set("NEXUS_OPENAI_BASE_URL", &mut config.openai_base_url);
+        set("NEXUS_ANTHROPIC_BASE_URL", &mut config.anthropic_base_url);
+        set("NEXUS_DEEPSEEK_BASE_URL", &mut config.deepseek_base_url);
     }
     config
 }

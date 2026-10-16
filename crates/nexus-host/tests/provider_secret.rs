@@ -29,13 +29,10 @@ async fn data01_provider_key_never_leaks() {
     let mut seen: Vec<String> = Vec::new();
 
     let wrong = format!("WRONG-{}", uuid::Uuid::new_v4());
-    let refused = client
-        .save_gemini_connection(gemini(&wrong))
-        .await
-        .unwrap_err();
+    let refused = client.save_connection(gemini(&wrong)).await.unwrap_err();
     seen.push(format!("{refused} {refused:?}"));
 
-    let saved = client.save_gemini_connection(gemini(KEY)).await.unwrap();
+    let saved = client.save_connection(gemini(KEY)).await.unwrap();
     seen.push(serde_json::to_string(&saved).unwrap());
     let models = client.list_models(saved.connection_id).await.unwrap();
     seen.push(serde_json::to_string(&models).unwrap());

@@ -82,7 +82,11 @@ pub struct Runtime {
     stop: watch::Sender<bool>,
     vault: SecretVault,
     gemini_base_url: String,
+    openai_base_url: String,
+    anthropic_base_url: String,
+    deepseek_base_url: String,
     reply_deadline: Duration,
+    retry_waits: Vec<Duration>,
     replies: chat::Replies,
     system: SystemMonitor,
 }
@@ -90,18 +94,31 @@ pub struct Runtime {
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
     pub approval_ttl: Duration,
-    /// Google's endpoint in production; tests point it at a local server.
+    /// Each provider's own endpoint in production; tests point them at
+    /// local servers (each adapter refuses anything but its origin or
+    /// loopback).
     pub gemini_base_url: String,
+    pub openai_base_url: String,
+    pub anthropic_base_url: String,
+    pub deepseek_base_url: String,
     /// Whole budget of one model reply.
     pub reply_deadline: Duration,
+    /// Pauses before trying a model call again after a temporary outage;
+    /// one entry per retry (so at most `len + 1` tries).
+    pub retry_waits: Vec<Duration>,
 }
 
 impl Default for RuntimeConfig {
     fn default() -> Self {
+        use nexus_providers::{ProviderKind, production_base_url};
         Self {
             approval_ttl: DEFAULT_APPROVAL_TTL,
-            gemini_base_url: nexus_providers::gemini::PRODUCTION_BASE_URL.to_string(),
+            gemini_base_url: production_base_url(ProviderKind::Gemini).to_string(),
+            openai_base_url: production_base_url(ProviderKind::OpenAi).to_string(),
+            anthropic_base_url: production_base_url(ProviderKind::Anthropic).to_string(),
+            deepseek_base_url: production_base_url(ProviderKind::DeepSeek).to_string(),
             reply_deadline: Duration::from_secs(120),
+            retry_waits: vec![Duration::from_secs(2), Duration::from_secs(5)],
         }
     }
 }
@@ -135,7 +152,11 @@ impl Runtime {
             stop,
             vault: SecretVault::for_profile(profile),
             gemini_base_url: config.gemini_base_url,
+            openai_base_url: config.openai_base_url,
+            anthropic_base_url: config.anthropic_base_url,
+            deepseek_base_url: config.deepseek_base_url,
             reply_deadline: config.reply_deadline,
+            retry_waits: config.retry_waits,
             replies: chat::Replies::default(),
             system: SystemMonitor::default(),
         });

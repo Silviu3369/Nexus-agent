@@ -50,6 +50,8 @@ mod tests {
             ts::export::<nexus_protocol::MessageId>(&conf),
             ts::export::<nexus_protocol::ConnectionView>(&conf),
             ts::export::<nexus_protocol::ThinkingLevel>(&conf),
+            ts::export::<nexus_protocol::ProviderChoice>(&conf),
+            ts::export::<nexus_protocol::BackupModelView>(&conf),
             ts::export::<nexus_protocol::ModelView>(&conf),
             ts::export::<nexus_protocol::PersonaView>(&conf),
             ts::export::<nexus_protocol::ChatRole>(&conf),

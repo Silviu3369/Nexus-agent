@@ -3,6 +3,7 @@ import type {
   AgentStepView,
   ApprovalId,
   ArtifactId,
+  BackupModelView,
   BackupSummary,
   BridgeError,
   ConnectionId,
@@ -16,6 +17,7 @@ import type {
   MessageId,
   ModelView,
   PersonaView,
+  ProviderChoice,
   RunId,
   RunView,
   SendMessageResponse,
@@ -43,14 +45,19 @@ export const api = {
   getSystemStatus: () => invoke<SystemStatusView>("get_system_status"),
 
   listConnections: () => invoke<ConnectionView[]>("list_connections"),
-  /** The key goes to the host's Windows vault; `null` keeps the stored one. */
-  saveGeminiConnection: (
+  /** The key goes to the host's Windows vault; `null` keeps the stored one.
+   *  `provider: null` lets the host read it from the key's format. */
+  saveConnection: (
     connectionId: ConnectionId | null,
-    displayName: string,
+    displayName: string | null,
+    provider: ProviderChoice | null,
     freeTier: boolean,
     apiKey: string | null,
   ) =>
-    invoke<ConnectionView>("save_gemini_connection", { connectionId, displayName, freeTier, apiKey }),
+    invoke<ConnectionView>("save_connection", { connectionId, displayName, provider, freeTier, apiKey }),
+  getBackupModel: () => invoke<BackupModelView | null>("get_backup_model"),
+  setBackupModel: (connectionId: ConnectionId | null, model: string | null) =>
+    invoke<BackupModelView | null>("set_backup_model", { connectionId, model }),
   removeConnection: (connectionId: ConnectionId) =>
     invoke<null>("remove_connection", { connectionId }),
   listModels: (connectionId: ConnectionId) => invoke<ModelView[]>("list_models", { connectionId }),

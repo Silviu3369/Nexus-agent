@@ -3,9 +3,17 @@
 //! differences. It knows nothing about the UI, the database or Nexus policy;
 //! the host decides what may be sent and what a proposal may lead to.
 
+pub mod anthropic;
+mod client;
 pub mod gemini;
+mod http;
+mod kind;
+pub mod openai;
 mod sse;
 pub mod web;
+
+pub use client::{Client, production_base_url};
+pub use kind::{KeyDetection, ProviderKind, detect_provider};
 
 use std::fmt;
 use std::time::Duration;
@@ -58,15 +66,19 @@ pub enum Role {
 /// One piece of a turn. A plain text exchange is a single [`Part::Text`]; a
 /// tool round trip adds the model's own [`Part::FunctionCall`] (echoed back
 /// unchanged, so the model keeps its own context) followed by a
-/// [`Part::FunctionResponse`] turn carrying what the host ran.
+/// [`Part::FunctionResponse`] turn carrying what the host ran. `id` is the
+/// provider's call id (OpenAI, Anthropic and newer Gemini models pair the
+/// result with the call through it); `None` where the provider gave none.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Part {
     Text(String),
     FunctionCall {
+        id: Option<String>,
         name: String,
         arguments: serde_json::Value,
     },
     FunctionResponse {
+        id: Option<String>,
         name: String,
         response: serde_json::Value,
     },
@@ -112,10 +124,11 @@ pub struct ProviderRequest {
     pub thinking_level: Option<ThinkingLevel>,
 }
 
-/// How much a Gemini 3.x model reasons before answering. Lower is faster;
-/// higher can do better on genuinely hard questions. The user chooses this
-/// per connection (`ConnectionView::thinking_level`); there is no "off" —
-/// Gemini 3.x always thinks at least a little.
+/// How much a model reasons before answering. Lower is faster; higher can
+/// do better on genuinely hard questions. The user chooses this per
+/// connection (`ConnectionView::thinking_level`). Each adapter maps it to
+/// its provider's own control, and leaves it out for a model that refuses
+/// it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThinkingLevel {
     Low,
@@ -129,6 +142,14 @@ impl ThinkingLevel {
             ThinkingLevel::Low => "LOW",
             ThinkingLevel::Medium => "MEDIUM",
             ThinkingLevel::High => "HIGH",
+        }
+    }
+
+    pub fn as_lower(self) -> &'static str {
+        match self {
+            ThinkingLevel::Low => "low",
+            ThinkingLevel::Medium => "medium",
+            ThinkingLevel::High => "high",
         }
     }
 }
@@ -153,6 +174,7 @@ pub enum ProviderEvent {
     TextDelta(String),
     /// The model asks for a tool call. Nothing has been executed.
     ToolProposal {
+        id: Option<String>,
         name: String,
         arguments: serde_json::Value,
     },
@@ -184,6 +206,19 @@ pub enum ProviderError {
     Timeout,
 }
 
+impl ProviderError {
+    /// Worth sending the same request again: the provider was down or
+    /// overloaded (5xx, 529), or the connection broke. Never a refusal, a
+    /// wrong key, a used-up quota or a deadline. The caller still decides,
+    /// and only retries a call that produced nothing yet.
+    pub fn is_transient(&self) -> bool {
+        matches!(
+            self,
+            ProviderError::Unavailable { .. } | ProviderError::Transport(_)
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,6 +227,36 @@ mod tests {
     fn api_key_never_shows_in_debug_output() {
         let key = ApiKey::new("SENTINEL-KEY-123".to_string()).unwrap();
         assert!(!format!("{key:?}").contains("SENTINEL"));
+    }
+
+    #[test]
+    fn only_outages_and_broken_connections_are_transient() {
+        assert!(
+            ProviderError::Unavailable {
+                status: 503,
+                message: String::new()
+            }
+            .is_transient()
+        );
+        assert!(
+            ProviderError::Unavailable {
+                status: 529,
+                message: String::new()
+            }
+            .is_transient()
+        );
+        assert!(ProviderError::Transport("reset".into()).is_transient());
+        assert!(!ProviderError::RateLimited { retry_after: None }.is_transient());
+        assert!(!ProviderError::Unauthenticated(String::new()).is_transient());
+        assert!(
+            !ProviderError::Rejected {
+                status: 400,
+                message: String::new()
+            }
+            .is_transient()
+        );
+        assert!(!ProviderError::Timeout.is_transient());
+        assert!(!ProviderError::Blocked(String::new()).is_transient());
     }
 
     #[test]

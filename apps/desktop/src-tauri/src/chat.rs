@@ -2,9 +2,10 @@
 //! to the host's vault; nothing here stores, logs or returns it.
 
 use nexus_protocol::{
-    AgentStepView, ConnectionId, ConnectionView, ConversationId, ConversationSummary,
-    ConversationView, MessageId, ModelView, PersonaView, SaveGeminiConnectionRequest,
-    SavePersonaRequest, SendMessageRequest, SendMessageResponse, ThinkingLevel,
+    AgentStepView, BackupModelView, ConnectionId, ConnectionView, ConversationId,
+    ConversationSummary, ConversationView, MessageId, ModelView, PersonaView, ProviderChoice,
+    SaveConnectionRequest, SavePersonaRequest, SendMessageRequest, SendMessageResponse,
+    ThinkingLevel,
 };
 
 use crate::host::{BridgeError, HostConnection};
@@ -20,25 +21,47 @@ pub async fn list_connections(connection: State<'_>) -> Result<Vec<ConnectionVie
     connection.call(async |c| c.list_connections().await).await
 }
 
-/// `api_key: None` keeps the key already stored for `connection_id`.
+/// `api_key: None` keeps the key already stored for `connection_id`;
+/// `provider: None` lets the host read it from the key's format.
 #[tauri::command]
-pub async fn save_gemini_connection(
+pub async fn save_connection(
     connection: State<'_>,
     connection_id: Option<ConnectionId>,
-    display_name: String,
+    display_name: Option<String>,
+    provider: Option<ProviderChoice>,
     free_tier: bool,
     api_key: Option<String>,
 ) -> Result<ConnectionView, BridgeError> {
     connection
         .call(async |c| {
-            c.save_gemini_connection(SaveGeminiConnectionRequest {
+            c.save_connection(SaveConnectionRequest {
                 connection_id,
                 display_name,
+                provider,
                 free_tier,
                 api_key,
             })
             .await
         })
+        .await
+}
+
+#[tauri::command]
+pub async fn get_backup_model(
+    connection: State<'_>,
+) -> Result<Option<BackupModelView>, BridgeError> {
+    connection.call(async |c| c.backup_model().await).await
+}
+
+/// Both `None` clears the backup; both set chooses it.
+#[tauri::command]
+pub async fn set_backup_model(
+    connection: State<'_>,
+    connection_id: Option<ConnectionId>,
+    model: Option<String>,
+) -> Result<Option<BackupModelView>, BridgeError> {
+    connection
+        .call(async |c| c.set_backup_model(connection_id, model).await)
         .await
 }
 

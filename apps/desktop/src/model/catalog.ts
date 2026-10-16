@@ -115,17 +115,19 @@ export const TOOLS: ToolInfo[] = [
 export interface ProviderInfo {
   id: string;
   name: string;
+  /** `ConnectionView.provider` for this provider; `null` if none exists. */
+  stored: string | null;
   /** Whether this build has an adapter for it. */
   adapter: boolean;
   note: string;
 }
 
 export const PROVIDERS: ProviderInfo[] = [
-  { id: "gemini", name: "Google Gemini", adapter: true, note: "Streaming, tool calls, thinking level for Gemini 3.x" },
-  { id: "openai", name: "OpenAI", adapter: false, note: "No adapter yet; added only with your consent" },
-  { id: "anthropic", name: "Anthropic", adapter: false, note: "No adapter in this build" },
-  { id: "deepseek", name: "DeepSeek", adapter: false, note: "No adapter in this build" },
-  { id: "local", name: "Local models", adapter: false, note: "No local runtime in this build" },
+  { id: "gemini", name: "Google Gemini", stored: "Gemini", adapter: true, note: "Streaming, tools, thinking level (Gemini 3.x); keys start with AIza" },
+  { id: "openai", name: "OpenAI", stored: "OpenAI", adapter: true, note: "Responses API, not stored by OpenAI (store: false), reasoning effort" },
+  { id: "anthropic", name: "Anthropic (Claude)", stored: "Anthropic", adapter: true, note: "Messages API, tools, effort; keys start with sk-ant-" },
+  { id: "deepseek", name: "DeepSeek", stored: "DeepSeek", adapter: true, note: "Through its Anthropic-compatible endpoint; models from its own list" },
+  { id: "local", name: "Local models", stored: null, adapter: false, note: "No local runtime in this build" },
 ];
 
 export interface PlannedAgent {

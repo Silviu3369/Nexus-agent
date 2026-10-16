@@ -38,6 +38,13 @@ async fn main() {
         serde_json::json!({"url": "http://127.0.0.1:1/private"}),
     )]));
     fake.push(Reply::text(&["Done from the dashboard."]));
+    // A temporary outage (Google's "high demand" 503), then an answer: the
+    // host tries again and the check sees both tries as steps.
+    fake.push(Reply::status(
+        503,
+        r#"{"error":{"code":503,"message":"This model is currently experiencing high demand.","status":"UNAVAILABLE"}}"#,
+    ));
+    fake.push(Reply::text(&["Recovered after a retry."]));
     println!("{}", fake.base_url);
     std::io::stdout().flush().expect("stdout");
     std::future::pending::<()>().await;

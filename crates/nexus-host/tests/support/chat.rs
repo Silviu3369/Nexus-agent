@@ -5,14 +5,16 @@ use std::time::Duration;
 
 use nexus_client::NexusClient;
 use nexus_protocol::{
-    ChatMessageView, ChatStatus, ConversationId, MessageId, SaveGeminiConnectionRequest,
+    ChatMessageView, ChatStatus, ConversationId, MessageId, ProviderChoice, SaveConnectionRequest,
     SendMessageRequest, SendMessageResponse,
 };
 
-pub fn gemini(key: &str) -> SaveGeminiConnectionRequest {
-    SaveGeminiConnectionRequest {
+pub fn gemini(key: &str) -> SaveConnectionRequest {
+    SaveConnectionRequest {
         connection_id: None,
-        display_name: "Google AI Studio".to_string(),
+        display_name: Some("Google AI Studio".to_string()),
+        // Test keys do not follow Google's format, so the provider is named.
+        provider: Some(ProviderChoice::Gemini),
         free_tier: true,
         api_key: Some(key.to_string()),
     }

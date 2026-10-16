@@ -217,7 +217,7 @@ async fn serve(mut socket: TcpStream, state: Arc<State>) {
     let _ = socket.shutdown().await;
 }
 
-async fn write_sse(socket: &mut TcpStream, events: &[String]) {
+pub async fn write_sse(socket: &mut TcpStream, events: &[String]) {
     write(
         socket,
         "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n",
@@ -229,12 +229,12 @@ async fn write_sse(socket: &mut TcpStream, events: &[String]) {
     }
 }
 
-async fn write(socket: &mut TcpStream, text: &str) {
+pub async fn write(socket: &mut TcpStream, text: &str) {
     let _ = socket.write_all(text.as_bytes()).await;
     let _ = socket.flush().await;
 }
 
-async fn read_request(socket: &mut TcpStream) -> Option<Received> {
+pub async fn read_request(socket: &mut TcpStream) -> Option<Received> {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 8192];
     let head_end = loop {

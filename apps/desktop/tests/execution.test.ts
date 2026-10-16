@@ -36,9 +36,22 @@ function step(detail: AgentStepView["detail"], status: AgentStepView["status"], 
   };
 }
 
-const model = (status: AgentStepView["status"], start: number, end: number | null, extra: Partial<{ first: number; total: number; error: string }> = {}) =>
+const model = (
+  status: AgentStepView["status"],
+  start: number,
+  end: number | null,
+  extra: Partial<{ first: number; total: number; error: string; attempt: number; backup: boolean; name: string }> = {},
+) =>
   step(
-    { kind: "ModelCall", model: "gemini-3.8-flash", first_byte_ms: extra.first ?? null, duration_ms: extra.total ?? null, error: extra.error ?? null },
+    {
+      kind: "ModelCall",
+      model: extra.name ?? "gemini-3.8-flash",
+      first_byte_ms: extra.first ?? null,
+      duration_ms: extra.total ?? null,
+      error: extra.error ?? null,
+      attempt: extra.attempt ?? null,
+      backup: extra.backup ?? null,
+    },
     status,
     start,
     end,
@@ -170,6 +183,22 @@ test("success pulses briefly, errors linger a little, and finished runs leave th
   assert.equal(core.state, "ERROR");
   assert.equal(core.label, "quota");
   assert.equal(core.nodes[0].status, "failed");
+});
+
+test("an outage that was tried again, then handed to the backup, reads as such", () => {
+  const steps = [
+    model("Failed", T0, T0 + 500, { error: "the provider is unavailable (503)" }),
+    model("Failed", T0 + 600, T0 + 900, { error: "the provider is unavailable (503)", attempt: 2 }),
+    model("Failed", T0 + 1000, T0 + 1200, { error: "the provider is unavailable (503)", attempt: 3 }),
+    model("Done", T0 + 1300, T0 + 2000, { backup: true, name: "claude-x" }),
+  ];
+  const [run] = buildRuns(conversation(message("Model", REPLY, steps, { status: "Complete", text: "ok" })), new Map(), "Nexus");
+  assert.deepEqual(run.items.map((i) => i.title), ["Model call", "Model call · try 2", "Model call · try 3", "Backup model call"]);
+  assert.match(run.items[0].outcome ?? "", /^Temporary outage — tried again/);
+  assert.match(run.items[2].outcome ?? "", /^Temporary outage — the backup model took over/);
+  assert.equal(run.items[3].tool, "Backup");
+  const core = deriveCore({ run, pendingApprovals: 0, composing: false, now: T0 + 3000 });
+  assert.equal(core.nodes[0].sublabel, "backup model");
 });
 
 test("a step stopped by the user is cancelled, an interrupted one failed", () => {

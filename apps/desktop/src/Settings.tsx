@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import type {
+  BackupModelView,
   BackupSummary,
   ConnectionView,
   ModelView,
   PersonaView,
+  ProviderChoice,
   ThinkingLevel,
 } from "@nexus/contracts";
 import { api, describeError } from "./api";
@@ -44,7 +46,7 @@ export function ConnectionsCard() {
         <ConnectionItem key={c.connection_id} connection={c} onChanged={() => void load()} />
       ))}
       {connections !== null && connections.length === 0 && <p className="muted">No connections yet.</p>}
-      <NewGeminiConnection onSaved={() => void load()} />
+      <NewConnection onSaved={() => void load()} />
     </section>
   );
 }
@@ -59,20 +61,48 @@ function FreeTierNotice() {
   );
 }
 
-function NewGeminiConnection({ onSaved }: { onSaved: () => void }) {
-  const [name, setName] = useState("Google AI Studio");
+const PROVIDER_NAME: Record<ProviderChoice, string> = {
+  Gemini: "Google Gemini",
+  OpenAi: "OpenAI",
+  Anthropic: "Anthropic (Claude)",
+  DeepSeek: "DeepSeek",
+};
+
+/** A preview of what the Host will read from the key's format, so the user
+ *  sees it before saving. The Host decides; this only mirrors its rules
+ *  (`crates/nexus-providers/src/kind.rs`). */
+export function guessProvider(key: string): ProviderChoice | "ambiguous" | null {
+  const k = key.trim();
+  if (k === "") return null;
+  if (k.startsWith("AIza")) return "Gemini";
+  if (k.startsWith("sk-ant-")) return "Anthropic";
+  if (["sk-proj-", "sk-svcacct-", "sk-admin-"].some((p) => k.startsWith(p)) || (k.startsWith("sk-") && k.includes("T3BlbkFJ")))
+    return "OpenAi";
+  if (k.startsWith("sk-")) return /^[0-9a-fA-F]{32}$/.test(k.slice(3)) ? "DeepSeek" : "ambiguous";
+  return "ambiguous";
+}
+
+function NewConnection({ onSaved }: { onSaved: () => void }) {
   const [key, setKey] = useState("");
+  const [choice, setChoice] = useState<ProviderChoice | "auto">("auto");
+  const [name, setName] = useState("");
   const [freeTier, setFreeTier] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const guess = guessProvider(key);
+  const provider: ProviderChoice | null = choice !== "auto" ? choice : guess === "ambiguous" ? null : guess;
+  const needsChoice = choice === "auto" && guess === "ambiguous";
 
   async function save(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      await api.saveGeminiConnection(null, name, freeTier, key);
+      await api.saveConnection(null, name.trim() || null, choice === "auto" ? null : choice, provider === "Gemini" && freeTier, key);
       setKey("");
+      setName("");
+      setChoice("auto");
       onSaved();
     } catch (err) {
       setError(describeError(err));
@@ -82,14 +112,10 @@ function NewGeminiConnection({ onSaved }: { onSaved: () => void }) {
   }
 
   return (
-    <form className="note-form" onSubmit={save} aria-label="New Gemini connection">
-      <h3>New Gemini connection</h3>
+    <form className="note-form" onSubmit={save} aria-label="New AI connection">
+      <h3>Add an API key</h3>
       <label>
-        Connection name
-        <input value={name} maxLength={100} onChange={(e) => setName(e.currentTarget.value)} required />
-      </label>
-      <label>
-        Gemini API key
+        API key
         <input
           type="password"
           value={key}
@@ -100,19 +126,50 @@ function NewGeminiConnection({ onSaved }: { onSaved: () => void }) {
           required
         />
       </label>
-      <label className="check">
-        <input type="checkbox" checked={freeTier} onChange={(e) => setFreeTier(e.currentTarget.checked)} />
-        I'm using the free tier
+      {key.trim() !== "" && (
+        <p className="muted small" role="status">
+          {choice !== "auto"
+            ? `Provider chosen: ${PROVIDER_NAME[choice]}`
+            : guess === "ambiguous"
+              ? "The key's format does not say which provider it belongs to — choose it below."
+              : guess
+                ? `Detected: ${PROVIDER_NAME[guess]}`
+                : null}
+        </p>
+      )}
+      <label>
+        Provider
+        <select value={choice} onChange={(e) => setChoice(e.currentTarget.value as ProviderChoice | "auto")}>
+          <option value="auto">Detect from the key</option>
+          {(Object.keys(PROVIDER_NAME) as ProviderChoice[]).map((p) => (
+            <option key={p} value={p}>
+              {PROVIDER_NAME[p]}
+            </option>
+          ))}
+        </select>
       </label>
-      {freeTier && <FreeTierNotice />}
+      <label>
+        Connection name (optional)
+        <input value={name} maxLength={100} placeholder={provider ? PROVIDER_NAME[provider] : ""} onChange={(e) => setName(e.currentTarget.value)} />
+      </label>
+      {provider === "Gemini" && (
+        <>
+          <label className="check">
+            <input type="checkbox" checked={freeTier} onChange={(e) => setFreeTier(e.currentTarget.checked)} />
+            I'm using the free tier
+          </label>
+          {freeTier && <FreeTierNotice />}
+        </>
+      )}
       <div className="actions">
-        <button type="submit" disabled={busy || key.trim() === "" || name.trim() === ""}>
+        <button type="submit" disabled={busy || key.trim() === "" || needsChoice}>
           {busy ? "Verifying key…" : "Verify and save"}
         </button>
       </div>
       <p className="muted">
-        The key is verified with a real request to Google (the model list); a rejected key is not
-        saved.
+        The key is checked with one real request to its own provider (the model list) and is sent
+        nowhere else; a rejected key is not saved. You then choose the model from what the key can
+        use.
       </p>
       {error && (
         <p className="error" role="alert">
@@ -121,6 +178,10 @@ function NewGeminiConnection({ onSaved }: { onSaved: () => void }) {
       )}
     </form>
   );
+}
+
+function providerName(stored: string): string {
+  return stored === "OpenAI" ? "OpenAI" : (PROVIDER_NAME[stored as ProviderChoice] ?? stored);
 }
 
 function ConnectionItem({ connection, onChanged }: { connection: ConnectionView; onChanged: () => void }) {
@@ -153,7 +214,7 @@ function ConnectionItem({ connection, onChanged }: { connection: ConnectionView;
       </h3>
       <dl className="facts">
         <dt>Provider</dt>
-        <dd>{connection.provider}</dd>
+        <dd>{providerName(connection.provider)}</dd>
         <dt>Model</dt>
         <dd>{connection.model ?? "not chosen"}</dd>
         <dt>Key</dt>
@@ -162,7 +223,7 @@ function ConnectionItem({ connection, onChanged }: { connection: ConnectionView;
 
       <div className="model-pick">
         <label>
-          Thinking level
+          Reasoning effort
           <select
             value={connection.thinking_level}
             disabled={busy}
@@ -178,8 +239,8 @@ function ConnectionItem({ connection, onChanged }: { connection: ConnectionView;
           </select>
         </label>
         <p className="muted">
-          Only Gemini 3.x models reason before answering; this only changes those. Older models
-          ignore it.
+          Sent as the provider's own reasoning control (Gemini 3.x thinking level, OpenAI reasoning
+          effort, Claude effort). A model that does not support it is asked again without it.
         </p>
       </div>
 
@@ -209,11 +270,12 @@ function ConnectionItem({ connection, onChanged }: { connection: ConnectionView;
               <select value={choice} onChange={(e) => setChoice(e.currentTarget.value)}>
                 {models.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.display_name ? `${m.display_name} (${m.id})` : m.id}
+                    {m.display_name && m.display_name !== m.id ? `${m.display_name} (${m.id})` : m.id}
                   </option>
                 ))}
               </select>
             </label>
+            <p className="muted small">The list comes from the provider for this key; nothing is preselected for you.</p>
             <div className="actions">
               <button
                 type="button"
@@ -231,12 +293,7 @@ function ConnectionItem({ connection, onChanged }: { connection: ConnectionView;
         onSubmit={(e) => {
           e.preventDefault();
           void act(async () => {
-            await api.saveGeminiConnection(
-              connection.connection_id,
-              connection.display_name,
-              connection.free_tier,
-              newKey,
-            );
+            await api.saveConnection(connection.connection_id, null, null, connection.free_tier, newKey);
             setNewKey("");
           });
         }}
@@ -286,6 +343,150 @@ function ConnectionItem({ connection, onChanged }: { connection: ConnectionView;
         </p>
       )}
     </div>
+  );
+}
+
+/** The model used only when the active one stays unavailable after its
+ *  retries. Chosen explicitly; there is no other fallback. */
+export function BackupModelCard({
+  connections,
+  onChange,
+}: {
+  connections: ConnectionView[];
+  /** Told the current backup whenever it is read or changed. */
+  onChange?: (backup: BackupModelView | null) => void;
+}) {
+  const [backup, setBackup] = useState<BackupModelView | null | undefined>(undefined);
+  const [connectionId, setConnectionId] = useState<string>("");
+  const [models, setModels] = useState<ModelView[] | null>(null);
+  const [model, setModel] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .getBackupModel()
+      .then((b) => {
+        setBackup(b);
+        onChange?.(b);
+      })
+      .catch((err) => setError(describeError(err)));
+  }, [connections, onChange]);
+
+  const usable = connections.filter((c) => c.has_key);
+  const active = connections.find((c) => c.active) ?? null;
+  const same = backup && active && backup.connection_id === active.connection_id && backup.model === active.model;
+
+  async function act(action: () => Promise<BackupModelView | null>) {
+    setBusy(true);
+    setError(null);
+    try {
+      const b = await action();
+      setBackup(b);
+      onChange?.(b);
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="card" aria-labelledby="backup-model-heading">
+      <h2 id="backup-model-heading">
+        <SparkleIcon /> Backup model
+      </h2>
+      <p className="muted">
+        Used only when the active model is still unavailable after up to three tries (for example
+        Google's “high demand” 503). Every switch shows up as a step. Without one, the task stops
+        and says why.
+      </p>
+      {backup === undefined ? (
+        <p className="muted">Loading…</p>
+      ) : backup === null ? (
+        <p>No backup model.</p>
+      ) : (
+        <p>
+          Backup: <span className="mono">{backup.model}</span> on {backup.display_name} ({providerName(backup.provider)})
+        </p>
+      )}
+      {same && <p className="warning">The backup is the same model as the active one, so it cannot help when that model is overloaded.</p>}
+      {usable.length === 0 ? (
+        <p className="muted">Add a connection first.</p>
+      ) : (
+        <div className="model-pick">
+          <label>
+            Connection
+            <select
+              value={connectionId}
+              onChange={(e) => {
+                setConnectionId(e.currentTarget.value);
+                setModels(null);
+                setModel("");
+              }}
+            >
+              <option value="">Choose…</option>
+              {usable.map((c) => (
+                <option key={c.connection_id} value={c.connection_id}>
+                  {c.display_name} ({providerName(c.provider)})
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="actions">
+            <button
+              type="button"
+              className="secondary"
+              disabled={busy || connectionId === ""}
+              onClick={async () => {
+                setBusy(true);
+                setError(null);
+                try {
+                  const list = await api.listModels(connectionId);
+                  setModels(list);
+                  setModel(list[0]?.id ?? "");
+                } catch (err) {
+                  setError(describeError(err));
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Load backup models
+            </button>
+            {backup && (
+              <button type="button" className="secondary" disabled={busy} onClick={() => act(() => api.setBackupModel(null, null))}>
+                Clear backup
+              </button>
+            )}
+          </div>
+          {models !== null && models.length > 0 && (
+            <>
+              <label>
+                Backup model
+                <select value={model} onChange={(e) => setModel(e.currentTarget.value)}>
+                  {models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="actions">
+                <button type="button" disabled={busy || model === ""} onClick={() => act(() => api.setBackupModel(connectionId, model))}>
+                  Use as backup
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+    </section>
   );
 }
 

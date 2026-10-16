@@ -9,14 +9,15 @@ use std::sync::{Arc, Mutex};
 
 use nexus_core::{AgentStepKind, AgentStepStatus, MessageRole, MessageStatus};
 use nexus_protocol::{
-    AgentStepDetail, AgentStepId, AgentStepView, ChatMessageView, ChatRole, ChatStatus,
-    ConnectionId, ConnectionView, ConversationId, ConversationSummary, ConversationView, ErrorCode,
-    MessageId, ModelView, NexusError, PersonaView, RunFailure, RunId, SaveGeminiConnectionRequest,
-    SavePersonaRequest, SendMessageRequest, SendMessageResponse, SubmitNoteRequest,
+    AgentStepDetail, AgentStepId, AgentStepView, BackupModelView, ChatMessageView, ChatRole,
+    ChatStatus, ConnectionId, ConnectionView, ConversationId, ConversationSummary,
+    ConversationView, ErrorCode, MessageId, ModelView, NexusError, PersonaView, ProviderChoice,
+    RunFailure, RunId, SaveConnectionRequest, SavePersonaRequest, SendMessageRequest,
+    SendMessageResponse, SubmitNoteRequest,
 };
-use nexus_providers::gemini::GeminiClient;
 use nexus_providers::{
-    ApiKey, Message, Part, ProviderError, ProviderEvent, ProviderRequest, Role, ToolDeclaration,
+    ApiKey, Client, KeyDetection, Message, Part, ProviderError, ProviderEvent, ProviderKind,
+    ProviderRequest, Role, ToolDeclaration, detect_provider,
 };
 use nexus_storage::{
     AgentStepRow, ConnectionRow, Exchange, MessageRow, NewExchange, PersonaRow, Settlement, now_ms,
@@ -113,7 +114,23 @@ impl Runtime {
         }
     }
 
-    fn gemini(&self, connection: &ConnectionRow) -> Result<GeminiClient, NexusError> {
+    fn base_url(&self, kind: ProviderKind) -> &str {
+        match kind {
+            ProviderKind::Gemini => &self.gemini_base_url,
+            ProviderKind::OpenAi => &self.openai_base_url,
+            ProviderKind::Anthropic => &self.anthropic_base_url,
+            ProviderKind::DeepSeek => &self.deepseek_base_url,
+        }
+    }
+
+    /// A client for this connection's own provider, with its stored key.
+    fn client(&self, connection: &ConnectionRow) -> Result<Client, NexusError> {
+        let kind = ProviderKind::parse(&connection.provider).ok_or_else(|| {
+            NexusError::new(
+                ErrorCode::InternalFailure,
+                format!("unknown provider {:?}", connection.provider),
+            )
+        })?;
         let secret = self
             .vault
             .load(&connection.secret_name)
@@ -125,7 +142,7 @@ impl Runtime {
                 )
             })?;
         let key = ApiKey::new((*secret).clone()).map_err(provider_error)?;
-        GeminiClient::new(key, &self.gemini_base_url).map_err(provider_error)
+        Client::new(kind, key, self.base_url(kind)).map_err(provider_error)
     }
 
     /// Startup reconciliation of the vault against the database: a key no
@@ -165,52 +182,89 @@ impl Runtime {
             .collect())
     }
 
-    /// The key is checked with a real model-list call before it is stored;
-    /// a key Google rejects is never kept.
-    pub async fn save_gemini_connection(
+    /// The provider is read from the key's format unless the user chose it;
+    /// the key is then checked with a real model-list call to *that*
+    /// provider only, before it is stored. A refused key is never kept, and
+    /// a key is never tried against several providers to find its owner.
+    pub async fn save_connection(
         &self,
-        request: SaveGeminiConnectionRequest,
+        request: SaveConnectionRequest,
     ) -> Result<ConnectionView, NexusError> {
-        let name = request.display_name.trim().to_string();
-        if name.is_empty() || name.chars().count() > 100 {
+        let api_key = request.api_key.map(Zeroizing::new);
+        let existing = match request.connection_id {
+            Some(id) => Some(self.store.connection(id).await.map_err(to_nexus_error)?),
+            None => None,
+        };
+        let kind = match &existing {
+            // A connection keeps its provider; a new key must be for it.
+            Some(row) => ProviderKind::parse(&row.provider)
+                .ok_or_else(|| invalid("this connection has an unknown provider"))?,
+            None => {
+                let key = api_key
+                    .as_ref()
+                    .ok_or_else(|| invalid("a new connection needs an API key"))?;
+                match request.provider {
+                    Some(choice) => from_choice(choice),
+                    None => match detect_provider(key) {
+                        KeyDetection::Known(kind) => kind,
+                        KeyDetection::Ambiguous(options) => {
+                            let names: Vec<&str> =
+                                options.iter().map(|k| k.display_name()).collect();
+                            return Err(invalid(format!(
+                                "this key could belong to {}; choose the provider",
+                                names.join(" or ")
+                            )));
+                        }
+                        KeyDetection::Unknown => {
+                            return Err(invalid(
+                                "the key's format does not match a known provider; choose the provider",
+                            ));
+                        }
+                    },
+                }
+            }
+        };
+        let name = match request.display_name.as_deref().map(str::trim) {
+            Some(name) if !name.is_empty() => name.to_string(),
+            _ => existing
+                .as_ref()
+                .map(|r| r.display_name.clone())
+                .unwrap_or_else(|| kind.display_name().to_string()),
+        };
+        if name.chars().count() > 100 {
             return Err(invalid("the connection name must have 1..=100 characters"));
         }
-        let api_key = request.api_key.map(Zeroizing::new);
+        // Only Google AI Studio has a free tier with its own data terms.
+        let free_tier = request.free_tier && kind == ProviderKind::Gemini;
 
-        let secret_name = match request.connection_id {
-            Some(id) => {
-                self.store
-                    .connection(id)
-                    .await
-                    .map_err(to_nexus_error)?
-                    .secret_name
-            }
-            None => format!("gemini-{}", uuid::Uuid::new_v4()),
+        let secret_name = match &existing {
+            Some(row) => row.secret_name.clone(),
+            None => format!(
+                "{}-{}",
+                kind.as_str().to_ascii_lowercase(),
+                uuid::Uuid::new_v4()
+            ),
         };
-        match &api_key {
-            Some(key) => {
-                let probe = GeminiClient::new(
-                    ApiKey::new((**key).clone()).map_err(provider_error)?,
-                    &self.gemini_base_url,
-                )
-                .map_err(provider_error)?;
-                probe.list_models().await.map_err(provider_error)?;
-                self.vault.store(&secret_name, key).map_err(|e| {
-                    NexusError::new(ErrorCode::InternalFailure, format!("vault: {e}"))
-                })?;
-            }
-            None if request.connection_id.is_none() => {
-                return Err(invalid("a new connection needs an API key"));
-            }
-            None => {}
+        if let Some(key) = &api_key {
+            let probe = Client::new(
+                kind,
+                ApiKey::new((**key).clone()).map_err(provider_error)?,
+                self.base_url(kind),
+            )
+            .map_err(provider_error)?;
+            probe.list_models().await.map_err(provider_error)?;
+            self.vault
+                .store(&secret_name, key)
+                .map_err(|e| NexusError::new(ErrorCode::InternalFailure, format!("vault: {e}")))?;
         }
 
         let row = self
             .store
             .save_connection(
                 request.connection_id,
+                kind.as_str(),
                 name,
-                request.free_tier,
+                free_tier,
                 secret_name,
                 now_ms(),
             )
@@ -229,8 +283,34 @@ impl Runtime {
                 .map_err(to_nexus_error)?;
             active = Some(row.id);
         }
-        tracing::info!(connection = %row.id, free_tier = row.free_tier, "provider connection saved");
+        tracing::info!(connection = %row.id, provider = %row.provider, free_tier = row.free_tier, "provider connection saved");
         Ok(self.connection_view(&row, active))
+    }
+
+    pub async fn get_backup_model(&self) -> Result<Option<BackupModelView>, NexusError> {
+        Ok(self
+            .store
+            .backup_model()
+            .await
+            .map_err(to_nexus_error)?
+            .map(|(row, model)| backup_view(&row, model)))
+    }
+
+    pub async fn set_backup_model(
+        &self,
+        connection_id: Option<ConnectionId>,
+        model: Option<String>,
+    ) -> Result<Option<BackupModelView>, NexusError> {
+        let backup = match (connection_id, model) {
+            (Some(id), Some(model)) => Some((id, checked_model(&model)?)),
+            (None, None) => None,
+            _ => return Err(invalid("a backup needs both a connection and a model")),
+        };
+        self.store
+            .set_backup_model(backup, now_ms())
+            .await
+            .map_err(to_nexus_error)?;
+        self.get_backup_model().await
     }
 
     pub async fn remove_connection(&self, id: ConnectionId) -> Result<(), NexusError> {
@@ -249,7 +329,7 @@ impl Runtime {
     pub async fn list_models(&self, id: ConnectionId) -> Result<Vec<ModelView>, NexusError> {
         let connection = self.store.connection(id).await.map_err(to_nexus_error)?;
         let models = self
-            .gemini(&connection)?
+            .client(&connection)?
             .list_models()
             .await
             .map_err(provider_error)?;
@@ -269,15 +349,7 @@ impl Runtime {
         id: ConnectionId,
         model: String,
     ) -> Result<ConnectionView, NexusError> {
-        let model = model.trim().to_string();
-        let safe = !model.is_empty()
-            && model.len() <= 128
-            && model
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
-        if !safe {
-            return Err(invalid("invalid model id"));
-        }
+        let model = checked_model(&model)?;
         let row = self
             .store
             .set_connection_model(id, model, now_ms())
@@ -564,20 +636,26 @@ impl Runtime {
     /// `fetch_url` result is fed back and the model is called again in the
     /// same turn (no approval needed — it has no effect); `propose_note`
     /// always ends the turn here, waiting for the user exactly as before.
+    /// A call the provider answers with a temporary outage is tried again
+    /// (each try a visible step); if it stays unavailable, the user's backup
+    /// model — when one is chosen — carries on the reply.
     async fn call_model(
         &self,
         exchange: &Exchange,
         connection: &ConnectionRow,
         persona: &PersonaRow,
     ) -> Result<(nexus_providers::Usage, Option<RunId>), NexusError> {
-        let client = self.gemini(connection)?;
+        let mut route = Route {
+            client: self.client(connection)?,
+            model: exchange.model_message.model.clone().unwrap_or_default(),
+            thinking_level: connection.thinking_level,
+            backup: false,
+        };
         let (_, history) = self
             .store
             .messages(exchange.conversation_id, HISTORY_MESSAGES)
             .await
             .map_err(to_nexus_error)?;
-        let model = exchange.model_message.model.clone().unwrap_or_default();
-        let thinking_level = connection.thinking_level;
         let system_instruction = system_instruction(persona);
         let reply = exchange.model_message.id;
 
@@ -586,7 +664,8 @@ impl Runtime {
         let mut fetch_calls_used = 0u32;
         let started = tokio::time::Instant::now();
 
-        for step in 0..MAX_AGENT_STEPS {
+        let mut step = 0u32;
+        while step < MAX_AGENT_STEPS {
             let remaining = self.reply_deadline.saturating_sub(started.elapsed());
             // The first call always gets whatever budget was configured,
             // however small (matching the single-call behaviour this
@@ -605,73 +684,48 @@ impl Runtime {
                 vec![note_tool()]
             };
             let request = ProviderRequest {
-                model: model.clone(),
+                model: route.model.clone(),
                 system_instruction: system_instruction.clone(),
                 messages: turn_messages.clone(),
                 tools,
                 max_output_tokens: MAX_OUTPUT_TOKENS,
                 deadline: remaining,
-                thinking_level: Some(to_provider_thinking_level(thinking_level)),
+                thinking_level: Some(to_provider_thinking_level(route.thinking_level)),
             };
 
-            let call_step = self
-                .begin_step(reply, AgentStepKind::ModelCall, json!({ "model": model }))
-                .await;
-            let mut step_text = String::new();
-            let mut calls = Vec::new();
-            let mut first_byte: Option<std::time::Duration> = None;
-            let step_started = tokio::time::Instant::now();
-            let streamed = client
-                .stream(&request, |event| {
-                    if first_byte.is_none() {
-                        first_byte = Some(step_started.elapsed());
-                    }
-                    match event {
-                        ProviderEvent::TextDelta(delta) => {
-                            step_text.push_str(&delta);
-                            self.replies.push(reply, &delta);
+            let call = match self
+                .call_with_retries(reply, &route, request, step, started)
+                .await
+            {
+                Ok(call) => call,
+                Err(failure) if failure.outage && !route.backup => {
+                    match self.backup_route(connection, &route.model).await {
+                        Some(backup) => {
+                            tracing::warn!(
+                                model = %route.model,
+                                backup = %backup.model,
+                                "the model stayed unavailable; the backup model takes over"
+                            );
+                            route = backup;
+                            continue; // the same step, on the backup model
                         }
-                        ProviderEvent::ToolProposal { name, arguments } => {
-                            calls.push((name, arguments))
-                        }
-                        ProviderEvent::Usage(u) => total_usage = add_usage(total_usage, u),
-                        ProviderEvent::Finished(_) => {}
+                        None => return Err(failure.error),
                     }
-                })
-                .await;
-            // Timing, not content: how long the provider took, split into
-            // "before the first event" (its own latency, e.g. thinking) and
-            // the rest (streaming + our own processing).
-            let mut timing = json!({
-                "first_byte_ms": first_byte.map(millis),
-                "duration_ms": millis(step_started.elapsed()),
-            });
-            tracing::info!(
-                step,
-                model = %model,
-                first_byte_ms = first_byte.map(|d| d.as_millis()),
-                step_ms = step_started.elapsed().as_millis(),
-                "model call finished"
-            );
-            if let Err(err) = streamed {
-                let err = provider_error(err);
-                timing["error"] = json!(err.message);
-                self.finish_step(call_step, AgentStepStatus::Failed, timing)
-                    .await;
-                return Err(err);
-            }
-            self.finish_step(call_step, AgentStepStatus::Done, timing)
-                .await;
+                }
+                Err(failure) => return Err(failure.error),
+            };
+            total_usage = add_usage(total_usage, call.usage);
+            step += 1;
 
-            let note_call = calls.iter().find(|(name, _)| name == NOTE_TOOL);
-            let fetch_call = calls.iter().find(|(name, _)| name == FETCH_TOOL);
-            for (name, _) in &calls {
-                if name != NOTE_TOOL && name != FETCH_TOOL {
-                    tracing::warn!(tool = %name, "ignored a tool proposal the host does not offer");
+            let note_call = call.calls.iter().find(|c| c.name == NOTE_TOOL);
+            let fetch_call = call.calls.iter().find(|c| c.name == FETCH_TOOL);
+            for c in &call.calls {
+                if c.name != NOTE_TOOL && c.name != FETCH_TOOL {
+                    tracing::warn!(tool = %c.name, "ignored a tool proposal the host does not offer");
                 }
             }
 
-            if let Some((_, arguments)) = note_call {
+            if let Some(note) = note_call {
                 // An ordinary task: it waits for the user's approval of the
                 // exact preview. The model has no way to approve it, and a
                 // write ends the turn even if it also asked to fetch.
@@ -680,15 +734,19 @@ impl Runtime {
                         "a note proposal and a fetch were requested together; only the note is acted on"
                     );
                 }
-                let proposed_run_id = self.propose_note(reply, arguments).await;
+                let proposed_run_id = self.propose_note(reply, &note.arguments).await;
                 return Ok((total_usage, proposed_run_id));
             }
 
-            let Some((_, arguments)) = fetch_call else {
+            let Some(fetch) = fetch_call else {
                 // No tool call: the model gave its final answer.
                 return Ok((total_usage, None));
             };
-            let url = arguments.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            let url = fetch
+                .arguments
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let fetch_step = self
                 .begin_step(
                     reply,
@@ -701,12 +759,13 @@ impl Runtime {
             fetch_calls_used += 1;
 
             let mut model_parts = Vec::new();
-            if !step_text.is_empty() {
-                model_parts.push(Part::Text(step_text));
+            if !call.text.is_empty() {
+                model_parts.push(Part::Text(call.text.clone()));
             }
             model_parts.push(Part::FunctionCall {
+                id: fetch.id.clone(),
                 name: FETCH_TOOL.to_string(),
-                arguments: arguments.clone(),
+                arguments: fetch.arguments.clone(),
             });
             turn_messages.push(Message {
                 role: Role::Model,
@@ -715,6 +774,7 @@ impl Runtime {
             turn_messages.push(Message {
                 role: Role::User,
                 parts: vec![Part::FunctionResponse {
+                    id: fetch.id.clone(),
                     name: FETCH_TOOL.to_string(),
                     response,
                 }],
@@ -728,6 +788,156 @@ impl Runtime {
         // Step budget exhausted without a final answer; whatever text
         // arrived is kept (settle_message below still records it).
         Ok((total_usage, None))
+    }
+
+    /// The user's backup model, unless it is the very model that failed.
+    async fn backup_route(&self, primary: &ConnectionRow, failed_model: &str) -> Option<Route> {
+        let (row, model) = match self.store.backup_model().await {
+            Ok(Some(backup)) => backup,
+            Ok(None) => return None,
+            Err(err) => {
+                tracing::warn!(error = %err, "could not read the backup model");
+                return None;
+            }
+        };
+        if row.id == primary.id && model == failed_model {
+            return None;
+        }
+        match self.client(&row) {
+            Ok(client) => Some(Route {
+                client,
+                model,
+                thinking_level: row.thinking_level,
+                backup: true,
+            }),
+            Err(err) => {
+                tracing::warn!(error = %err.message, "the backup model cannot be used");
+                None
+            }
+        }
+    }
+
+    /// One model call, tried again while the provider reports a temporary
+    /// outage *and nothing has arrived yet* — a call that already streamed
+    /// text or a tool call is never repeated. Each try is its own step.
+    async fn call_with_retries(
+        &self,
+        reply: MessageId,
+        route: &Route,
+        mut request: ProviderRequest,
+        step: u32,
+        started: tokio::time::Instant,
+    ) -> Result<CallResult, CallFailure> {
+        let mut attempt = 1u32;
+        loop {
+            match self
+                .attempt_call(reply, route, &request, step, attempt)
+                .await
+            {
+                Ok(call) => return Ok(call),
+                Err((err, received)) => {
+                    let outage = err.is_transient() && !received;
+                    let wait = self.retry_waits.get(attempt as usize - 1).copied();
+                    let remaining = self.reply_deadline.saturating_sub(started.elapsed());
+                    let Some(wait) = wait.filter(|w| outage && remaining > *w + MIN_STEP_BUDGET)
+                    else {
+                        return Err(CallFailure {
+                            outage,
+                            error: provider_error(err),
+                        });
+                    };
+                    tracing::info!(
+                        model = %route.model,
+                        attempt,
+                        wait_ms = wait.as_millis(),
+                        "the provider is temporarily unavailable; trying again"
+                    );
+                    tokio::time::sleep(wait).await;
+                    attempt += 1;
+                    request.deadline = self.reply_deadline.saturating_sub(started.elapsed());
+                }
+            }
+        }
+    }
+
+    /// A single try: one ModelCall step, streamed into the live reply.
+    /// On failure, also says whether anything had arrived before it.
+    async fn attempt_call(
+        &self,
+        reply: MessageId,
+        route: &Route,
+        request: &ProviderRequest,
+        step: u32,
+        attempt: u32,
+    ) -> Result<CallResult, (ProviderError, bool)> {
+        let mut start = json!({ "model": route.model });
+        if attempt > 1 {
+            start["attempt"] = json!(attempt);
+        }
+        if route.backup {
+            start["backup"] = json!(true);
+        }
+        let call_step = self
+            .begin_step(reply, AgentStepKind::ModelCall, start)
+            .await;
+        let mut result = CallResult::default();
+        let mut first_byte: Option<std::time::Duration> = None;
+        let step_started = tokio::time::Instant::now();
+        let streamed = route
+            .client
+            .stream(request, |event| {
+                if first_byte.is_none() {
+                    first_byte = Some(step_started.elapsed());
+                }
+                match event {
+                    ProviderEvent::TextDelta(delta) => {
+                        result.text.push_str(&delta);
+                        self.replies.push(reply, &delta);
+                    }
+                    ProviderEvent::ToolProposal {
+                        id,
+                        name,
+                        arguments,
+                    } => result.calls.push(ToolCall {
+                        id,
+                        name,
+                        arguments,
+                    }),
+                    ProviderEvent::Usage(u) => result.usage = add_usage(result.usage, u),
+                    ProviderEvent::Finished(_) => {}
+                }
+            })
+            .await;
+        // Timing, not content: how long the provider took, split into
+        // "before the first event" (its own latency, e.g. thinking) and
+        // the rest (streaming + our own processing).
+        let mut timing = json!({
+            "first_byte_ms": first_byte.map(millis),
+            "duration_ms": millis(step_started.elapsed()),
+        });
+        tracing::info!(
+            step,
+            attempt,
+            backup = route.backup,
+            model = %route.model,
+            first_byte_ms = first_byte.map(|d| d.as_millis()),
+            step_ms = step_started.elapsed().as_millis(),
+            "model call finished"
+        );
+        match streamed {
+            Ok(()) => {
+                self.finish_step(call_step, AgentStepStatus::Done, timing)
+                    .await;
+                Ok(result)
+            }
+            Err(err) => {
+                timing["error"] = json!(provider_error(err.clone()).message);
+                self.finish_step(call_step, AgentStepStatus::Failed, timing)
+                    .await;
+                let received = !result.text.is_empty() || !result.calls.is_empty();
+                Err((err, received))
+            }
+        }
     }
 
     /// Submits the proposed note as an ordinary run; `None` if the host
@@ -982,6 +1192,8 @@ fn step_view(row: &AgentStepRow) -> AgentStepView {
             first_byte_ms: number("first_byte_ms").and_then(|n| u32::try_from(n).ok()),
             duration_ms: number("duration_ms").and_then(|n| u32::try_from(n).ok()),
             error: text("error"),
+            attempt: number("attempt").and_then(|n| u32::try_from(n).ok()),
+            backup: d.get("backup").and_then(Value::as_bool),
         },
         AgentStepKind::Fetch => AgentStepDetail::Fetch {
             url: text("url").unwrap_or_default(),
@@ -1054,6 +1266,69 @@ fn persona_view(p: PersonaRow) -> PersonaView {
         name: p.name,
         tone: p.tone,
         style: p.style,
+    }
+}
+
+/// The model and client one reply is currently using.
+struct Route {
+    client: Client,
+    model: String,
+    thinking_level: nexus_core::ThinkingLevel,
+    /// The user's backup model, taking over from the active one.
+    backup: bool,
+}
+
+struct ToolCall {
+    id: Option<String>,
+    name: String,
+    arguments: Value,
+}
+
+#[derive(Default)]
+struct CallResult {
+    text: String,
+    calls: Vec<ToolCall>,
+    usage: nexus_providers::Usage,
+}
+
+struct CallFailure {
+    /// The provider stayed unavailable and nothing arrived: the backup
+    /// model may take over.
+    outage: bool,
+    error: NexusError,
+}
+
+fn from_choice(choice: ProviderChoice) -> ProviderKind {
+    match choice {
+        ProviderChoice::Gemini => ProviderKind::Gemini,
+        ProviderChoice::OpenAi => ProviderKind::OpenAi,
+        ProviderChoice::Anthropic => ProviderKind::Anthropic,
+        ProviderChoice::DeepSeek => ProviderKind::DeepSeek,
+    }
+}
+
+/// A model id is stored and sent to the provider; only a safe character
+/// set (OpenAI's fine-tuned ids contain `:`).
+fn checked_model(model: &str) -> Result<String, NexusError> {
+    let model = model.trim();
+    let safe = !model.is_empty()
+        && model.len() <= 128
+        && model
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | ':'));
+    if safe {
+        Ok(model.to_string())
+    } else {
+        Err(invalid("invalid model id"))
+    }
+}
+
+fn backup_view(row: &ConnectionRow, model: String) -> BackupModelView {
+    BackupModelView {
+        connection_id: row.id,
+        display_name: row.display_name.clone(),
+        provider: row.provider.clone(),
+        model,
     }
 }
 

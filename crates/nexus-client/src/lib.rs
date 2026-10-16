@@ -200,13 +200,28 @@ impl NexusClient {
         Ok(self.client.list_connections(context::current()).await??)
     }
 
-    pub async fn save_gemini_connection(
+    pub async fn save_connection(
         &self,
-        request: nexus_protocol::SaveGeminiConnectionRequest,
+        request: nexus_protocol::SaveConnectionRequest,
     ) -> Result<nexus_protocol::ConnectionView, CallError> {
         Ok(self
             .client
-            .save_gemini_connection(provider_context(), request)
+            .save_connection(provider_context(), request)
+            .await??)
+    }
+
+    pub async fn backup_model(&self) -> Result<Option<nexus_protocol::BackupModelView>, CallError> {
+        Ok(self.client.get_backup_model(context::current()).await??)
+    }
+
+    pub async fn set_backup_model(
+        &self,
+        connection_id: Option<nexus_protocol::ConnectionId>,
+        model: Option<String>,
+    ) -> Result<Option<nexus_protocol::BackupModelView>, CallError> {
+        Ok(self
+            .client
+            .set_backup_model(context::current(), connection_id, model)
             .await??)
     }
 

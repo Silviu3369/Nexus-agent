@@ -6,10 +6,10 @@ use std::time::Instant;
 use futures::StreamExt;
 use nexus_protocol::service::NexusService;
 use nexus_protocol::{
-    AgentStepView, ArtifactId, BackupSummary, ConnectionId, ConnectionView, ConversationId,
-    ConversationSummary, ConversationView, DecideApprovalRequest, ErrorCode, EventsPage,
-    GetHealthResponse, HandshakeRequest, HandshakeResponse, HealthStatus, MessageId, ModelView,
-    NexusError, PROTOCOL_VERSION, PersonaView, RunId, RunView, SaveGeminiConnectionRequest,
+    AgentStepView, ArtifactId, BackupModelView, BackupSummary, ConnectionId, ConnectionView,
+    ConversationId, ConversationSummary, ConversationView, DecideApprovalRequest, ErrorCode,
+    EventsPage, GetHealthResponse, HandshakeRequest, HandshakeResponse, HealthStatus, MessageId,
+    ModelView, NexusError, PROTOCOL_VERSION, PersonaView, RunId, RunView, SaveConnectionRequest,
     SavePersonaRequest, SendMessageRequest, SendMessageResponse, Snapshot, SubmitNoteRequest,
     SubmitNoteResponse, SystemStatusView, ThinkingLevel,
 };
@@ -191,13 +191,28 @@ impl NexusService for HostServer {
         self.runtime.list_connections().await
     }
 
-    async fn save_gemini_connection(
+    async fn save_connection(
         self,
         _ctx: Context,
-        request: SaveGeminiConnectionRequest,
+        request: SaveConnectionRequest,
     ) -> Result<ConnectionView, NexusError> {
         self.require_session()?;
-        self.runtime.save_gemini_connection(request).await
+        self.runtime.save_connection(request).await
+    }
+
+    async fn get_backup_model(self, _ctx: Context) -> Result<Option<BackupModelView>, NexusError> {
+        self.require_session()?;
+        self.runtime.get_backup_model().await
+    }
+
+    async fn set_backup_model(
+        self,
+        _ctx: Context,
+        connection_id: Option<ConnectionId>,
+        model: Option<String>,
+    ) -> Result<Option<BackupModelView>, NexusError> {
+        self.require_session()?;
+        self.runtime.set_backup_model(connection_id, model).await
     }
 
     async fn remove_connection(

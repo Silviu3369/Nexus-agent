@@ -130,7 +130,8 @@ export function describeStep(step: AgentStepView): { title: string; detail: stri
   const running = step.status === "Running";
   switch (d.kind) {
     case "ModelCall": {
-      const title = running ? `Thinking — ${d.model}` : `Model ${d.model}`;
+      const which = d.backup ? " (backup)" : d.attempt ? ` (try ${d.attempt})` : "";
+      const title = running ? `Thinking — ${d.model}${which}` : `Model ${d.model}${which}`;
       if (d.error) return { title, detail: d.error };
       const total = seconds(d.duration_ms);
       const first = seconds(d.first_byte_ms);
@@ -171,13 +172,17 @@ function stepItem(step: AgentStepView, agent: string): TimelineItem {
       return {
         ...base,
         kind: "model",
-        title: status === "running" ? "Thinking" : "Model call",
+        title:
+          (status === "running" ? "Thinking" : d.backup ? "Backup model call" : "Model call") +
+          (d.attempt ? ` · try ${d.attempt}` : ""),
         model: d.model,
-        tool: null,
+        tool: d.backup ? "Backup" : null,
         durationMs: d.duration_ms ?? base.durationMs,
         outcome: detail,
         facts: compact([
           ["Model", d.model],
+          ["Try", d.attempt ? String(d.attempt) : null],
+          ["Backup model", d.backup ? "yes — the active model stayed unavailable" : null],
           ["First response", seconds(d.first_byte_ms)],
           ["Duration", seconds(d.duration_ms)],
           ["Error", d.error],
@@ -322,7 +327,7 @@ export function buildRuns(
       continue;
     }
     const note = m.proposed_run_id ? runsById.get(m.proposed_run_id) : proposedRun(m, runsById);
-    const items = m.steps.map((s) => stepItem(s, agent));
+    const items = markRetries(m.steps.map((s) => stepItem(s, agent)));
     if (note) items.push(...noteItems(note));
     const lastStep = m.steps.length > 0 ? m.steps[m.steps.length - 1] : null;
     const status = replyStatus(m, note);
@@ -349,6 +354,17 @@ export function buildRuns(
     request = null;
   }
   return out;
+}
+
+/** A model call that failed and was followed by another model call was a
+ *  temporary outage the Host tried again (or handed to the backup model). */
+function markRetries(items: TimelineItem[]): TimelineItem[] {
+  return items.map((item, i) => {
+    const next = items[i + 1];
+    if (item.kind !== "model" || item.status !== "failed" || next?.kind !== "model") return item;
+    const how = next.tool === "Backup" ? "the backup model took over" : "tried again";
+    return { ...item, outcome: `Temporary outage — ${how}. ${item.outcome ?? ""}`.trim() };
+  });
 }
 
 /** While a reply is still settling, only its NoteProposed step names the run. */
@@ -431,6 +447,8 @@ export function deriveCore(input: {
       nodes.push(node);
     }
     node.sublabel = nodeSublabel(id, item) ?? node.sublabel;
+    // The model node names whichever model answered last (e.g. the backup).
+    if (id === "model") node.label = nodeLabel(id, item);
     node.status = mergeNodeStatus(node.status, item.status);
   }
 
@@ -486,7 +504,7 @@ function nodeLabel(id: NodeKind, item: TimelineItem): string {
 function nodeSublabel(id: NodeKind, item: TimelineItem): string | null {
   switch (id) {
     case "model":
-      return "Gemini";
+      return item.tool === "Backup" ? "backup model" : "model";
     case "web":
       return item.title.replace(/^(Reading|Read) /, "");
     case "files":

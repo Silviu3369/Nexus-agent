@@ -33,6 +33,7 @@ async fn connection(env: &Env) -> ConnectionId {
     env.store
         .save_connection(
             None,
+            "Gemini",
             "Gemini personal".into(),
             true,
             format!("gemini-{}", uuid::Uuid::new_v4()),
@@ -107,6 +108,7 @@ async fn an_existing_connection_defaults_to_low_thinking_after_migrating_to_v3()
         let id = store
             .save_connection(
                 None,
+                "Gemini",
                 "Gemini personal".into(),
                 true,
                 "gemini-v2-test".into(),
@@ -150,6 +152,147 @@ async fn an_existing_connection_defaults_to_low_thinking_after_migrating_to_v3()
 
     drop(store);
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn migrating_to_v5_keeps_every_connection_and_the_messages_linked_to_it() {
+    let dir = std::env::temp_dir().join(format!("nexus-migrate-v5-test-{}", uuid::Uuid::new_v4()));
+    let path = dir.join("nexus.db");
+    let (id, reply) = {
+        let store = Store::open(&path).unwrap();
+        store.persona(0).await.unwrap();
+        let row = store
+            .save_connection(
+                None,
+                "Gemini",
+                "Mine".into(),
+                true,
+                "gemini-v4-test".into(),
+                1,
+            )
+            .await
+            .unwrap();
+        store
+            .set_thinking_level(row.id, ThinkingLevel::High, 2)
+            .await
+            .unwrap();
+        store
+            .set_connection_model(row.id, "gemini-3.8-flash".into(), 3)
+            .await
+            .unwrap();
+        let sent = store
+            .append_exchange(exchange(None, "k-v5", "salut", row.id), 4)
+            .await
+            .unwrap();
+        // Put back the v4 table (Gemini only), as a host before this change left it.
+        store
+            .call(|c| {
+                c.execute_batch(
+                    "PRAGMA foreign_keys = OFF;
+                     CREATE TABLE old (
+                         id TEXT PRIMARY KEY,
+                         provider TEXT NOT NULL CHECK (provider IN ('Gemini')),
+                         display_name TEXT NOT NULL, model TEXT, free_tier INTEGER NOT NULL,
+                         secret_name TEXT NOT NULL UNIQUE, revision INTEGER NOT NULL,
+                         created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL,
+                         thinking_level TEXT NOT NULL DEFAULT 'Low') STRICT;
+                     INSERT INTO old SELECT * FROM provider_connections;
+                     DROP TABLE provider_connections;
+                     ALTER TABLE old RENAME TO provider_connections;
+                     PRAGMA foreign_keys = ON;
+                     PRAGMA user_version = 4;",
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        (row.id, sent.model_message.id)
+    };
+
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.schema_version().await.unwrap(), SUPPORTED_VERSION);
+    let row = store.connection(id).await.unwrap();
+    assert_eq!(row.provider, "Gemini");
+    assert_eq!(row.display_name, "Mine");
+    assert_eq!(row.model.as_deref(), Some("gemini-3.8-flash"));
+    assert_eq!(row.thinking_level, ThinkingLevel::High);
+    assert_eq!(row.secret_name, "gemini-v4-test");
+    assert!(row.free_tier);
+    let linked: Option<String> = store
+        .call(move |c| {
+            Ok(c.query_row(
+                "SELECT connection_id FROM messages WHERE id = ?1",
+                [reply.to_string()],
+                |r| r.get(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        linked,
+        Some(id.to_string()),
+        "the rebuild must not clear message links"
+    );
+    let enforced: i64 = store
+        .call(|c| Ok(c.query_row("PRAGMA foreign_keys", [], |r| r.get(0))?))
+        .await
+        .unwrap();
+    assert_eq!(
+        enforced, 1,
+        "foreign keys are enforced again after the rebuild"
+    );
+
+    for provider in ["OpenAI", "Anthropic", "DeepSeek"] {
+        store
+            .save_connection(
+                None,
+                provider,
+                provider.into(),
+                false,
+                format!("{provider}-v5"),
+                5,
+            )
+            .await
+            .unwrap();
+    }
+    assert!(
+        store
+            .save_connection(None, "Other", "x".into(), false, "other-v5".into(), 6)
+            .await
+            .is_err(),
+        "only known providers are accepted"
+    );
+    drop(store);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn the_backup_model_is_explicit_and_goes_away_with_its_connection() {
+    let env = env();
+    let id = connection(&env).await;
+    assert!(env.store.backup_model().await.unwrap().is_none());
+    env.store
+        .set_backup_model(Some((id, "gemini-backup".into())), 2)
+        .await
+        .unwrap();
+    let (row, model) = env.store.backup_model().await.unwrap().unwrap();
+    assert_eq!((row.id, model.as_str()), (id, "gemini-backup"));
+    env.store.set_backup_model(None, 3).await.unwrap();
+    assert!(env.store.backup_model().await.unwrap().is_none());
+
+    env.store
+        .set_backup_model(Some((id, "gemini-backup".into())), 4)
+        .await
+        .unwrap();
+    env.store.delete_connection(id, 5).await.unwrap();
+    assert!(env.store.backup_model().await.unwrap().is_none());
+    assert!(
+        env.store
+            .set_backup_model(Some((id, "x".into())), 6)
+            .await
+            .is_err(),
+        "a backup must name an existing connection"
+    );
 }
 
 #[tokio::test]

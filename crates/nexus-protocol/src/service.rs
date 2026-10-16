@@ -3,9 +3,9 @@
 //! implements this; `nexus-client` calls the generated client stub.
 
 use crate::chat::{
-    AgentStepView, ConnectionView, ConversationSummary, ConversationView, ModelView, PersonaView,
-    SaveGeminiConnectionRequest, SavePersonaRequest, SendMessageRequest, SendMessageResponse,
-    ThinkingLevel,
+    AgentStepView, BackupModelView, ConnectionView, ConversationSummary, ConversationView,
+    ModelView, PersonaView, SaveConnectionRequest, SavePersonaRequest, SendMessageRequest,
+    SendMessageResponse, ThinkingLevel,
 };
 use crate::error::NexusError;
 use crate::handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse};
@@ -49,11 +49,20 @@ pub trait NexusService {
     /// Connections with their key redacted to `has_key`.
     async fn list_connections() -> Result<Vec<ConnectionView>, NexusError>;
 
-    /// Stores the key in the Windows vault (never in the database), then
-    /// checks it by listing models — a real call to Google, made only here.
-    async fn save_gemini_connection(
-        request: SaveGeminiConnectionRequest,
-    ) -> Result<ConnectionView, NexusError>;
+    /// Reads the provider from the key's format (or the user's choice),
+    /// checks the key with that provider only by listing its models — a
+    /// real call — then stores it in the Windows vault (never in the
+    /// database). A key the provider refuses is not kept.
+    async fn save_connection(request: SaveConnectionRequest) -> Result<ConnectionView, NexusError>;
+
+    async fn get_backup_model() -> Result<Option<BackupModelView>, NexusError>;
+
+    /// Chooses (or with `None`, clears) the model used only when the active
+    /// one stays unavailable after its retries.
+    async fn set_backup_model(
+        connection_id: Option<ConnectionId>,
+        model: Option<String>,
+    ) -> Result<Option<BackupModelView>, NexusError>;
 
     /// Deletes the connection and its vault entry.
     async fn remove_connection(connection_id: ConnectionId) -> Result<(), NexusError>;
@@ -61,15 +70,16 @@ pub trait NexusService {
     /// Models the provider reports for this connection (a real call).
     async fn list_models(connection_id: ConnectionId) -> Result<Vec<ModelView>, NexusError>;
 
-    /// Makes this connection and model the ones used for chat. There is no
-    /// automatic fallback to another connection or provider.
+    /// Makes this connection and model the ones used for chat. The only
+    /// fallback is the backup model the user chose, if any.
     async fn select_model(
         connection_id: ConnectionId,
         model: String,
     ) -> Result<ConnectionView, NexusError>;
 
-    /// Sets the speed/quality choice for this connection's model, where the
-    /// model supports it (Gemini 3.x); ignored otherwise.
+    /// Sets the speed/quality choice for this connection's model; each
+    /// provider maps it to its own reasoning control, and a model that
+    /// refuses it is asked without it.
     async fn set_thinking_level(
         connection_id: ConnectionId,
         level: ThinkingLevel,

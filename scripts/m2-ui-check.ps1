@@ -40,8 +40,9 @@ New-Item -ItemType Directory $profileDir | Out-Null
 $env:NEXUS_PROFILE_DIR = $profileDir
 
 # Test values only; the fake accepts exactly $testKey.
-$testKey = "SENTINEL-ui-check-" + [guid]::NewGuid()
-$wrongKey = "WRONG-ui-check-" + [guid]::NewGuid()
+# Shaped like Google keys (AIza...), so the provider is detected from the format.
+$testKey = "AIzaSENTINEL-ui-check-" + [guid]::NewGuid()
+$wrongKey = "AIzaWRONG-ui-check-" + [guid]::NewGuid()
 $failures = 0
 
 function Check([bool]$ok, [string]$what) {
@@ -215,9 +216,10 @@ try {
   # --- a refused key is not stored ---
   Click-Button $win "Set up a model"
   Check (Wait-Text $win "AI connections") "Models shows the AI connections"
-  Check ($null -ne (Wait-Contains $win "No adapter")) "providers without an adapter are shown as such"
-  Check ($null -ne (Wait-Contains $win "personal data, passwords")) "the free-tier notice is shown"
-  Set-Field $win "Gemini API key" $wrongKey
+  Check ($null -ne (Wait-Contains $win "No adapter")) "a provider without an adapter is shown as such"
+  Set-Field $win "API key" $wrongKey
+  Check ($null -ne (Wait-Contains $win "Detected: Google Gemini")) "the provider is read from the key's format"
+  Check ($null -ne (Wait-Contains $win "personal data, passwords")) "the free-tier notice is shown for a Google key"
   Click-Button $win "Verify and save"
   Check ($null -ne (Wait-Contains $win "Authentication was refused" 20)) "a key the provider refuses is reported"
   Check ((Wait-Text $win "No connections yet.")) "the refused key created no connection"
@@ -225,7 +227,7 @@ try {
   Check (-not (Get-Names $win | Where-Object { $_.Contains($wrongKey) })) "the refused key is not shown anywhere"
 
   # --- a valid key goes to the vault only ---
-  Set-Field $win "Gemini API key" $testKey
+  Set-Field $win "API key" $testKey
   Click-Button $win "Verify and save"
   Check ($null -ne (Wait-Contains $win "Active" 20)) "the checked key created the active connection"
   Check (Wait-Text $win "in the Windows vault") "the UI reports the key as held by the Windows vault"
@@ -313,8 +315,17 @@ try {
   Check ($null -ne (Wait-Like $win "Check the private page")) "the activity log names the task each entry belongs to"
   Check ($null -ne (Wait-Contains $win "Note written and verified")) "host events (the verified write) are in the log"
 
+  # --- a temporary outage is tried again, visibly ---
+  Click-Button $win "Overview"
+  Set-Field $win "Give Nexus a task" "Try once more"
+  Click-Button $win "Run" 20
+  Check (Wait-Text $win "Recovered after a retry." 30) "a 503 is tried again and the task still answers"
+  Check ($null -ne (Wait-Like $win "try 2")) "the second try is its own step"
+  Check ($null -ne (Wait-Contains $win "Temporary outage")) "the failed try says it was a temporary outage"
+
   # --- removing the connection removes its key ---
   Click-Button $win "Models"
+  Check (Wait-Text $win "No backup model.") "there is no backup model unless one is chosen"
   Click-Button $win "Remove connection"
   Click-Button $win "Confirm removal"
   Check (Wait-Text $win "No connections yet.") "the connection is removed"

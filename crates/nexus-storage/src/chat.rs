@@ -11,6 +11,7 @@ use crate::repo::{insert_event, parse_state, parse_uuid};
 use crate::{StorageError, Store};
 
 const ACTIVE_CONNECTION: &str = "active_connection";
+const BACKUP_MODEL: &str = "backup_model";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionRow {
@@ -97,10 +98,12 @@ pub const DEFAULT_PERSONA_STYLE: &str = "răspunsuri clare și concise; întrebi
 
 impl Store {
     /// Creates or updates a connection. The caller stores the key in the
-    /// vault under `secret_name` *before* calling this.
+    /// vault under `secret_name` *before* calling this. `provider` is set
+    /// on creation only; a connection never changes provider.
     pub async fn save_connection(
         &self,
         id: Option<ConnectionId>,
+        provider: &'static str,
         display_name: String,
         free_tier: bool,
         secret_name: String,
@@ -124,8 +127,8 @@ impl Store {
                     let id = ConnectionId::new();
                     tx.execute(
                         "INSERT INTO provider_connections (id, provider, display_name, free_tier, secret_name,
-                         revision, created_at_ms, updated_at_ms) VALUES (?1, 'Gemini', ?2, ?3, ?4, 1, ?5, ?5)",
-                        params![id.to_string(), display_name, free_tier, secret_name, now],
+                         revision, created_at_ms, updated_at_ms) VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?6)",
+                        params![id.to_string(), provider, display_name, free_tier, secret_name, now],
                     )?;
                     id
                 }
@@ -241,6 +244,11 @@ impl Store {
                 "DELETE FROM settings WHERE key = ?1 AND json_extract(value_json, '$') = ?2",
                 params![ACTIVE_CONNECTION, id.to_string()],
             )?;
+            // A backup on a removed connection would point at nothing.
+            tx.execute(
+                "DELETE FROM settings WHERE key = ?1 AND json_extract(value_json, '$.connection_id') = ?2",
+                params![BACKUP_MODEL, id.to_string()],
+            )?;
             insert_event(
                 &tx,
                 "ConnectionRemoved",
@@ -296,6 +304,69 @@ impl Store {
                 .optional()?;
             match value {
                 Some(id) => Ok(Some(load_connection(&tx, ConnectionId(parse_uuid(&id)?))?)),
+                None => Ok(None),
+            }
+        })
+        .await
+    }
+
+    /// The model to use only when the active one is overloaded, chosen by
+    /// the user; `None` clears it. The connection must exist.
+    pub async fn set_backup_model(
+        &self,
+        backup: Option<(ConnectionId, String)>,
+        now: i64,
+    ) -> Result<(), StorageError> {
+        self.call(move |conn| {
+            let tx = conn.transaction()?;
+            let entity = match &backup {
+                Some((id, model)) => {
+                    load_connection(&tx, *id)?;
+                    tx.execute(
+                        "INSERT INTO settings (key, value_json) VALUES (?1, ?2)
+                         ON CONFLICT (key) DO UPDATE SET value_json = excluded.value_json",
+                        params![
+                            BACKUP_MODEL,
+                            json!({"connection_id": id.to_string(), "model": model}).to_string()
+                        ],
+                    )?;
+                    id.to_string()
+                }
+                None => {
+                    tx.execute("DELETE FROM settings WHERE key = ?1", [BACKUP_MODEL])?;
+                    BACKUP_MODEL.to_string()
+                }
+            };
+            insert_event(
+                &tx,
+                "BackupModelSet",
+                &entity,
+                0,
+                json!({"set": backup.is_some()}),
+                now,
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn backup_model(&self) -> Result<Option<(ConnectionRow, String)>, StorageError> {
+        self.call(|conn| {
+            let tx = conn.transaction()?;
+            let value: Option<(String, String)> = tx
+                .query_row(
+                    "SELECT json_extract(value_json, '$.connection_id'), json_extract(value_json, '$.model')
+                     FROM settings WHERE key = ?1",
+                    [BACKUP_MODEL],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            match value {
+                Some((id, model)) => Ok(Some((
+                    load_connection(&tx, ConnectionId(parse_uuid(&id)?))?,
+                    model,
+                ))),
                 None => Ok(None),
             }
         })

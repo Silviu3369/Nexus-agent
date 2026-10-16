@@ -26,13 +26,15 @@ fn config(fake: &FakeGemini) -> RuntimeConfig {
     RuntimeConfig {
         gemini_base_url: fake.base_url.clone(),
         reply_deadline: Duration::from_secs(10),
+        // Each queued fake reply answers one try; tests of retries opt in.
+        retry_waits: Vec::new(),
         ..RuntimeConfig::default()
     }
 }
 
 /// A connection with the fake's model selected, ready to chat.
 async fn connect_gemini(client: &NexusClient) {
-    let saved = client.save_gemini_connection(gemini(KEY)).await.unwrap();
+    let saved = client.save_connection(gemini(KEY)).await.unwrap();
     client
         .select_model(saved.connection_id, MODEL.to_string())
         .await
@@ -77,7 +79,7 @@ async fn ai01_reply_streams_from_the_selected_model_with_persona_and_history() {
     let host = TestHost::start_with(TOKEN, config(&fake)).await;
     let client = host.client().await;
 
-    let saved = client.save_gemini_connection(gemini(KEY)).await.unwrap();
+    let saved = client.save_connection(gemini(KEY)).await.unwrap();
     assert!(saved.has_key && saved.active && saved.free_tier);
     assert_eq!(saved.model, None);
     let models = client.list_models(saved.connection_id).await.unwrap();
@@ -286,7 +288,7 @@ async fn ai03_without_a_chosen_connection_and_model_nothing_is_sent_and_there_is
     );
 
     // A connection without a chosen model does not pick one by itself.
-    let saved = client.save_gemini_connection(gemini(KEY)).await.unwrap();
+    let saved = client.save_connection(gemini(KEY)).await.unwrap();
     let refused = client
         .send_message(SendMessageRequest {
             conversation_id: None,
@@ -331,10 +333,7 @@ async fn a_key_the_provider_rejects_is_never_stored_or_echoed() {
     let client = host.client().await;
 
     let wrong = format!("WRONG-{}", uuid::Uuid::new_v4());
-    let refused = client
-        .save_gemini_connection(gemini(&wrong))
-        .await
-        .unwrap_err();
+    let refused = client.save_connection(gemini(&wrong)).await.unwrap_err();
     assert_eq!(refused.code(), Some(ErrorCode::Unauthenticated));
     let text = format!("{refused} {refused:?}");
     assert!(
@@ -350,7 +349,7 @@ async fn a_key_the_provider_rejects_is_never_stored_or_echoed() {
     );
 
     let malformed = client
-        .save_gemini_connection(gemini("has spaces inside"))
+        .save_connection(gemini("has spaces inside"))
         .await
         .unwrap_err();
     assert_eq!(malformed.code(), Some(ErrorCode::InvalidRequest));
@@ -817,7 +816,7 @@ async fn the_chosen_thinking_level_is_sent_for_a_gemini_3_model_only() {
     let fake = FakeGemini::start(KEY).await;
     let host = TestHost::start_with(TOKEN, config(&fake)).await;
     let client = host.client().await;
-    let saved = client.save_gemini_connection(gemini(KEY)).await.unwrap();
+    let saved = client.save_connection(gemini(KEY)).await.unwrap();
     assert_eq!(
         saved.thinking_level,
         ThinkingLevel::Low,
@@ -890,7 +889,7 @@ async fn startup_removes_vault_entries_no_connection_refers_to() {
     let fake = FakeGemini::start(KEY).await;
     let host = TestHost::start_with(TOKEN, config(&fake)).await;
     let client = host.client().await;
-    let saved = client.save_gemini_connection(gemini(KEY)).await.unwrap();
+    let saved = client.save_connection(gemini(KEY)).await.unwrap();
     drop(client);
     let profile = host.shutdown().await;
 

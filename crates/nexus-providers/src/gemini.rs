@@ -4,14 +4,13 @@
 //! disabled so the key never reaches another origin, and the endpoint is
 //! fixed to Google's (or a loopback test server).
 
-use std::time::Duration;
-
-use futures::StreamExt;
-use reqwest::header::{CONTENT_TYPE, RETRY_AFTER};
+use reqwest::header::CONTENT_TYPE;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::sse::SseParser;
+use crate::http::{
+    self, LIST_BUDGET, LIST_TIMEOUT, MAX_BODY_BYTES, MAX_ERROR_BYTES, read_limited, transport,
+};
 use crate::{
     ApiKey, FinishReason, Message, ModelInfo, ProviderError, ProviderEvent, ProviderRequest, Role,
     Usage,
@@ -20,14 +19,6 @@ use crate::{
 pub const PRODUCTION_BASE_URL: &str = "https://generativelanguage.googleapis.com";
 const API_VERSION: &str = "v1beta";
 const KEY_HEADER: &str = "x-goog-api-key";
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-const LIST_TIMEOUT: Duration = Duration::from_secs(20);
-/// Whole model listing, all pages; stays below the RPC deadline of the
-/// calls that wait for it (`nexus_client::PROVIDER_CALL_DEADLINE`).
-const LIST_BUDGET: Duration = Duration::from_secs(30);
-const MAX_EVENT_BYTES: usize = 1024 * 1024;
-const MAX_STREAM_BYTES: usize = 8 * 1024 * 1024;
-const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
 const MAX_MODEL_PAGES: usize = 10;
 
 pub struct GeminiClient {
@@ -41,14 +32,7 @@ impl GeminiClient {
     /// (`http://127.0.0.1:<port>`); anything else is refused.
     pub fn new(key: ApiKey, base_url: &str) -> Result<Self, ProviderError> {
         let base_url = allowed_base_url(base_url)?;
-        // reqwest is built without a bundled crypto provider; use ring.
-        let _ = rustls::crypto::ring::default_provider().install_default();
-        let http = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(CONNECT_TIMEOUT)
-            .user_agent(concat!("nexus/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .map_err(|e| ProviderError::InvalidConfiguration(e.to_string()))?;
+        let http = http::client()?;
         Ok(Self {
             http,
             base_url,
@@ -141,29 +125,7 @@ impl GeminiClient {
             if !response.status().is_success() {
                 return Err(self.error_from(response).await);
             }
-
-            let mut parser = SseParser::new(MAX_EVENT_BYTES);
-            let mut received = 0usize;
-            let mut chunks = response.bytes_stream();
-            while let Some(chunk) = chunks.next().await {
-                let chunk = chunk.map_err(transport)?;
-                received += chunk.len();
-                if received > MAX_STREAM_BYTES {
-                    return Err(ProviderError::InvalidResponse(format!(
-                        "response exceeded {MAX_STREAM_BYTES} bytes"
-                    )));
-                }
-                for data in parser
-                    .push(&chunk)
-                    .map_err(ProviderError::InvalidResponse)?
-                {
-                    handle_chunk(&data, &mut on_event)?;
-                }
-            }
-            if let Some(data) = parser.finish().map_err(ProviderError::InvalidResponse)? {
-                handle_chunk(&data, &mut on_event)?;
-            }
-            Ok(())
+            http::read_sse(response, |data| handle_chunk(data, &mut on_event)).await
         };
         tokio::time::timeout(request.deadline, call)
             .await
@@ -172,13 +134,10 @@ impl GeminiClient {
 
     async fn error_from(&self, response: reqwest::Response) -> ProviderError {
         let status = response.status().as_u16();
-        let retry_after = response
-            .headers()
-            .get(RETRY_AFTER)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.trim().parse::<u64>().ok())
-            .map(Duration::from_secs);
-        let body = read_limited(response, 64 * 1024).await.unwrap_or_default();
+        let retry_after = http::retry_after(&response);
+        let body = read_limited(response, MAX_ERROR_BYTES)
+            .await
+            .unwrap_or_default();
         let (message, api_key_invalid) = serde_json::from_slice::<ErrorEnvelope>(&body)
             .map(|e| {
                 let invalid = e
@@ -196,30 +155,17 @@ impl GeminiClient {
             });
         // Defence in depth: a provider message must never carry our key out.
         let message = message.replace(self.key.expose(), "<redacted>");
-        match status {
-            401 | 403 => ProviderError::Unauthenticated(message),
-            // Google answers a malformed/unknown key with 400 INVALID_ARGUMENT,
-            // not 401; its structured reason still says this is about the key.
-            400 if api_key_invalid => ProviderError::Unauthenticated(message),
-            429 => ProviderError::RateLimited { retry_after },
-            400..=499 => ProviderError::Rejected { status, message },
-            _ => ProviderError::Unavailable { status, message },
+        // Google answers a malformed/unknown key with 400 INVALID_ARGUMENT,
+        // not 401; its structured reason still says this is about the key.
+        if status == 400 && api_key_invalid {
+            return ProviderError::Unauthenticated(message);
         }
+        http::status_error(status, message, retry_after)
     }
 }
 
 fn allowed_base_url(base: &str) -> Result<String, ProviderError> {
-    let base = base.trim_end_matches('/');
-    let loopback = base
-        .strip_prefix("http://127.0.0.1:")
-        .is_some_and(|port| !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()));
-    if base == PRODUCTION_BASE_URL || loopback {
-        Ok(base.to_string())
-    } else {
-        Err(ProviderError::InvalidConfiguration(format!(
-            "endpoint {base:?} is not allowed; only {PRODUCTION_BASE_URL} (or a loopback test server)"
-        )))
-    }
+    http::allowed_base_url(base, PRODUCTION_BASE_URL)
 }
 
 /// The model id goes into the URL path, so only a safe character set.
@@ -267,6 +213,7 @@ fn handle_chunk(data: &str, on_event: &mut impl FnMut(ProviderEvent)) -> Result<
             }
             if let Some(call) = part.function_call {
                 on_event(ProviderEvent::ToolProposal {
+                    id: call.id,
                     name: call.name,
                     arguments: call.args,
                 });
@@ -296,11 +243,23 @@ fn request_body(request: &ProviderRequest) -> Value {
                 .iter()
                 .map(|p| match p {
                     crate::Part::Text(text) => serde_json::json!({ "text": text }),
-                    crate::Part::FunctionCall { name, arguments } => {
-                        serde_json::json!({ "functionCall": { "name": name, "args": arguments } })
+                    crate::Part::FunctionCall {
+                        id,
+                        name,
+                        arguments,
+                    } => {
+                        let mut call = serde_json::json!({ "name": name, "args": arguments });
+                        if let Some(id) = id {
+                            call["id"] = serde_json::json!(id);
+                        }
+                        serde_json::json!({ "functionCall": call })
                     }
-                    crate::Part::FunctionResponse { name, response } => {
-                        serde_json::json!({ "functionResponse": { "name": name, "response": response } })
+                    crate::Part::FunctionResponse { id, name, response } => {
+                        let mut result = serde_json::json!({ "name": name, "response": response });
+                        if let Some(id) = id {
+                            result["id"] = serde_json::json!(id);
+                        }
+                        serde_json::json!({ "functionResponse": result })
                     }
                 })
                 .collect();
@@ -339,30 +298,6 @@ fn request_body(request: &ProviderRequest) -> Value {
         body["tools"] = serde_json::json!([{ "functionDeclarations": declarations }]);
     }
     body
-}
-
-async fn read_limited(response: reqwest::Response, limit: usize) -> Result<Vec<u8>, ProviderError> {
-    let mut body = Vec::new();
-    let mut chunks = response.bytes_stream();
-    while let Some(chunk) = chunks.next().await {
-        let chunk = chunk.map_err(transport)?;
-        if body.len() + chunk.len() > limit {
-            return Err(ProviderError::InvalidResponse(format!(
-                "body exceeded {limit} bytes"
-            )));
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
-}
-
-fn transport(err: reqwest::Error) -> ProviderError {
-    if err.is_timeout() {
-        ProviderError::Timeout
-    } else {
-        // reqwest's message may include the URL; it never contains the key.
-        ProviderError::Transport(err.to_string())
-    }
 }
 
 #[derive(Deserialize)]
@@ -416,6 +351,7 @@ struct Part {
 
 #[derive(Deserialize)]
 struct FunctionCall {
+    id: Option<String>,
     name: String,
     #[serde(default)]
     args: Value,
