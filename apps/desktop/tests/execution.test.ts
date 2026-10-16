@@ -272,5 +272,62 @@ test("events invalidate only what they describe", () => {
   assert.deepEqual([...invalidatedBy([ev("AgentStepFinished")])].sort(), ["focus", "steps"]);
   assert.deepEqual([...invalidatedBy([ev("ConnectionModelSelected")])], ["connections"]);
   assert.deepEqual([...invalidatedBy([ev("PersonaSaved")])], ["persona"]);
-  assert.equal(invalidatedBy([ev("ProjectCreated")]).size, 0);
+  assert.deepEqual([...invalidatedBy([ev("ProjectCreated")])], ["projects"]);
+  assert.deepEqual([...invalidatedBy([ev("ActiveProjectChanged")])], ["projects"]);
+  assert.deepEqual([...invalidatedBy([ev("MemoryDecided")])].sort(), ["focus", "memory", "projects"]);
+  assert.ok(invalidatedBy([ev("MessageSent")]).has("projects"), "a new task changes its project's count");
+  assert.equal(invalidatedBy([ev("SomethingElse")]).size, 0);
+});
+
+const memoryStep = (memoryId: string | null, error: string | null = null) =>
+  step({ kind: "MemoryProposed", content: "The user prefers short answers.", scope: "Personal", memory_id: memoryId, error }, "Done", T0 + 1000, T0 + 1100);
+
+test("a proposed fact waits for review only while the Host lists it as proposed", () => {
+  const usedMemory = step(
+    { kind: "ModelCall", model: "gemini-3.8-flash", first_byte_ms: null, duration_ms: 900, error: null, attempt: null, backup: null, memory_items: 2 },
+    "Done",
+    T0,
+    T0 + 900,
+  );
+  const reply = message("Model", REPLY, [usedMemory, memoryStep("f-1")], { status: "Complete" });
+  const [pending] = buildRuns(conversation(reply), new Map(), "Nexus", new Set(["f-1"]));
+  assert.equal(pending.status, "completed", "a fact to review does not hold the reply open");
+  assert.deepEqual(pending.items.map((i) => [i.kind, i.status]), [["model", "completed"], ["memory", "waiting"]]);
+  assert.ok(pending.items[0].facts.some(([k, v]) => k === "Approved memory sent" && v === "2 facts"));
+  assert.match(nextLine(pending), /Nothing is remembered until you approve/);
+
+  const core = deriveCore({ run: pending, pendingApprovals: 0, composing: false, now: T0 + 1200 });
+  assert.deepEqual(core.path, ["memory", "model", "memory"], "memory is read before the call, then proposed after it");
+  const node = core.nodes.find((n) => n.id === "memory");
+  assert.equal(node?.status, "waiting");
+  assert.equal(node?.label, "Memory");
+
+  const [decided] = buildRuns(conversation(reply), new Map(), "Nexus", new Set());
+  assert.equal(decided.items[1].status, "completed");
+  assert.match(decided.items[1].outcome ?? "", /decision is in Memory/);
+
+  const [refused] = buildRuns(conversation(message("Model", REPLY, [memoryStep(null, "a fact must have 1..=1000 characters")], { status: "Complete" })), new Map(), "Nexus");
+  assert.equal(refused.items[0].outcome, "a fact must have 1..=1000 characters");
+});
+
+test("activity and tasks carry the project of their task", () => {
+  const conversations = [
+    { conversation_id: CONV, project_id: "p-1", title: "Check the site", updated_at_ms: T0 },
+    { conversation_id: "c-2", project_id: "p-2", title: "Other", updated_at_ms: T0 - 10 },
+  ];
+  const entries = buildActivity({
+    steps: [memoryStep("f-1")],
+    events: [
+      { seq: 1, kind: "MemoryAdded", entity_id: "f-2", created_at_ms: T0 + 5 },
+      { seq: 2, kind: "MemoryProposed", entity_id: "f-1", created_at_ms: T0 + 6 },
+    ],
+    runs: [],
+    conversations,
+    agent: "Nexus",
+  });
+  assert.deepEqual(entries.map((e) => [e.title, e.tool, e.projectId]), [
+    ['Proposed to remember "The user prefers short answers."', "Memory", "p-1"],
+    ["Fact added by you", "Memory", null],
+  ], "newest first; the proposal event repeats the step, so only the step is listed");
+  assert.deepEqual(taskRows(conversations, [], []).map((r) => r.projectId), ["p-1", "p-2"]);
 });

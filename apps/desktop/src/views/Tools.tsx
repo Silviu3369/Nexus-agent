@@ -11,11 +11,12 @@ import { NotesPanel } from "../Notes";
 import { useGoTo } from "../shell/nav";
 import { useDerived, useNexus, useNow } from "../state/store";
 import { Empty, Facts, Panel, StatusPill, Unavailable } from "../ui";
-import { ApiIcon, BrowserIcon, FolderIcon, GitIcon, GlobeIcon, MonitorIcon, PlugIcon, TerminalIcon } from "../icons";
+import { ApiIcon, BrowserIcon, FolderIcon, GitIcon, GlobeIcon, MemoryIcon, MonitorIcon, PlugIcon, TerminalIcon } from "../icons";
 
 const ICON: Record<ToolId, (p: { size?: number }) => ReactElement> = {
   web: GlobeIcon,
   files: FolderIcon,
+  memory: MemoryIcon,
   browser: BrowserIcon,
   terminal: TerminalIcon,
   computer: MonitorIcon,
@@ -81,6 +82,7 @@ function useToolUsage(): Partial<Record<ToolId, Usage>> {
     const runs = d.runs ?? [];
     const reads = steps.filter((s) => s.detail.kind === "Fetch");
     const proposals = steps.filter((s) => s.detail.kind === "NoteProposed");
+    const facts = steps.filter((s) => s.detail.kind === "MemoryProposed");
     const artifactTimes = runs.flatMap((r) => (r.artifact ? [r.artifact.created_at_ms] : []));
     const fileTimes = [...proposals.map((s) => s.started_at_ms), ...artifactTimes];
     return {
@@ -90,6 +92,7 @@ function useToolUsage(): Partial<Record<ToolId, Usage>> {
         lastAt: fileTimes.length > 0 ? Math.max(...fileTimes) : null,
         count: proposals.length + runs.length,
       },
+      memory: { running: facts.some((s) => s.status === "Running"), lastAt: facts[0]?.started_at_ms ?? null, count: facts.length },
     };
   }, [d.steps, d.runs]);
 }
@@ -97,6 +100,7 @@ function useToolUsage(): Partial<Record<ToolId, Usage>> {
 function ToolDetail({ tool }: { tool: ToolInfo }) {
   const usage = useToolUsage()[tool.id];
   const { agentName } = useDerived();
+  const goTo = useGoTo();
   const now = useNow(5000);
   const Icon = ICON[tool.id];
   return (
@@ -122,6 +126,11 @@ function ToolDetail({ tool }: { tool: ToolInfo }) {
                 <li key={l}>{l}</li>
               ))}
             </ul>
+            {tool.id === "memory" && (
+              <button type="button" className="ghost" onClick={() => goTo({ section: "memory" })}>
+                Open Memory
+              </button>
+            )}
           </>
         )}
       </Panel>

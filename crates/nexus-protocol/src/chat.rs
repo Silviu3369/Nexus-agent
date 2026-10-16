@@ -6,7 +6,10 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::ids::{AgentStepId, ConnectionId, ConversationId, MessageId, RunId};
+use crate::ids::{
+    AgentStepId, ConnectionId, ConversationId, MemoryId, MessageId, ProjectId, RunId,
+};
+use crate::memory::MemoryScope;
 use crate::runs::RunFailure;
 
 /// The user's speed/quality choice, where the model supports it (Gemini
@@ -152,6 +155,8 @@ pub enum AgentStepDetail {
         /// True when the user's backup model answered because the active
         /// one stayed unavailable.
         backup: Option<bool>,
+        /// How many approved memory facts the request carried.
+        memory_items: Option<u32>,
     },
     Fetch {
         url: String,
@@ -160,6 +165,14 @@ pub enum AgentStepDetail {
         /// Size of the extracted text that was given to the model.
         text_bytes: Option<u32>,
         truncated: Option<bool>,
+        error: Option<String>,
+    },
+    MemoryProposed {
+        /// The proposed wording (shortened); the fact itself is in memory,
+        /// waiting for the user.
+        content: String,
+        scope: Option<MemoryScope>,
+        memory_id: Option<MemoryId>,
         error: Option<String>,
     },
     NoteProposed {
@@ -187,6 +200,7 @@ pub struct AgentStepView {
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct ConversationSummary {
     pub conversation_id: ConversationId,
+    pub project_id: Option<ProjectId>,
     pub title: String,
     pub updated_at_ms: i64,
 }
@@ -194,6 +208,7 @@ pub struct ConversationSummary {
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct ConversationView {
     pub conversation_id: ConversationId,
+    pub project_id: Option<ProjectId>,
     pub title: String,
     pub messages: Vec<ChatMessageView>,
 }
@@ -202,6 +217,9 @@ pub struct ConversationView {
 pub struct SendMessageRequest {
     /// `None` starts a new conversation.
     pub conversation_id: Option<ConversationId>,
+    /// The project a new conversation joins (`None`: the active project).
+    /// A follow-up stays in its conversation's project.
+    pub project_id: Option<ProjectId>,
     pub idempotency_key: String,
     pub text: String,
 }

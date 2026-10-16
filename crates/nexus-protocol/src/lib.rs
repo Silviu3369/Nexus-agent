@@ -7,6 +7,7 @@ pub mod chat;
 pub mod error;
 pub mod handshake;
 pub mod ids;
+pub mod memory;
 pub mod pairing;
 pub mod runs;
 pub mod service;
@@ -27,8 +28,12 @@ pub use chat::{
 pub use error::{ErrorCode, NexusError};
 pub use handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse, HealthStatus};
 pub use ids::{
-    ActionId, AgentStepId, ApprovalId, ArtifactId, ConnectionId, ConversationId, EventId,
+    ActionId, AgentStepId, ApprovalId, ArtifactId, ConnectionId, ConversationId, EventId, MemoryId,
     MessageId, OperationId, ProjectId, RequestId, RunId, StepId, TaskId,
+};
+pub use memory::{
+    AddMemoryRequest, MemoryContextView, MemoryItemView, MemoryQuery, MemoryScope, MemorySource,
+    MemoryStatus, ProjectView, SaveProjectRequest,
 };
 pub use service::{NexusService, NexusServiceClient};
 pub use version::PROTOCOL_VERSION;

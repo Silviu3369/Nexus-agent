@@ -9,7 +9,11 @@ use crate::chat::{
 };
 use crate::error::NexusError;
 use crate::handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse};
-use crate::ids::{ArtifactId, ConnectionId, ConversationId, MessageId, RunId};
+use crate::ids::{ArtifactId, ConnectionId, ConversationId, MemoryId, MessageId, ProjectId, RunId};
+use crate::memory::{
+    AddMemoryRequest, MemoryContextView, MemoryItemView, MemoryQuery, ProjectView,
+    SaveProjectRequest,
+};
 use crate::runs::{
     BackupSummary, DecideApprovalRequest, EventsPage, RunView, Snapshot, SubmitNoteRequest,
     SubmitNoteResponse, SystemStatusView,
@@ -105,6 +109,39 @@ pub trait NexusService {
     /// What the agent did most recently, across conversations, newest first
     /// (at most `limit`, capped by the host). Running steps are included.
     async fn get_activity(limit: u32) -> Result<Vec<AgentStepView>, NexusError>;
+
+    async fn list_projects() -> Result<Vec<ProjectView>, NexusError>;
+
+    /// Creates or renames/redescribes a project.
+    async fn save_project(request: SaveProjectRequest) -> Result<ProjectView, NexusError>;
+
+    /// New tasks go to this project.
+    async fn set_active_project(project_id: ProjectId) -> Result<ProjectView, NexusError>;
+
+    async fn list_memory(query: MemoryQuery) -> Result<Vec<MemoryItemView>, NexusError>;
+
+    /// A fact the user writes; active at once.
+    async fn add_memory(request: AddMemoryRequest) -> Result<MemoryItemView, NexusError>;
+
+    /// Corrects a fact; refused if it changed since `revision`.
+    async fn edit_memory(
+        memory_id: MemoryId,
+        revision: i64,
+        content: String,
+    ) -> Result<MemoryItemView, NexusError>;
+
+    /// Approves or rejects the agent's proposal as the user saw it.
+    async fn decide_memory(
+        memory_id: MemoryId,
+        revision: i64,
+        approve: bool,
+    ) -> Result<MemoryItemView, NexusError>;
+
+    /// Removes the fact for good, from search too.
+    async fn delete_memory(memory_id: MemoryId) -> Result<(), NexusError>;
+
+    /// Exactly the facts a request in this project sends to the model.
+    async fn memory_context(project_id: ProjectId) -> Result<MemoryContextView, NexusError>;
 
     /// Host version plus CPU and memory of the machine, read when asked.
     async fn get_system_status() -> Result<SystemStatusView, NexusError>;

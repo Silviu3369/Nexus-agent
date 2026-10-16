@@ -6,7 +6,8 @@
 //   Task   — a conversation (work for the agent), or a note the user
 //            submitted directly (an M1 Task).
 //   Run    — one reply of the model to a request in that task, or an M1 run.
-//   Step   — one recorded agent step: a model call, a web read, a proposal.
+//   Step   — one recorded agent step: a model call, a web read, a proposed
+//            note or a proposed fact to remember.
 //   Action — the effect a step leads to: the GET of a web read, or the
 //            CreateMarkdownArtifact action with its approval and write.
 // The Host does not yet record agent work as Task/Run rows of its own; this
@@ -18,6 +19,7 @@ import type {
   ConversationSummary,
   ConversationView,
   EventView,
+  ProjectId,
   RunId,
   RunStatus,
   RunView,
@@ -56,7 +58,7 @@ export type CoreState =
   | "SUCCESS"
   | "ERROR";
 
-export type ItemKind = "model" | "web" | "note" | "approval" | "write";
+export type ItemKind = "model" | "web" | "note" | "memory" | "approval" | "write";
 
 export interface TimelineItem {
   id: string;
@@ -74,6 +76,8 @@ export interface TimelineItem {
   outcome: string | null;
   /** Shown when the item is expanded. Metadata only, never page text. */
   facts: [string, string][];
+  /** Model calls: how many approved facts the Host sent with the request. */
+  memoryItems?: number;
 }
 
 export interface RunVM {
@@ -151,10 +155,19 @@ export function describeStep(step: AgentStepView): { title: string; detail: stri
       if (d.error) return { title, detail: d.error };
       return { title, detail: running ? null : "waiting for your approval" };
     }
+    case "MemoryProposed": {
+      const title = `Proposed to remember "${clip(d.content, 60)}"`;
+      if (d.error) return { title, detail: d.error };
+      return { title, detail: running ? null : "remembered only if you approve it" };
+    }
   }
 }
 
-function stepItem(step: AgentStepView, agent: string): TimelineItem {
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function stepItem(step: AgentStepView, agent: string, pendingMemory: ReadonlySet<string>): TimelineItem {
   const d = step.detail;
   const status = stepStatus(step);
   const finishedAt = step.finished_at_ms;
@@ -179,8 +192,10 @@ function stepItem(step: AgentStepView, agent: string): TimelineItem {
         tool: d.backup ? "Backup" : null,
         durationMs: d.duration_ms ?? base.durationMs,
         outcome: detail,
+        memoryItems: d.memory_items ?? 0,
         facts: compact([
           ["Model", d.model],
+          ["Approved memory sent", d.memory_items ? `${d.memory_items} ${d.memory_items === 1 ? "fact" : "facts"}` : null],
           ["Try", d.attempt ? String(d.attempt) : null],
           ["Backup model", d.backup ? "yes — the active model stayed unavailable" : null],
           ["First response", seconds(d.first_byte_ms)],
@@ -219,6 +234,30 @@ function stepItem(step: AgentStepView, agent: string): TimelineItem {
           ["Error", d.error],
         ]),
       };
+    case "MemoryProposed": {
+      const waiting = status === "completed" && d.memory_id !== null && pendingMemory.has(d.memory_id);
+      return {
+        ...base,
+        kind: "memory",
+        status: waiting ? "waiting" : status,
+        title: `Propose to remember "${clip(d.content, 48)}"`,
+        model: null,
+        tool: "Memory",
+        outcome:
+          d.error ??
+          (waiting
+            ? "Waiting for your review; nothing is remembered until you approve"
+            : status === "completed"
+              ? "Proposal recorded; its decision is in Memory"
+              : null),
+        facts: compact([
+          ["Fact", d.content],
+          ["Scope", d.scope === "Project" ? "this project" : d.scope === "Personal" ? "personal (every project)" : null],
+          ["Memory item", d.memory_id],
+          ["Error", d.error],
+        ]),
+      };
+    }
   }
 }
 
@@ -318,6 +357,8 @@ export function buildRuns(
   conversation: ConversationView,
   runsById: ReadonlyMap<string, RunView>,
   agent: string,
+  /** Ids of the facts still waiting for the user's decision. */
+  pendingMemory: ReadonlySet<string> = new Set(),
 ): RunVM[] {
   const out: RunVM[] = [];
   let request: string | null = null;
@@ -327,7 +368,7 @@ export function buildRuns(
       continue;
     }
     const note = m.proposed_run_id ? runsById.get(m.proposed_run_id) : proposedRun(m, runsById);
-    const items = markRetries(m.steps.map((s) => stepItem(s, agent)));
+    const items = markRetries(m.steps.map((s) => stepItem(s, agent, pendingMemory)));
     if (note) items.push(...noteItems(note));
     const lastStep = m.steps.length > 0 ? m.steps[m.steps.length - 1] : null;
     const status = replyStatus(m, note);
@@ -380,19 +421,21 @@ export function nextLine(run: RunVM | null): string {
   if (!run) return "Nothing is queued. Give Nexus a task below.";
   const running = run.items.find((i) => i.status === "running");
   if (running?.kind === "model")
-    return "The model is answering. It may read public web pages or propose a note; anything that writes waits for you.";
+    return "The model is answering. It may read public web pages, propose a note or propose a fact to remember; anything that writes or is remembered waits for you.";
   if (running?.kind === "web")
     return "The page text goes back to the model, which then continues the answer.";
   if (running?.kind === "write") return "The Host writes the note, then verifies the file against its SHA-256.";
   if (run.items.some((i) => i.status === "approval_required"))
     return "Waiting for your approval. Nothing is written until you approve.";
+  if (run.items.some((i) => i.kind === "memory" && i.status === "waiting"))
+    return "A proposed fact waits for your review. Nothing is remembered until you approve it.";
   if (run.status === "running") return "The reply is still streaming.";
   return "Nothing is queued. Give Nexus a task below.";
 }
 
 // ---------- Core state and the context nodes around it ----------
 
-export type NodeKind = "model" | "web" | "files" | "approval";
+export type NodeKind = "model" | "web" | "files" | "memory" | "approval";
 
 export interface ContextNode {
   id: NodeKind;
@@ -415,6 +458,7 @@ const NODE_OF: Record<ItemKind, NodeKind> = {
   model: "model",
   web: "web",
   note: "files",
+  memory: "memory",
   write: "files",
   approval: "approval",
 };
@@ -439,6 +483,16 @@ export function deriveCore(input: {
   const nodes: ContextNode[] = [];
   const path: NodeKind[] = [];
   for (const item of items) {
+    // Approved memory is read by the Host before the request it goes with.
+    if (item.memoryItems) {
+      if (path[path.length - 1] !== "memory") path.push("memory");
+      let memory = nodes.find((n) => n.id === "memory");
+      if (!memory) {
+        memory = { id: "memory", label: "Memory", sublabel: null, status: "done" };
+        nodes.push(memory);
+      }
+      memory.sublabel = `${item.memoryItems} ${item.memoryItems === 1 ? "fact" : "facts"} sent`;
+    }
     const id = NODE_OF[item.kind];
     if (path[path.length - 1] !== id) path.push(id);
     let node = nodes.find((n) => n.id === id);
@@ -465,6 +519,9 @@ export function deriveCore(input: {
     } else if (running.kind === "write") {
       state = "EXECUTING";
       label = "Writing the approved note";
+    } else if (running.kind === "memory") {
+      state = "USING_TOOL";
+      label = "Proposing a fact to remember";
     } else {
       state = "THINKING";
       label = running.model ? `Thinking — ${running.model}` : "Thinking";
@@ -496,6 +553,8 @@ function nodeLabel(id: NodeKind, item: TimelineItem): string {
       return "Web read";
     case "files":
       return "Notes";
+    case "memory":
+      return "Memory";
     case "approval":
       return "You";
   }
@@ -509,6 +568,8 @@ function nodeSublabel(id: NodeKind, item: TimelineItem): string | null {
       return item.title.replace(/^(Reading|Read) /, "");
     case "files":
       return item.kind === "write" ? "write" : "proposal";
+    case "memory":
+      return item.status === "waiting" ? "proposal · your review" : "proposal";
     case "approval":
       return "approval";
   }
@@ -532,6 +593,7 @@ function mergeNodeStatus(current: ContextNode["status"], item: ExecStatus): Cont
 
 export interface TaskRow {
   id: string;
+  projectId: ProjectId | null;
   title: string;
   updatedAt: number;
   /** Known only for tasks with recent steps; `null` when not loaded. */
@@ -553,7 +615,7 @@ export function taskRows(
     if (own.some((s) => s.status === "Running")) status = "running";
     else if (pendingByConversation.has(c.conversation_id)) status = "approval_required";
     else if (own.length > 0) status = stepStatus(own[0]) === "failed" ? "failed" : "completed";
-    return { id: c.conversation_id, title: c.title, updatedAt: c.updated_at_ms, status };
+    return { id: c.conversation_id, projectId: c.project_id, title: c.title, updatedAt: c.updated_at_ms, status };
   });
 }
 
@@ -609,7 +671,7 @@ export function modelStats(steps: AgentStepView[]): ModelStats[] {
 
 // ---------- Activity log ----------
 
-export type ActivityTool = "Model" | "Web read" | "Notes" | "System";
+export type ActivityTool = "Model" | "Web read" | "Notes" | "Memory" | "System";
 
 export interface ActivityEntry {
   id: string;
@@ -619,6 +681,8 @@ export interface ActivityEntry {
   detail: string | null;
   taskId: string | null;
   taskTitle: string | null;
+  /** The task's project; `null` for entries tied to no task. */
+  projectId: ProjectId | null;
   tool: ActivityTool;
   model: string | null;
   status: ExecStatus | null;
@@ -643,12 +707,19 @@ const EVENT_TEXT: Record<string, { title: string; tool: ActivityTool; status?: E
   ConnectionThinkingLevelSet: { title: "Thinking level changed", tool: "System" },
   ActiveConnectionChanged: { title: "Active connection changed", tool: "System" },
   PersonaSaved: { title: "Persona saved", tool: "System" },
-  ProjectCreated: { title: "Workspace created", tool: "System" },
+  ProjectCreated: { title: "Project created", tool: "System" },
+  ProjectUpdated: { title: "Project renamed or described", tool: "System" },
+  ActiveProjectChanged: { title: "Active project changed", tool: "System" },
+  MemoryAdded: { title: "Fact added by you", tool: "Memory", status: "completed" },
+  MemoryEdited: { title: "Fact corrected", tool: "Memory" },
+  MemoryDecided: { title: "Proposed fact decided", tool: "Memory" },
+  MemoryDeleted: { title: "Fact deleted", tool: "Memory" },
 };
 
 /** Events whose facts the agent steps already show in more detail, or that
  *  only restate a change already listed. */
 const SKIPPED_EVENTS = new Set([
+  "MemoryProposed",
   "AgentStepStarted",
   "AgentStepFinished",
   "RunStateChanged",
@@ -663,9 +734,10 @@ export function buildActivity(input: {
   conversations: ConversationSummary[];
   agent: string;
 }): ActivityEntry[] {
+  const projectOf = new Map(input.conversations.map((c) => [c.conversation_id as string, c.project_id]));
   const entries: ActivityEntry[] = input.steps.map((s) => {
     const { title, detail } = describeStep(s);
-    const tool: ActivityTool = s.detail.kind === "ModelCall" ? "Model" : s.detail.kind === "Fetch" ? "Web read" : "Notes";
+    const tool: ActivityTool = TOOL_OF_STEP[s.detail.kind];
     return {
       id: s.step_id,
       at: s.started_at_ms,
@@ -674,6 +746,7 @@ export function buildActivity(input: {
       detail,
       taskId: s.conversation_id,
       taskTitle: s.conversation_title,
+      projectId: projectOf.get(s.conversation_id) ?? null,
       tool,
       model: s.detail.kind === "ModelCall" ? s.detail.model : null,
       status: stepStatus(s),
@@ -692,14 +765,16 @@ export function buildActivity(input: {
     const known = EVENT_TEXT[e.kind];
     const run = runOf.get(e.entity_id);
     const conversationTitle = titles.get(e.entity_id) ?? null;
+    const taskId = conversationTitle ? e.entity_id : (run?.origin?.conversation_id ?? null);
     entries.push({
       id: `event-${e.seq}`,
       at: e.created_at_ms,
       source: "host",
       title: known?.title ?? splitWords(e.kind),
       detail: run ? `"${run.title}"` : null,
-      taskId: conversationTitle ? e.entity_id : (run?.origin?.conversation_id ?? null),
+      taskId,
       taskTitle: conversationTitle ?? run?.origin?.conversation_title ?? null,
+      projectId: taskId ? (projectOf.get(taskId) ?? null) : null,
       tool: known?.tool ?? "System",
       model: null,
       status: known?.status ?? null,
@@ -708,6 +783,13 @@ export function buildActivity(input: {
   return entries.sort((a, b) => b.at - a.at);
 }
 
+const TOOL_OF_STEP: Record<AgentStepView["detail"]["kind"], ActivityTool> = {
+  ModelCall: "Model",
+  Fetch: "Web read",
+  NoteProposed: "Notes",
+  MemoryProposed: "Memory",
+};
+
 function splitWords(kind: string): string {
   const words = kind.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
   return words.charAt(0).toUpperCase() + words.slice(1);
@@ -715,7 +797,15 @@ function splitWords(kind: string): string {
 
 // ---------- Event-driven refresh ----------
 
-export type Collection = "runs" | "steps" | "conversations" | "connections" | "persona" | "focus";
+export type Collection =
+  | "runs"
+  | "steps"
+  | "conversations"
+  | "connections"
+  | "persona"
+  | "projects"
+  | "memory"
+  | "focus";
 
 /** What each durable event invalidates. Events are notifications only;
  *  the UI refetches the authoritative state, it never applies them. */
@@ -733,6 +823,15 @@ export function invalidatedBy(events: EventView[]): Set<Collection> {
       out.add("conversations");
       out.add("steps");
       out.add("focus");
+      // A new task changes its project's task count.
+      out.add("projects");
+    } else if (k.startsWith("Memory")) {
+      out.add("memory");
+      out.add("projects");
+      // A pending proposal shown in a task's steps changes with its decision.
+      out.add("focus");
+    } else if (k.startsWith("Project") || k === "ActiveProjectChanged") {
+      out.add("projects");
     } else if (k.startsWith("Connection") || k === "ActiveConnectionChanged") {
       out.add("connections");
     } else if (k === "PersonaSaved") {

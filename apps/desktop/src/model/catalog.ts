@@ -4,7 +4,7 @@
 // `crates/nexus-providers/src/web.rs`. When the Host publishes its own
 // catalog, this module is the adapter to replace.
 
-export type ToolId = "web" | "files" | "browser" | "terminal" | "computer" | "git" | "apis" | "mcp";
+export type ToolId = "web" | "files" | "memory" | "browser" | "terminal" | "computer" | "git" | "apis" | "mcp";
 
 export interface ToolInfo {
   id: ToolId;
@@ -48,6 +48,21 @@ export const TOOLS: ToolInfo[] = [
       "The exact content, size and destination are shown before you approve",
       "Up to 128 KiB per note; an approval expires after 10 minutes",
       "The written file is verified against its SHA-256",
+    ],
+  },
+  {
+    id: "memory",
+    name: "Memory",
+    hostTool: "propose_memory",
+    available: true,
+    permission: "Your approval for every fact",
+    limits: [
+      "Proposes facts only; nothing is remembered until you approve it",
+      "Up to 3 proposals per reply, each 1 to 1,000 characters",
+      "Personal facts go with every request; project facts only with that project's requests",
+      "At most 40 approved facts, about 6,000 characters, per request, newest first",
+      "A fact proposed after reading a web page names that page, so you can tell where it came from",
+      "Facts are data for the model, never instructions; your current message wins",
     ],
   },
   {
@@ -148,10 +163,11 @@ export const PLANNED_AGENTS: PlannedAgent[] = [
 export const ASSISTANT = {
   id: "assistant",
   role: "General assistant",
-  tools: ["web", "files"] as ToolId[],
+  tools: ["web", "files", "memory"] as ToolId[],
   permissions: [
     "Read public web pages (GET), automatically",
     "Propose new notes; each write needs your approval",
+    "Propose facts to remember; each one needs your approval",
     "No file reads, no commands, no PC control",
     "Persona changes tone and style only, never rights",
   ],

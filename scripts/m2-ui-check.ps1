@@ -12,7 +12,9 @@
   model choice, persona version, streamed reply, a proposed note that waits
   on the approval card, stopping a reply, a quota error, reopening the
   window, a task given from the command bar with its steps, the Nexus Core
-  path and the activity log, and removing the connection with its vault
+  path and the activity log, a temporary outage tried again, projects, a
+  fact the agent proposes that is sent only after you approve it, a fact
+  you add, search and delete, and removing the connection with its vault
   entry. Build first:
     cargo build -p nexus-host --locked
     cargo build -p nexus-host --example fake_gemini_server --locked
@@ -322,6 +324,45 @@ try {
   Check (Wait-Text $win "Recovered after a retry." 30) "a 503 is tried again and the task still answers"
   Check ($null -ne (Wait-Like $win "try 2")) "the second try is its own step"
   Check ($null -ne (Wait-Contains $win "Temporary outage")) "the failed try says it was a temporary outage"
+
+  # --- projects: a new one becomes the place for new tasks ---
+  Click-Button $win "Projects"
+  Check (Wait-Text $win 'Active — new tasks go here') "the default project holds the existing tasks and is active"
+  Set-Field $win "Name" "Side project"
+  Click-Button $win "Create project"
+  Check (Wait-Text $win "Side project") "the new project is listed"
+  Check ($null -ne (Find-Named $win "Make active" ([System.Windows.Automation.ControlType]::Button))) "the old project can be made active again"
+  Check ($null -ne (Find-Named $win "Project for new tasks" ([System.Windows.Automation.ControlType]::ComboBox))) "the command bar offers the project for new tasks"
+
+  # --- memory: the agent proposes, you decide, then it is sent ---
+  Set-Field $win "Give Nexus a task" "Remember that I like short answers"
+  Click-Button $win "Run" 20
+  Check (Wait-Text $win "Noted; I will remember it once you approve." 20) "the reply finishes while the fact waits"
+  Check (Wait-Text $win "Remember this? Nothing is kept until you approve") "the live panel asks you to review the fact"
+  Check ($null -ne (Wait-Like $win "Propose to remember")) "the proposal is a step of the run"
+  Click-Button $win "Memory"
+  Check (Wait-Text $win "The user prefers short answers.") "the proposed fact is listed with its source"
+  Check ($null -ne (Wait-Like $win "Remember that I like short answers")) "the fact names the task it came from"
+  Check ($null -ne (Wait-Contains $win "0 facts · 0 characters")) "nothing is sent before you approve"
+  Click-Button $win "Remember"
+  Check ($null -ne (Wait-Contains $win "1 fact · 31 characters")) "the approved fact is in the working context"
+  Check (-not (Wait-Text $win "Remember this? Nothing is kept until you approve" 2)) "nothing is left to review"
+  Click-Button $win "Overview"
+  Set-Field $win "Give Nexus a task" "Answer briefly"
+  Click-Button $win "Run" 20
+  Check (Wait-Text $win "Short answer." 20) "the next task is answered"
+  Check ($null -ne (Wait-Like $win "Memory node, 1 fact sent")) "the core shows the approved fact went with the request"
+
+  # --- a fact you add, found by search, then deleted ---
+  Click-Button $win "Memory"
+  Set-Field $win "Fact" "I write in Romanian."
+  Click-Button $win "Remember this"
+  Check (Wait-Text $win "Remembered.") "a fact you add is remembered at once"
+  Set-Field $win "Search memory" "romanian"
+  Check (Wait-Text $win "1 fact") "search finds it by a word"
+  Click-Button $win "Delete"
+  Click-Button $win "Delete for good"
+  Check (Wait-Text $win "No fact matches this search.") "a deleted fact is gone"
 
   # --- removing the connection removes its key ---
   Click-Button $win "Models"

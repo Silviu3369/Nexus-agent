@@ -193,6 +193,7 @@ closed_enum!(AgentStepKind {
     ModelCall,
     Fetch,
     NoteProposed,
+    MemoryProposed,
 });
 
 closed_enum!(AgentStepStatus {
@@ -206,6 +207,29 @@ impl AgentStepStatus {
     pub fn can_transition_to(self, next: AgentStepStatus) -> bool {
         use AgentStepStatus::*;
         matches!((self, next), (Running, Done | Failed))
+    }
+}
+
+// Whose memory a fact is: about the user across every project, or about
+// one project only.
+closed_enum!(MemoryScope { Personal, Project });
+
+// A fact the agent proposes waits for the user; only Active facts are ever
+// sent to a model. The user's own facts start Active.
+closed_enum!(MemoryStatus {
+    Proposed,
+    Active,
+    Rejected,
+});
+
+closed_enum!(MemorySource { User, Agent });
+
+impl MemoryStatus {
+    /// A proposal is decided once; a decided fact is edited or deleted,
+    /// never re-proposed.
+    pub fn can_transition_to(self, next: MemoryStatus) -> bool {
+        use MemoryStatus::*;
+        matches!((self, next), (Proposed, Active | Rejected))
     }
 }
 

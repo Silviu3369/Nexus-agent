@@ -3,9 +3,9 @@
 
 use nexus_protocol::{
     AgentStepView, BackupModelView, ConnectionId, ConnectionView, ConversationId,
-    ConversationSummary, ConversationView, MessageId, ModelView, PersonaView, ProviderChoice,
-    SaveConnectionRequest, SavePersonaRequest, SendMessageRequest, SendMessageResponse,
-    ThinkingLevel,
+    ConversationSummary, ConversationView, MessageId, ModelView, PersonaView, ProjectId,
+    ProviderChoice, SaveConnectionRequest, SavePersonaRequest, SendMessageRequest,
+    SendMessageResponse, ThinkingLevel,
 };
 
 use crate::host::{BridgeError, HostConnection};
@@ -150,6 +150,7 @@ pub async fn get_conversation(
 pub async fn send_message(
     connection: State<'_>,
     conversation_id: Option<ConversationId>,
+    project_id: Option<ProjectId>,
     idempotency_key: String,
     text: String,
 ) -> Result<SendMessageResponse, BridgeError> {
@@ -157,6 +158,7 @@ pub async fn send_message(
         .call(async |c| {
             c.send_message(SendMessageRequest {
                 conversation_id,
+                project_id,
                 idempotency_key,
                 text,
             })

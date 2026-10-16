@@ -10,7 +10,7 @@ import { useGoTo } from "../shell/nav";
 import { useDerived, useNexus } from "../state/store";
 import { Empty, StatusPill } from "../ui";
 
-const TOOLS: (ActivityTool | "all")[] = ["all", "Model", "Web read", "Notes", "System"];
+const TOOLS: (ActivityTool | "all")[] = ["all", "Model", "Web read", "Notes", "Memory", "System"];
 const STATUSES: (ExecStatus | "all")[] = ["all", "running", "completed", "failed", "approval_required", "cancelled"];
 
 export function ActivityView() {
@@ -18,6 +18,7 @@ export function ActivityView() {
   const { agentName } = useDerived();
   const goTo = useGoTo();
   const [task, setTask] = useState("all");
+  const [project, setProject] = useState("all");
   const [tool, setTool] = useState<ActivityTool | "all">("all");
   const [model, setModel] = useState("all");
   const [status, setStatus] = useState<ExecStatus | "all">("all");
@@ -43,6 +44,7 @@ export function ActivityView() {
 
   const shown = entries.filter(
     (e) =>
+      (project === "all" || e.projectId === project) &&
       (task === "all" || e.taskId === task) &&
       (tool === "all" || e.tool === tool) &&
       (model === "all" || e.model === model) &&
@@ -59,6 +61,17 @@ export function ActivityView() {
             <option value="all">Agent and Host</option>
             <option value="agent">Agent steps</option>
             <option value="host">Host events</option>
+          </select>
+        </label>
+        <label>
+          Project
+          <select value={project} onChange={(e) => setProject(e.currentTarget.value)}>
+            <option value="all">All projects</option>
+            {(d.projects ?? []).map((p) => (
+              <option key={p.project_id} value={p.project_id}>
+                {p.name}
+              </option>
+            ))}
           </select>
         </label>
         <label>
@@ -106,8 +119,8 @@ export function ActivityView() {
         <span className="filters-count">{shown.length} entries</span>
       </div>
       <p className="muted small">
-        Agent: {agentName} (the only one) · Project: default workspace (the only one). Covers the last {d.steps?.length ?? 0} agent
-        steps and {d.events.length} Host events.
+        Agent: {agentName} (the only one). Covers the last {d.steps?.length ?? 0} agent steps and {d.events.length} Host
+        events; entries tied to no task appear only under All projects.
       </p>
       {shown.length === 0 ? (
         <Empty>{entries.length === 0 ? "Nothing has happened yet." : "No entry matches these filters."}</Empty>

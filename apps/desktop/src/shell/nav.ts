@@ -17,6 +17,8 @@ export interface NavTarget {
   section: Section;
   /** Tasks: the task to open; `null` starts a new one. */
   taskId?: string | null;
+  /** Tasks and Memory: start filtered to this project. */
+  projectId?: string;
   tool?: ToolId;
 }
 

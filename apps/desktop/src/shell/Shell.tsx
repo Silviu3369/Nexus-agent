@@ -105,13 +105,19 @@ function SectionView({ target }: { target: NavTarget }) {
     case "overview":
       return <Overview />;
     case "tasks":
-      return <TasksView key={String(target.taskId)} initialTaskId={target.taskId} />;
+      return (
+        <TasksView
+          key={`${String(target.taskId)}:${target.projectId ?? ""}`}
+          initialTaskId={target.taskId}
+          initialProjectId={target.projectId}
+        />
+      );
     case "agents":
       return <AgentsView />;
     case "models":
       return <ModelsView />;
     case "memory":
-      return <MemoryView />;
+      return <MemoryView key={target.projectId ?? "all"} initialProjectId={target.projectId} />;
     case "tools":
       return <ToolsView key={target.tool ?? "web"} initialTool={target.tool ?? "web"} />;
     case "automations":
@@ -138,8 +144,9 @@ function NavRail({
   onGo: (s: Section) => void;
   host: Connected;
 }) {
-  const { system, steps } = useNexus();
+  const { system, steps, proposals } = useNexus();
   const { pending } = useDerived();
+  const review = proposals?.length ?? 0;
   const working = steps?.some((s) => s.status === "Running") ?? false;
   return (
     <aside className="rail" aria-label="Navigation">
@@ -166,6 +173,10 @@ function NavRail({
               </span>
             ) : s.id === "tasks" && working ? (
               <span className="rail-badge live" aria-label="working" />
+            ) : s.id === "memory" && review > 0 ? (
+              <span className="rail-badge review" aria-label={`${review} ${review === 1 ? "fact" : "facts"} to review`}>
+                {review}
+              </span>
             ) : null;
           return (
             <button

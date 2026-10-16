@@ -1,6 +1,7 @@
 mod bindings;
 mod chat;
 mod host;
+mod memory;
 mod runs;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -36,6 +37,15 @@ pub fn run() {
             chat::get_conversation,
             chat::send_message,
             chat::cancel_reply,
+            memory::list_projects,
+            memory::save_project,
+            memory::set_active_project,
+            memory::list_memory,
+            memory::add_memory,
+            memory::edit_memory,
+            memory::decide_memory,
+            memory::delete_memory,
+            memory::memory_context,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

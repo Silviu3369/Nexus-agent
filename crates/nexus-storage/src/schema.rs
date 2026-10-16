@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::StorageError;
 
-pub const SUPPORTED_VERSION: i64 = 5;
+pub const SUPPORTED_VERSION: i64 = 6;
 
 /// Version 1: everything M1 persists. State columns are closed lists that a
 /// test keeps identical to the `nexus-core` enums. Times are UTC unix ms.
@@ -236,6 +236,86 @@ DROP TABLE provider_connections;
 ALTER TABLE provider_connections_v5 RENAME TO provider_connections;
 "#;
 
+/// Version 6: projects as the unit of work, and memory. Every existing
+/// conversation joins the first (default) project. Memory facts carry their
+/// scope (about the user, or one project), status and provenance; the
+/// full-text index is derived from them (triggers keep it in step, and
+/// `INSERT INTO memory_fts(memory_fts) VALUES ('rebuild')` recreates it) and
+/// ignores diacritics, so "nota" finds "notă". Agent steps gain the
+/// MemoryProposed kind: a closed CHECK list, so that table is rebuilt (no
+/// other table refers to it).
+const V6: &str = r#"
+ALTER TABLE projects
+    ADD COLUMN description TEXT NOT NULL DEFAULT '' CHECK (length(description) <= 1000);
+
+ALTER TABLE conversations ADD COLUMN project_id TEXT REFERENCES projects (id);
+UPDATE conversations
+SET project_id = (SELECT id FROM projects ORDER BY created_at_ms, id LIMIT 1)
+WHERE project_id IS NULL;
+CREATE INDEX conversations_by_project ON conversations (project_id, updated_at_ms);
+
+CREATE TABLE agent_steps_v6 (
+    id             TEXT    PRIMARY KEY,
+    message_id     TEXT    NOT NULL REFERENCES messages (id),
+    seq            INTEGER NOT NULL CHECK (seq >= 1),
+    kind           TEXT    NOT NULL CHECK (kind IN ('ModelCall', 'Fetch', 'NoteProposed', 'MemoryProposed')),
+    status         TEXT    NOT NULL CHECK (status IN ('Running', 'Done', 'Failed')),
+    detail_json    TEXT    NOT NULL CHECK (json_valid(detail_json)),
+    started_at_ms  INTEGER NOT NULL,
+    finished_at_ms INTEGER,
+    CHECK ((status = 'Running') = (finished_at_ms IS NULL)),
+    UNIQUE (message_id, seq)
+) STRICT;
+INSERT INTO agent_steps_v6
+    (id, message_id, seq, kind, status, detail_json, started_at_ms, finished_at_ms)
+SELECT id, message_id, seq, kind, status, detail_json, started_at_ms, finished_at_ms
+FROM agent_steps;
+DROP TABLE agent_steps;
+ALTER TABLE agent_steps_v6 RENAME TO agent_steps;
+CREATE INDEX agent_steps_by_start ON agent_steps (started_at_ms);
+CREATE INDEX agent_steps_by_status ON agent_steps (status);
+
+CREATE TABLE memory_items (
+    id              TEXT    PRIMARY KEY,
+    scope           TEXT    NOT NULL CHECK (scope IN ('Personal', 'Project')),
+    project_id      TEXT    REFERENCES projects (id),
+    content         TEXT    NOT NULL CHECK (length(content) BETWEEN 1 AND 1000),
+    status          TEXT    NOT NULL CHECK (status IN ('Proposed', 'Active', 'Rejected')),
+    source          TEXT    NOT NULL CHECK (source IN ('User', 'Agent')),
+    edited_by_user  INTEGER NOT NULL DEFAULT 0 CHECK (edited_by_user IN (0, 1)),
+    conversation_id TEXT    REFERENCES conversations (id),
+    message_id      TEXT    REFERENCES messages (id),
+    -- Hosts whose pages the agent had read in that reply before proposing.
+    influences_json TEXT    NOT NULL DEFAULT '[]' CHECK (json_valid(influences_json)),
+    revision        INTEGER NOT NULL CHECK (revision >= 1),
+    created_at_ms   INTEGER NOT NULL,
+    updated_at_ms   INTEGER NOT NULL,
+    decided_at_ms   INTEGER,
+    -- A project fact names its project; a personal one names none.
+    CHECK ((scope = 'Project') = (project_id IS NOT NULL)),
+    -- Only the agent proposes; the user's own facts start active.
+    CHECK (source = 'Agent' OR status = 'Active')
+) STRICT;
+CREATE INDEX memory_items_by_scope ON memory_items (status, scope, project_id);
+
+CREATE VIRTUAL TABLE memory_fts USING fts5(
+    content,
+    content = 'memory_items',
+    content_rowid = 'rowid',
+    tokenize = 'unicode61 remove_diacritics 2'
+);
+CREATE TRIGGER memory_items_ai AFTER INSERT ON memory_items BEGIN
+    INSERT INTO memory_fts (rowid, content) VALUES (new.rowid, new.content);
+END;
+CREATE TRIGGER memory_items_ad AFTER DELETE ON memory_items BEGIN
+    INSERT INTO memory_fts (memory_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+END;
+CREATE TRIGGER memory_items_au AFTER UPDATE OF content ON memory_items BEGIN
+    INSERT INTO memory_fts (memory_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+    INSERT INTO memory_fts (rowid, content) VALUES (new.rowid, new.content);
+END;
+"#;
+
 struct Migration {
     sql: &'static str,
     /// Rebuilds a table other tables refer to (see [`V5`]).
@@ -262,6 +342,10 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         sql: V5,
         rebuilds_parent_table: true,
+    },
+    Migration {
+        sql: V6,
+        rebuilds_parent_table: false,
     },
 ];
 

@@ -175,6 +175,7 @@ async fn ai01_reply_streams_from_the_selected_model_with_persona_and_history() {
     let conflict = client
         .send_message(SendMessageRequest {
             conversation_id: Some(first.conversation_id),
+            project_id: None,
             idempotency_key: "m3".to_string(),
             text: "alt text".to_string(),
         })
@@ -276,6 +277,7 @@ async fn ai03_without_a_chosen_connection_and_model_nothing_is_sent_and_there_is
     let refused = client
         .send_message(SendMessageRequest {
             conversation_id: None,
+            project_id: None,
             idempotency_key: "a".to_string(),
             text: "Salut".to_string(),
         })
@@ -292,6 +294,7 @@ async fn ai03_without_a_chosen_connection_and_model_nothing_is_sent_and_there_is
     let refused = client
         .send_message(SendMessageRequest {
             conversation_id: None,
+            project_id: None,
             idempotency_key: "b".to_string(),
             text: "Salut".to_string(),
         })
@@ -309,6 +312,7 @@ async fn ai03_without_a_chosen_connection_and_model_nothing_is_sent_and_there_is
     let refused = client
         .send_message(SendMessageRequest {
             conversation_id: None,
+            project_id: None,
             idempotency_key: "c".to_string(),
             text: "Salut".to_string(),
         })
@@ -636,6 +640,7 @@ async fn every_agent_step_is_recorded_and_shown_in_the_reply_and_the_activity() 
             AgentStepDetail::ModelCall { .. } => "model",
             AgentStepDetail::Fetch { .. } => "fetch",
             AgentStepDetail::NoteProposed { .. } => "note",
+            AgentStepDetail::MemoryProposed { .. } => "memory",
         })
         .collect();
     assert_eq!(kinds, ["model", "fetch", "model", "note"]);
@@ -874,6 +879,7 @@ async fn a_restored_profile_does_not_contact_the_provider() {
     let refused = client
         .send_message(SendMessageRequest {
             conversation_id: None,
+            project_id: None,
             idempotency_key: "r".to_string(),
             text: "Salut".to_string(),
         })

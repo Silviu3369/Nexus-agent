@@ -326,6 +326,85 @@ impl NexusClient {
         Ok(self.client.create_backup(context::current()).await??)
     }
 
+    pub async fn projects(&self) -> Result<Vec<nexus_protocol::ProjectView>, CallError> {
+        Ok(self.client.list_projects(context::current()).await??)
+    }
+
+    pub async fn save_project(
+        &self,
+        request: nexus_protocol::SaveProjectRequest,
+    ) -> Result<nexus_protocol::ProjectView, CallError> {
+        Ok(self
+            .client
+            .save_project(context::current(), request)
+            .await??)
+    }
+
+    pub async fn set_active_project(
+        &self,
+        id: nexus_protocol::ProjectId,
+    ) -> Result<nexus_protocol::ProjectView, CallError> {
+        Ok(self
+            .client
+            .set_active_project(context::current(), id)
+            .await??)
+    }
+
+    pub async fn memory(
+        &self,
+        query: nexus_protocol::MemoryQuery,
+    ) -> Result<Vec<nexus_protocol::MemoryItemView>, CallError> {
+        Ok(self.client.list_memory(context::current(), query).await??)
+    }
+
+    pub async fn add_memory(
+        &self,
+        request: nexus_protocol::AddMemoryRequest,
+    ) -> Result<nexus_protocol::MemoryItemView, CallError> {
+        Ok(self
+            .client
+            .add_memory(context::current(), request)
+            .await??)
+    }
+
+    pub async fn edit_memory(
+        &self,
+        id: nexus_protocol::MemoryId,
+        revision: i64,
+        content: String,
+    ) -> Result<nexus_protocol::MemoryItemView, CallError> {
+        Ok(self
+            .client
+            .edit_memory(context::current(), id, revision, content)
+            .await??)
+    }
+
+    pub async fn decide_memory(
+        &self,
+        id: nexus_protocol::MemoryId,
+        revision: i64,
+        approve: bool,
+    ) -> Result<nexus_protocol::MemoryItemView, CallError> {
+        Ok(self
+            .client
+            .decide_memory(context::current(), id, revision, approve)
+            .await??)
+    }
+
+    pub async fn delete_memory(&self, id: nexus_protocol::MemoryId) -> Result<(), CallError> {
+        Ok(self.client.delete_memory(context::current(), id).await??)
+    }
+
+    pub async fn memory_context(
+        &self,
+        project: nexus_protocol::ProjectId,
+    ) -> Result<nexus_protocol::MemoryContextView, CallError> {
+        Ok(self
+            .client
+            .memory_context(context::current(), project)
+            .await??)
+    }
+
     pub async fn system_status(&self) -> Result<nexus_protocol::SystemStatusView, CallError> {
         Ok(self.client.get_system_status(context::current()).await??)
     }

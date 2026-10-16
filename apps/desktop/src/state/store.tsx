@@ -15,7 +15,9 @@ import type {
   ConversationView,
   EventView,
   HostStatus,
+  MemoryItemView,
   PersonaView,
+  ProjectView,
   RunView,
   SystemStatusView,
 } from "@nexus/contracts";
@@ -29,6 +31,8 @@ const HOST_CHECK_MS = 3000;
 const SYSTEM_CHECK_MS = 3000;
 /** Events kept for the activity log (the Host pages them 200 at a time). */
 const EVENT_HISTORY = 400;
+/** Proposed facts read for review; the Memory view pages the rest. */
+const PROPOSALS_SHOWN = 50;
 
 export interface NexusData {
   host: HostStatus | null;
@@ -39,6 +43,11 @@ export interface NexusData {
   steps: AgentStepView[] | null;
   conversations: ConversationSummary[] | null;
   persona: PersonaView | null;
+  projects: ProjectView[] | null;
+  /** Facts the agent proposed that wait for the user's decision. */
+  proposals: MemoryItemView[] | null;
+  /** Bumped whenever memory changes, so views with their own queries reread. */
+  memoryRev: number;
   events: EventView[];
   /** The task the live panel follows. */
   focusId: ConversationId | null;
@@ -56,6 +65,9 @@ const EMPTY: NexusData = {
   steps: null,
   conversations: null,
   persona: null,
+  projects: null,
+  proposals: null,
+  memoryRev: 0,
   events: [],
   focusId: null,
   focus: null,
@@ -107,12 +119,14 @@ export function NexusProvider({ children }: { children: ReactNode }) {
 
   const fetchCollections = useCallback(
     async (what: Set<Collection>) => {
-      const [runs, steps, conversations, connections, persona] = await Promise.all([
+      const [runs, steps, conversations, connections, persona, projects, proposals] = await Promise.all([
         what.has("runs") ? api.listRuns().then((s) => s.runs) : Promise.resolve(undefined),
         what.has("steps") ? api.getActivity() : Promise.resolve(undefined),
         what.has("conversations") ? api.listConversations() : Promise.resolve(undefined),
         what.has("connections") ? api.listConnections() : Promise.resolve(undefined),
         what.has("persona") ? api.getPersona() : Promise.resolve(undefined),
+        what.has("projects") ? api.listProjects() : Promise.resolve(undefined),
+        what.has("memory") ? listProposals() : Promise.resolve(undefined),
       ]);
       const current = latest.current;
       const nextSteps = steps ?? current.steps ?? [];
@@ -125,6 +139,9 @@ export function NexusProvider({ children }: { children: ReactNode }) {
         conversations: conversations ?? d.conversations,
         connections: connections ?? d.connections,
         persona: persona ?? d.persona,
+        projects: projects ?? d.projects,
+        proposals: proposals ?? d.proposals,
+        memoryRev: proposals ? d.memoryRev + 1 : d.memoryRev,
         focusId,
         focus: focusId === d.focusId ? d.focus : null,
         syncError: null,
@@ -135,12 +152,14 @@ export function NexusProvider({ children }: { children: ReactNode }) {
   );
 
   const bootstrap = useCallback(async () => {
-    const [snapshot, steps, conversations, connections, persona] = await Promise.all([
+    const [snapshot, steps, conversations, connections, persona, projects, proposals] = await Promise.all([
       api.listRuns(),
       api.getActivity(),
       api.listConversations(),
       api.listConnections(),
       api.getPersona(),
+      api.listProjects(),
+      listProposals(),
     ]);
     // Everything after the snapshot's watermark arrives through the events.
     const history = await api.getEvents(Math.max(0, snapshot.watermark - 200));
@@ -153,6 +172,9 @@ export function NexusProvider({ children }: { children: ReactNode }) {
       conversations,
       connections,
       persona,
+      projects,
+      proposals,
+      memoryRev: d.memoryRev + 1,
       events: history.events.filter((e) => e.seq <= snapshot.watermark),
       focusId,
       focus: focusId === d.focusId ? d.focus : null,
@@ -256,7 +278,9 @@ export function NexusProvider({ children }: { children: ReactNode }) {
     () => ({
       refresh: async (what) => {
         try {
-          await fetchCollections(new Set(what ?? ["runs", "steps", "conversations", "connections", "focus"]));
+          await fetchCollections(
+            new Set(what ?? ["runs", "steps", "conversations", "connections", "projects", "memory", "focus"]),
+          );
         } catch (err) {
           patch({ syncError: describeError(err) });
         }
@@ -279,6 +303,10 @@ export function NexusProvider({ children }: { children: ReactNode }) {
   );
 }
 
+function listProposals(): Promise<MemoryItemView[]> {
+  return api.listMemory({ status: "Proposed", limit: PROPOSALS_SHOWN });
+}
+
 export function useNexus(): NexusData {
   return useContext(DataContext);
 }
@@ -296,14 +324,29 @@ export function useDerived() {
     const runs = d.runs ?? [];
     const runsById = new Map(runs.map((r) => [r.run_id as string, r]));
     const agentName = d.persona?.name ?? "Assistant";
-    const focusRuns: RunVM[] = d.focus ? buildRuns(d.focus, runsById, agentName) : [];
+    const pendingMemory = new Set<string>((d.proposals ?? []).map((m) => m.memory_id));
+    const focusRuns: RunVM[] = d.focus ? buildRuns(d.focus, runsById, agentName, pendingMemory) : [];
     const focusRun = focusRuns.length > 0 ? focusRuns[focusRuns.length - 1] : null;
     const pending = runs.filter((r) => r.status === "AwaitingApproval");
     const active = d.connections?.find((c) => c.active) ?? null;
     const ready = active !== null && active.model !== null && active.has_key;
     const runningStep = d.steps?.find((s) => s.status === "Running") ?? null;
-    return { runsById, agentName, focusRuns, focusRun, pending, active, ready, runningStep };
-  }, [d.runs, d.persona, d.focus, d.connections, d.steps]);
+    const activeProject = d.projects?.find((p) => p.active) ?? null;
+    const projectsById = new Map((d.projects ?? []).map((p) => [p.project_id as string, p]));
+    return {
+      runsById,
+      agentName,
+      focusRuns,
+      focusRun,
+      pending,
+      pendingMemory,
+      active,
+      ready,
+      runningStep,
+      activeProject,
+      projectsById,
+    };
+  }, [d.runs, d.persona, d.focus, d.connections, d.steps, d.proposals, d.projects]);
 }
 
 /** A clock for time-based states (success pulse, expiry countdowns). */

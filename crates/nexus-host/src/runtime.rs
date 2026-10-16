@@ -27,6 +27,7 @@ use crate::tools::markdown_artifact::{self as note_tool, ArtifactPaths, NoteCont
 use crate::vault::SecretVault;
 
 mod chat;
+mod memory;
 
 pub const DEFAULT_APPROVAL_TTL: Duration = Duration::from_secs(10 * 60);
 const IDLE_TICK: Duration = Duration::from_secs(1);

@@ -6,12 +6,13 @@ use std::time::Instant;
 use futures::StreamExt;
 use nexus_protocol::service::NexusService;
 use nexus_protocol::{
-    AgentStepView, ArtifactId, BackupModelView, BackupSummary, ConnectionId, ConnectionView,
-    ConversationId, ConversationSummary, ConversationView, DecideApprovalRequest, ErrorCode,
-    EventsPage, GetHealthResponse, HandshakeRequest, HandshakeResponse, HealthStatus, MessageId,
-    ModelView, NexusError, PROTOCOL_VERSION, PersonaView, RunId, RunView, SaveConnectionRequest,
-    SavePersonaRequest, SendMessageRequest, SendMessageResponse, Snapshot, SubmitNoteRequest,
-    SubmitNoteResponse, SystemStatusView, ThinkingLevel,
+    AddMemoryRequest, AgentStepView, ArtifactId, BackupModelView, BackupSummary, ConnectionId,
+    ConnectionView, ConversationId, ConversationSummary, ConversationView, DecideApprovalRequest,
+    ErrorCode, EventsPage, GetHealthResponse, HandshakeRequest, HandshakeResponse, HealthStatus,
+    MemoryContextView, MemoryId, MemoryItemView, MemoryQuery, MessageId, ModelView, NexusError,
+    PROTOCOL_VERSION, PersonaView, ProjectId, ProjectView, RunId, RunView, SaveConnectionRequest,
+    SavePersonaRequest, SaveProjectRequest, SendMessageRequest, SendMessageResponse, Snapshot,
+    SubmitNoteRequest, SubmitNoteResponse, SystemStatusView, ThinkingLevel,
 };
 use tarpc::context::Context;
 use tarpc::server::{BaseChannel, Channel};
@@ -306,6 +307,85 @@ impl NexusService for HostServer {
     ) -> Result<Vec<AgentStepView>, NexusError> {
         self.require_session()?;
         self.runtime.get_activity(limit).await
+    }
+
+    async fn list_projects(self, _ctx: Context) -> Result<Vec<ProjectView>, NexusError> {
+        self.require_session()?;
+        self.runtime.list_projects().await
+    }
+
+    async fn save_project(
+        self,
+        _ctx: Context,
+        request: SaveProjectRequest,
+    ) -> Result<ProjectView, NexusError> {
+        self.require_session()?;
+        self.runtime.save_project(request).await
+    }
+
+    async fn set_active_project(
+        self,
+        _ctx: Context,
+        project_id: ProjectId,
+    ) -> Result<ProjectView, NexusError> {
+        self.require_session()?;
+        self.runtime.set_active_project(project_id).await
+    }
+
+    async fn list_memory(
+        self,
+        _ctx: Context,
+        query: MemoryQuery,
+    ) -> Result<Vec<MemoryItemView>, NexusError> {
+        self.require_session()?;
+        self.runtime.list_memory(query).await
+    }
+
+    async fn add_memory(
+        self,
+        _ctx: Context,
+        request: AddMemoryRequest,
+    ) -> Result<MemoryItemView, NexusError> {
+        self.require_session()?;
+        self.runtime.add_memory(request).await
+    }
+
+    async fn edit_memory(
+        self,
+        _ctx: Context,
+        memory_id: MemoryId,
+        revision: i64,
+        content: String,
+    ) -> Result<MemoryItemView, NexusError> {
+        self.require_session()?;
+        self.runtime.edit_memory(memory_id, revision, content).await
+    }
+
+    async fn decide_memory(
+        self,
+        _ctx: Context,
+        memory_id: MemoryId,
+        revision: i64,
+        approve: bool,
+    ) -> Result<MemoryItemView, NexusError> {
+        self.require_session()?;
+        self.runtime
+            .decide_memory(memory_id, revision, approve)
+            .await
+    }
+
+    async fn delete_memory(self, _ctx: Context, memory_id: MemoryId) -> Result<(), NexusError> {
+        self.require_session()?;
+        self.runtime.delete_memory(memory_id).await
+    }
+
+    async fn memory_context(
+        self,
+        _ctx: Context,
+        project_id: ProjectId,
+    ) -> Result<MemoryContextView, NexusError> {
+        self.require_session()?;
+        self.runtime.memory_context(project_id).await
     }
 
     async fn get_system_status(self, _ctx: Context) -> Result<SystemStatusView, NexusError> {

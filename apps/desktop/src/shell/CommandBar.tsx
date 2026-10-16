@@ -11,8 +11,8 @@ import { MicIcon, PaperclipIcon, PauseIcon, SendIcon, StopIcon } from "../icons"
 import { useGoTo } from "./nav";
 
 export function CommandBar() {
-  const { composing, connections } = useNexus();
-  const { focusRun, pending, ready } = useDerived();
+  const { composing, connections, projects } = useNexus();
+  const { focusRun, pending, ready, activeProject } = useDerived();
   const { follow, refresh, setComposing } = useNexusActions();
   const goTo = useGoTo();
   const [text, setText] = useState("");
@@ -33,7 +33,7 @@ export function CommandBar() {
     setBusy(true);
     setError(null);
     try {
-      const sent = await api.sendMessage(null, intentKey.current, text);
+      const sent = await api.sendMessage(null, activeProject?.project_id ?? null, intentKey.current, text);
       intentKey.current = crypto.randomUUID();
       setText("");
       setComposing(false);
@@ -43,6 +43,16 @@ export function CommandBar() {
       setError(describeError(err));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function chooseProject(id: string) {
+    setError(null);
+    try {
+      await api.setActiveProject(id);
+      await refresh(["projects"]);
+    } catch (err) {
+      setError(describeError(err));
     }
   }
 
@@ -71,6 +81,21 @@ export function CommandBar() {
         <span className="command-state-text">{stateText}</span>
       </div>
       <div className="command-input">
+        {projects && projects.length > 1 && (
+          <select
+            className="command-project"
+            aria-label="Project for new tasks"
+            title="New tasks go to this project"
+            value={activeProject?.project_id ?? ""}
+            onChange={(e) => void chooseProject(e.currentTarget.value)}
+          >
+            {projects.map((p) => (
+              <option key={p.project_id} value={p.project_id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        )}
         <input
           aria-label="Give Nexus a task"
           placeholder={ready ? "Give Nexus a task…" : "Choose an AI connection and model first"}

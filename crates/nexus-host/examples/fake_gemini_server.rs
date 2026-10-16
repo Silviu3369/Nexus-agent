@@ -45,6 +45,16 @@ async fn main() {
         r#"{"error":{"code":503,"message":"This model is currently experiencing high demand.","status":"UNAVAILABLE"}}"#,
     ));
     fake.push(Reply::text(&["Recovered after a retry."]));
+    // Memory: the model proposes a fact, then answers; after the user
+    // approves it, a later task is sent with it.
+    fake.push(Reply::calls(&[(
+        "propose_memory",
+        serde_json::json!({"content": "The user prefers short answers.", "scope": "personal"}),
+    )]));
+    fake.push(Reply::text(&[
+        "Noted; I will remember it once you approve.",
+    ]));
+    fake.push(Reply::text(&["Short answer."]));
     println!("{}", fake.base_url);
     std::io::stdout().flush().expect("stdout");
     std::future::pending::<()>().await;

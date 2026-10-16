@@ -79,6 +79,7 @@ const SLOT: Record<string, [number, number]> = {
   web: [1, 0.42],
   files: [1, -0.55],
   approval: [-1, -0.55],
+  memory: [-1.05, -0.06],
 };
 
 function mulberry32(seed: number) {

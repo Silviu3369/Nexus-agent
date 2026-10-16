@@ -22,6 +22,7 @@ export function Overview() {
     if (id === "model") goTo({ section: "models" });
     else if (id === "web") goTo({ section: "tools", tool: "web" });
     else if (id === "files") goTo({ section: "tools", tool: "files" });
+    else if (id === "memory") goTo({ section: "memory" });
     else goTo({ section: "tasks", taskId: focusRun?.taskId ?? null });
   }
 
@@ -42,7 +43,7 @@ export function Overview() {
         <CoreStage view={core} onNode={openNode} />
       </div>
       <div className="overview-strip">
-        <RecentSummary steps={d.steps} pending={pending.length} now={now} />
+        <RecentSummary steps={d.steps} pending={pending.length + (d.proposals?.length ?? 0)} now={now} />
         <RecentTasks now={now} />
         <SystemPanel />
       </div>
@@ -56,6 +57,7 @@ function RecentSummary({ steps, pending, now }: { steps: AgentStepView[] | null;
     const calls = recent.filter((x) => x.detail.kind === "ModelCall");
     const reads = recent.filter((x) => x.detail.kind === "Fetch");
     const notes = recent.filter((x) => x.detail.kind === "NoteProposed");
+    const facts = recent.filter((x) => x.detail.kind === "MemoryProposed");
     const modelMs = calls.reduce((sum, x) => sum + (x.detail.kind === "ModelCall" ? (x.detail.duration_ms ?? 0) : 0), 0);
     return {
       any: recent.length > 0,
@@ -66,6 +68,7 @@ function RecentSummary({ steps, pending, now }: { steps: AgentStepView[] | null;
       reads: reads.length,
       readFails: reads.filter((x) => stepStatus(x) === "failed").length,
       notes: notes.length,
+      facts: facts.length,
     };
   }, [steps, now]);
   return (
@@ -96,6 +99,10 @@ function RecentSummary({ steps, pending, now }: { steps: AgentStepView[] | null;
           <li>
             <span>Notes proposed</span>
             <b>{s.notes}</b>
+          </li>
+          <li>
+            <span>Facts proposed</span>
+            <b>{s.facts}</b>
           </li>
           <li>
             <span>Waiting for you</span>

@@ -29,6 +29,7 @@ pub async fn send(
     client
         .send_message(SendMessageRequest {
             conversation_id: conversation,
+            project_id: None,
             idempotency_key: key.to_string(),
             text: text.to_string(),
         })

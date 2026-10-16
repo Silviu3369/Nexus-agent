@@ -3,7 +3,7 @@
 //! like the M1 repository.
 
 use nexus_core::{MessageRole, MessageStatus, ThinkingLevel};
-use nexus_protocol::{ConnectionId, ConversationId, MessageId, RunId};
+use nexus_protocol::{ConnectionId, ConversationId, MessageId, ProjectId, RunId};
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::json;
 
@@ -40,6 +40,7 @@ pub struct ConversationRow {
     pub title: String,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+    pub project_id: Option<ProjectId>,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +76,9 @@ pub struct Exchange {
 #[derive(Debug, Clone)]
 pub struct NewExchange {
     pub conversation_id: Option<ConversationId>,
+    /// The project a new conversation joins (`None`: the default, first
+    /// project); ignored for a follow-up.
+    pub project_id: Option<ProjectId>,
     pub idempotency_key: String,
     pub text: String,
     pub connection_id: ConnectionId,
@@ -474,10 +478,23 @@ impl Store {
                 }
                 None => {
                     let id = ConversationId::new();
+                    let project = match new.project_id {
+                        Some(project) => project.to_string(),
+                        None => tx
+                            .query_row("SELECT id FROM projects ORDER BY created_at_ms, id LIMIT 1", [], |r| r.get(0))
+                            .optional()?
+                            .ok_or(StorageError::NotFound("project"))?,
+                    };
                     let title: String = new.text.trim().chars().take(60).collect();
                     tx.execute(
-                        "INSERT INTO conversations (id, title, created_at_ms, updated_at_ms) VALUES (?1, ?2, ?3, ?3)",
-                        params![id.to_string(), if title.is_empty() { "Conversație".to_string() } else { title }, now],
+                        "INSERT INTO conversations (id, title, created_at_ms, updated_at_ms, project_id)
+                         VALUES (?1, ?2, ?3, ?3, ?4)",
+                        params![
+                            id.to_string(),
+                            if title.is_empty() { "Untitled task".to_string() } else { title },
+                            now,
+                            project
+                        ],
                     )?;
                     id
                 }
@@ -596,16 +613,13 @@ impl Store {
     pub async fn conversations(&self, limit: u32) -> Result<Vec<ConversationRow>, StorageError> {
         self.call(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, title, created_at_ms, updated_at_ms FROM conversations ORDER BY updated_at_ms DESC, id LIMIT ?1",
+                "SELECT id, title, created_at_ms, updated_at_ms, project_id FROM conversations
+                 ORDER BY updated_at_ms DESC, id LIMIT ?1",
             )?;
             let rows = stmt
-                .query_map([limit], |r| Ok((r.get::<_, String>(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+                .query_map([limit], raw_conversation)?
                 .collect::<Result<Vec<_>, _>>()?;
-            rows.into_iter()
-                .map(|(id, title, created_at_ms, updated_at_ms)| {
-                    Ok(ConversationRow { id: ConversationId(parse_uuid(&id)?), title, created_at_ms, updated_at_ms })
-                })
-                .collect()
+            rows.into_iter().map(conversation_from_raw).collect()
         })
         .await
     }
@@ -620,9 +634,9 @@ impl Store {
             let tx = conn.transaction()?;
             let conversation = tx
                 .query_row(
-                    "SELECT id, title, created_at_ms, updated_at_ms FROM conversations WHERE id = ?1",
+                    "SELECT id, title, created_at_ms, updated_at_ms, project_id FROM conversations WHERE id = ?1",
                     [conversation_id.to_string()],
-                    |r| Ok((r.get::<_, String>(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                    raw_conversation,
                 )
                 .optional()?
                 .ok_or(StorageError::NotFound("conversation"))?;
@@ -638,15 +652,7 @@ impl Store {
                 .iter()
                 .map(|id| load_message(&tx, MessageId(parse_uuid(id)?)))
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok((
-                ConversationRow {
-                    id: ConversationId(parse_uuid(&conversation.0)?),
-                    title: conversation.1,
-                    created_at_ms: conversation.2,
-                    updated_at_ms: conversation.3,
-                },
-                messages,
-            ))
+            Ok((conversation_from_raw(conversation)?, messages))
         })
         .await
     }
@@ -802,4 +808,25 @@ fn load_message_at(
     .optional()?
     .map(into_message)
     .transpose()
+}
+
+type RawConversation = (String, String, i64, i64, Option<String>);
+
+fn raw_conversation(r: &rusqlite::Row<'_>) -> rusqlite::Result<RawConversation> {
+    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+}
+
+fn conversation_from_raw(raw: RawConversation) -> Result<ConversationRow, StorageError> {
+    let (id, title, created_at_ms, updated_at_ms, project_id) = raw;
+    Ok(ConversationRow {
+        id: ConversationId(parse_uuid(&id)?),
+        title,
+        created_at_ms,
+        updated_at_ms,
+        project_id: project_id
+            .as_deref()
+            .map(parse_uuid)
+            .transpose()?
+            .map(ProjectId),
+    })
 }

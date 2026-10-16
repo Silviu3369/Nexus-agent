@@ -27,9 +27,11 @@ fn env() -> Env {
     }
 }
 
-/// A connection plus persona v1 (messages reference both by foreign key).
+/// A connection plus persona v1 and the default project (messages and
+/// conversations reference them by foreign key).
 async fn connection(env: &Env) -> ConnectionId {
     env.store.persona(0).await.unwrap();
+    env.store.ensure_default_project(0).await.unwrap();
     env.store
         .save_connection(
             None,
@@ -44,6 +46,20 @@ async fn connection(env: &Env) -> ConnectionId {
         .id
 }
 
+/// Puts a file back as it was before schema v6 (no memory, no project on
+/// conversations, no project description), keeping every row.
+const UNDO_V6: &str = "PRAGMA foreign_keys = OFF;
+    DROP TRIGGER memory_items_ai; DROP TRIGGER memory_items_ad; DROP TRIGGER memory_items_au;
+    DROP TABLE memory_fts; DROP TABLE memory_items;
+    DROP INDEX conversations_by_project;
+    CREATE TABLE conversations_v5 (id TEXT PRIMARY KEY, title TEXT NOT NULL,
+        created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL) STRICT;
+    INSERT INTO conversations_v5 SELECT id, title, created_at_ms, updated_at_ms FROM conversations;
+    DROP TABLE conversations;
+    ALTER TABLE conversations_v5 RENAME TO conversations;
+    ALTER TABLE projects DROP COLUMN description;
+    PRAGMA foreign_keys = ON;";
+
 fn exchange(
     conversation: Option<nexus_protocol::ConversationId>,
     key: &str,
@@ -52,6 +68,7 @@ fn exchange(
 ) -> NewExchange {
     NewExchange {
         conversation_id: conversation,
+        project_id: None,
         idempotency_key: key.to_string(),
         text: text.to_string(),
         connection_id: connection,
@@ -74,6 +91,7 @@ async fn an_existing_database_is_migrated_forward_keeping_its_data() {
         // Roll the file back to version 1 as an M1 host would have left it.
         store
             .call(|c| {
+                c.execute_batch(UNDO_V6)?;
                 c.execute_batch(
                     "DROP TABLE agent_steps; DROP TABLE messages; DROP TABLE conversations;
                      DROP TABLE personas; DROP TABLE provider_connections; DROP TABLE settings;
@@ -120,6 +138,7 @@ async fn an_existing_connection_defaults_to_low_thinking_after_migrating_to_v3()
         // Roll back to v2, as an M2 host before this change would have left it.
         store
             .call(|c| {
+                c.execute_batch(UNDO_V6)?;
                 c.execute_batch(
                     "DROP TABLE agent_steps; ALTER TABLE provider_connections DROP COLUMN thinking_level;
                      PRAGMA user_version = 2;",
@@ -161,6 +180,7 @@ async fn migrating_to_v5_keeps_every_connection_and_the_messages_linked_to_it() 
     let (id, reply) = {
         let store = Store::open(&path).unwrap();
         store.persona(0).await.unwrap();
+        store.ensure_default_project(0).await.unwrap();
         let row = store
             .save_connection(
                 None,
@@ -187,6 +207,7 @@ async fn migrating_to_v5_keeps_every_connection_and_the_messages_linked_to_it() 
         // Put back the v4 table (Gemini only), as a host before this change left it.
         store
             .call(|c| {
+                c.execute_batch(UNDO_V6)?;
                 c.execute_batch(
                     "PRAGMA foreign_keys = OFF;
                      CREATE TABLE old (
@@ -262,6 +283,73 @@ async fn migrating_to_v5_keeps_every_connection_and_the_messages_linked_to_it() 
             .is_err(),
         "only known providers are accepted"
     );
+    drop(store);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn migrating_to_v6_puts_every_conversation_in_the_default_project_and_keeps_its_steps() {
+    let dir = std::env::temp_dir().join(format!("nexus-migrate-v6-test-{}", uuid::Uuid::new_v4()));
+    let path = dir.join("nexus.db");
+    let (project, conversation) = {
+        let env_store = Store::open(&path).unwrap();
+        env_store.persona(0).await.unwrap();
+        let project = env_store.ensure_default_project(0).await.unwrap();
+        let connection = env_store
+            .save_connection(
+                None,
+                "Gemini",
+                "g".into(),
+                false,
+                "gemini-v6-test".into(),
+                1,
+            )
+            .await
+            .unwrap()
+            .id;
+        let sent = env_store
+            .append_exchange(exchange(None, "k-v6", "Salut", connection), 2)
+            .await
+            .unwrap();
+        let step = env_store
+            .begin_step(
+                sent.model_message.id,
+                AgentStepKind::ModelCall,
+                json!({"model": "m"}),
+                3,
+            )
+            .await
+            .unwrap();
+        env_store
+            .finish_step(step.id, AgentStepStatus::Done, json!({"duration_ms": 5}), 4)
+            .await
+            .unwrap();
+        env_store
+            .call(|c| {
+                c.execute_batch(UNDO_V6)?;
+                c.execute_batch("PRAGMA user_version = 5;")?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        (project, sent.conversation_id)
+    };
+
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.schema_version().await.unwrap(), SUPPORTED_VERSION);
+    assert_eq!(
+        store.conversation_project(conversation).await.unwrap(),
+        project
+    );
+    let steps = store.steps_for_conversation(conversation).await.unwrap();
+    assert_eq!(steps.len(), 1, "the steps table was rebuilt with its rows");
+    assert_eq!(steps[0].detail, json!({"model": "m", "duration_ms": 5}));
+    let enforced: i64 = store
+        .call(|c| Ok(c.query_row("PRAGMA foreign_keys", [], |r| r.get(0))?))
+        .await
+        .unwrap();
+    assert_eq!(enforced, 1);
+    assert_eq!(store.projects().await.unwrap()[0].conversations, 1);
     drop(store);
     let _ = std::fs::remove_dir_all(dir);
 }

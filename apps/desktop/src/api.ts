@@ -14,9 +14,16 @@ import type {
   ErrorCode,
   EventsPage,
   HostStatus,
+  MemoryContextView,
+  MemoryId,
+  MemoryItemView,
+  MemoryScope,
+  MemoryStatus,
   MessageId,
   ModelView,
   PersonaView,
+  ProjectId,
+  ProjectView,
   ProviderChoice,
   RunId,
   RunView,
@@ -71,10 +78,43 @@ export const api = {
   listConversations: () => invoke<ConversationSummary[]>("list_conversations"),
   getConversation: (conversationId: ConversationId) =>
     invoke<ConversationView>("get_conversation", { conversationId }),
-  sendMessage: (conversationId: ConversationId | null, idempotencyKey: string, text: string) =>
-    invoke<SendMessageResponse>("send_message", { conversationId, idempotencyKey, text }),
+  /** `projectId` places a new task; a follow-up stays in its task's project,
+   *  and `null` lets the Host use the active project. */
+  sendMessage: (conversationId: ConversationId | null, projectId: ProjectId | null, idempotencyKey: string, text: string) =>
+    invoke<SendMessageResponse>("send_message", { conversationId, projectId, idempotencyKey, text }),
   cancelReply: (messageId: MessageId) => invoke<null>("cancel_reply", { messageId }),
   getActivity: () => invoke<AgentStepView[]>("get_activity"),
+
+  listProjects: () => invoke<ProjectView[]>("list_projects"),
+  /** `projectId: null` creates a project; creating one does not switch to it. */
+  saveProject: (projectId: ProjectId | null, name: string, description: string) =>
+    invoke<ProjectView>("save_project", { projectId, name, description }),
+  setActiveProject: (projectId: ProjectId) => invoke<ProjectView>("set_active_project", { projectId }),
+  /** `projectId` narrows to that project's facts plus the personal ones. */
+  listMemory: (query: {
+    text?: string | null;
+    scope?: MemoryScope | null;
+    projectId?: ProjectId | null;
+    status?: MemoryStatus | null;
+    limit: number;
+  }) =>
+    invoke<MemoryItemView[]>("list_memory", {
+      text: query.text ?? null,
+      scope: query.scope ?? null,
+      projectId: query.projectId ?? null,
+      status: query.status ?? null,
+      limit: query.limit,
+    }),
+  /** A fact the user writes is active at once. */
+  addMemory: (scope: MemoryScope, projectId: ProjectId | null, content: string) =>
+    invoke<MemoryItemView>("add_memory", { scope, projectId, content }),
+  editMemory: (memoryId: MemoryId, revision: number, content: string) =>
+    invoke<MemoryItemView>("edit_memory", { memoryId, revision, content }),
+  decideMemory: (memoryId: MemoryId, revision: number, approve: boolean) =>
+    invoke<MemoryItemView>("decide_memory", { memoryId, revision, approve }),
+  deleteMemory: (memoryId: MemoryId) => invoke<null>("delete_memory", { memoryId }),
+  /** Exactly the approved facts the Host sends with a request in this project. */
+  memoryContext: (projectId: ProjectId) => invoke<MemoryContextView>("memory_context", { projectId }),
 };
 
 const CODE_TEXT: Partial<Record<ErrorCode, string>> = {

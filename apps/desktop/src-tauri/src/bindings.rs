@@ -64,6 +64,14 @@ mod tests {
             ts::export::<nexus_protocol::ConversationSummary>(&conf),
             ts::export::<nexus_protocol::ConversationView>(&conf),
             ts::export::<nexus_protocol::SendMessageResponse>(&conf),
+            ts::export::<nexus_protocol::ProjectId>(&conf),
+            ts::export::<nexus_protocol::MemoryId>(&conf),
+            ts::export::<nexus_protocol::MemoryScope>(&conf),
+            ts::export::<nexus_protocol::MemoryStatus>(&conf),
+            ts::export::<nexus_protocol::MemorySource>(&conf),
+            ts::export::<nexus_protocol::ProjectView>(&conf),
+            ts::export::<nexus_protocol::MemoryItemView>(&conf),
+            ts::export::<nexus_protocol::MemoryContextView>(&conf),
         ];
         let mut out = String::from(HEADER);
         for exported in types {

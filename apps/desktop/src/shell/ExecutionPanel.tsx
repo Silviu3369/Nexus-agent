@@ -4,16 +4,19 @@
 import { useRef } from "react";
 import type { KeyboardEvent, PointerEvent } from "react";
 import { ApprovalCard } from "../components/ApprovalCard";
+import { MemoryCard } from "../components/MemoryCard";
 import { Timeline } from "../components/Timeline";
 import { nextLine } from "../model/execution.ts";
 import { clock, duration } from "../model/format.ts";
-import { useDerived, useNow } from "../state/store";
+import { useDerived, useNexus, useNow } from "../state/store";
 import { replyFailure } from "../text";
 import { Empty, StatusPill } from "../ui";
 import { LockIcon, PanelIcon } from "../icons";
 import { useGoTo } from "./nav";
 
 const MIN_W = 280;
+/** Proposed facts shown here; the rest wait in Memory. */
+const MEMORY_SHOWN = 3;
 const MAX_W = 560;
 
 export function ExecutionPanel({
@@ -28,6 +31,7 @@ export function ExecutionPanel({
   onResize: (w: number) => void;
 }) {
   const { focusRun, pending, agentName } = useDerived();
+  const proposals = useNexus().proposals ?? [];
   const working = focusRun?.status === "running";
   const now = useNow(working ? 250 : 1000);
   const goTo = useGoTo();
@@ -41,6 +45,11 @@ export function ExecutionPanel({
           {pending.length > 0 && (
             <span className="rail-badge attention" aria-label={`${pending.length} waiting for approval`}>
               {pending.length}
+            </span>
+          )}
+          {proposals.length > 0 && (
+            <span className="rail-badge review" aria-label={`${proposals.length} ${proposals.length === 1 ? "fact" : "facts"} to review`}>
+              {proposals.length}
             </span>
           )}
           {working && <span className="pulse-dot" aria-label="working" />}
@@ -97,6 +106,20 @@ export function ExecutionPanel({
             {pending.map((run) => (
               <ApprovalCard key={run.run_id} run={run} agentName={agentName} compact />
             ))}
+          </section>
+        )}
+
+        {proposals.length > 0 && (
+          <section className="xpanel-memory" aria-label="Facts to review">
+            <p className="eyebrow">Remember this? Nothing is kept until you approve</p>
+            {proposals.slice(0, MEMORY_SHOWN).map((item) => (
+              <MemoryCard key={`${item.memory_id}:${item.revision}`} item={item} agentName={agentName} compact />
+            ))}
+            {proposals.length > MEMORY_SHOWN && (
+              <button type="button" className="link" onClick={() => goTo({ section: "memory" })}>
+                {proposals.length - MEMORY_SHOWN} more in Memory
+              </button>
+            )}
           </section>
         )}
 

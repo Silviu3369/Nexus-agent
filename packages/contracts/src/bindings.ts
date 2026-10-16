@@ -117,15 +117,34 @@ export type AgentStepStatus = "Running" | "Done" | "Failed"
  * One step's kind-specific facts. Metadata only: a web read shows its
  * address, status and size, never the page's text.
  */
-export type AgentStepDetail = { kind: "ModelCall"; model: string; first_byte_ms: number | null; duration_ms: number | null; error: string | null; attempt: number | null; backup: boolean | null } | { kind: "Fetch"; url: string; final_url: string | null; http_status: number | null; text_bytes: number | null; truncated: boolean | null; error: string | null } | { kind: "NoteProposed"; title: string; run_id: RunId | null; error: string | null }
+export type AgentStepDetail = { kind: "ModelCall"; model: string; first_byte_ms: number | null; duration_ms: number | null; error: string | null; attempt: number | null; backup: boolean | null; memory_items: number | null } | { kind: "Fetch"; url: string; final_url: string | null; http_status: number | null; text_bytes: number | null; truncated: boolean | null; error: string | null } | { kind: "MemoryProposed"; content: string; scope: MemoryScope | null; memory_id: MemoryId | null; error: string | null } | { kind: "NoteProposed"; title: string; run_id: RunId | null; error: string | null }
 
 export type AgentStepView = { step_id: AgentStepId; message_id: MessageId; conversation_id: ConversationId; conversation_title: string; seq: number; status: AgentStepStatus; detail: AgentStepDetail; started_at_ms: number; finished_at_ms: number | null }
 
 export type ChatMessageView = { message_id: MessageId; role: ChatRole; text: string; status: ChatStatus; model: string | null; persona_version: number | null; failure: RunFailure | null; proposed_run_id: RunId | null; prompt_tokens: number | null; output_tokens: number | null; created_at_ms: number; steps: AgentStepView[] }
 
-export type ConversationSummary = { conversation_id: ConversationId; title: string; updated_at_ms: number }
+export type ConversationSummary = { conversation_id: ConversationId; project_id: ProjectId | null; title: string; updated_at_ms: number }
 
-export type ConversationView = { conversation_id: ConversationId; title: string; messages: ChatMessageView[] }
+export type ConversationView = { conversation_id: ConversationId; project_id: ProjectId | null; title: string; messages: ChatMessageView[] }
 
 export type SendMessageResponse = { conversation_id: ConversationId; user_message_id: MessageId; reply_message_id: MessageId }
+
+export type ProjectId = string
+
+export type MemoryId = string
+
+export type MemoryScope = "Personal" | "Project"
+
+export type MemoryStatus = "Proposed" | "Active" | "Rejected"
+
+export type MemorySource = "User" | "Agent"
+
+export type ProjectView = { project_id: ProjectId; name: string; description: string; active: boolean; conversations: number; memory_items: number; created_at_ms: number }
+
+export type MemoryItemView = { memory_id: MemoryId; scope: MemoryScope; project_id: ProjectId | null; project_name: string | null; content: string; status: MemoryStatus; source: MemorySource; edited_by_user: boolean; conversation_id: ConversationId | null; conversation_title: string | null; influences: string[]; revision: number; created_at_ms: number; updated_at_ms: number; decided_at_ms: number | null }
+
+/**
+ * Exactly the facts a request in this project carries to the model.
+ */
+export type MemoryContextView = { project_id: ProjectId; items: MemoryItemView[]; max_items: number; max_chars: number }
 

@@ -47,6 +47,7 @@ typed_id!(MessageId);
 // One step the agent took while producing a reply (a model call, a web
 // read, a proposed note) — not a step of a Run, which `StepId` names.
 typed_id!(AgentStepId);
+typed_id!(MemoryId);
 
 #[cfg(test)]
 mod tests {

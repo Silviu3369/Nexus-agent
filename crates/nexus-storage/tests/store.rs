@@ -29,7 +29,7 @@ async fn seed_task(store: &Store) {
     store
         .call(|conn| {
             conn.execute_batch(
-                "INSERT INTO projects VALUES ('p1', 'Nexus', 1, 0);
+                "INSERT INTO projects (id, name, revision, created_at_ms) VALUES ('p1', 'Nexus', 1, 0);
                  INSERT INTO tasks VALUES ('t1', 'p1', 'key-1', '{}', 'h', 0);",
             )?;
             Ok(())

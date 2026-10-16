@@ -25,21 +25,41 @@ const FILTERS: { id: Filter; label: string; match: (s: ExecStatus | null) => boo
   { id: "failed", label: "Failed", match: (s) => s === "failed" },
 ];
 
-export function TasksView({ initialTaskId }: { initialTaskId?: string | null }) {
+export function TasksView({
+  initialTaskId,
+  initialProjectId,
+}: {
+  initialTaskId?: string | null;
+  initialProjectId?: string;
+}) {
   const d = useNexus();
+  const { activeProject } = useDerived();
   const [selected, setSelected] = useState<string | null>(() =>
     initialTaskId === undefined ? (d.focusId ?? d.conversations?.[0]?.conversation_id ?? null) : initialTaskId,
   );
   const [filter, setFilter] = useState<Filter>("all");
+  const [project, setProject] = useState<string>(initialProjectId ?? "all");
   const now = useNow(5000);
   const rows = useMemo(() => taskRows(d.conversations ?? [], d.steps ?? [], d.runs ?? []), [d.conversations, d.steps, d.runs]);
   const match = FILTERS.find((f) => f.id === filter)!.match;
-  const shown = rows.filter((r) => match(r.status));
+  const shown = rows.filter((r) => match(r.status) && (project === "all" || r.projectId === project));
+  // A new task goes to the project being looked at, else the active one.
+  const newTaskProject = project !== "all" ? project : (activeProject?.project_id ?? null);
 
   return (
     <div className="split">
       <section className="split-list panel" aria-label="Tasks">
-        <header className="panel-head">
+        <header className="panel-head task-filters">
+          {d.projects && d.projects.length > 1 && (
+            <select aria-label="Project" value={project} onChange={(e) => setProject(e.currentTarget.value)}>
+              <option value="all">All projects</option>
+              {d.projects.map((p) => (
+                <option key={p.project_id} value={p.project_id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          )}
           <div className="segmented" role="group" aria-label="Filter tasks">
             {FILTERS.map((f) => (
               <button type="button" key={f.id} aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>
@@ -81,7 +101,7 @@ export function TasksView({ initialTaskId }: { initialTaskId?: string | null }) 
           )}
         </div>
       </section>
-      <TaskDetail key={selected ?? "new"} taskId={selected} onCreated={setSelected} />
+      <TaskDetail key={selected ?? "new"} taskId={selected} projectId={newTaskProject} onCreated={setSelected} />
     </div>
   );
 }
@@ -119,11 +139,24 @@ function useTask(taskId: string | null) {
   return { view, error, streaming, reload: load };
 }
 
-function TaskDetail({ taskId, onCreated }: { taskId: string | null; onCreated: (id: string) => void }) {
-  const { runsById, agentName, ready } = useDerived();
+function TaskDetail({
+  taskId,
+  projectId,
+  onCreated,
+}: {
+  taskId: string | null;
+  projectId: string | null;
+  onCreated: (id: string) => void;
+}) {
+  const { runsById, agentName, ready, pendingMemory, projectsById } = useDerived();
   const { follow } = useNexusActions();
   const { view, error, streaming } = useTask(taskId);
-  const runs = useMemo(() => (view ? buildRuns(view, runsById, agentName) : []), [view, runsById, agentName]);
+  const runs = useMemo(
+    () => (view ? buildRuns(view, runsById, agentName, pendingMemory) : []),
+    [view, runsById, agentName, pendingMemory],
+  );
+  const taskProject = view?.project_id ? projectsById.get(view.project_id) : undefined;
+  const newProject = projectId ? projectsById.get(projectId) : undefined;
   const last = runs.length > 0 ? runs[runs.length - 1] : null;
 
   return (
@@ -142,13 +175,18 @@ function TaskDetail({ taskId, onCreated }: { taskId: string | null; onCreated: (
       <div className="panel-body task-body">
         <ErrorLine error={error} />
         {taskId === null && (
-          <Empty>Describe what Nexus should do. It replies in the language you write in, can read public web pages, and asks before writing anything.</Empty>
+          <Empty>
+            Describe what Nexus should do{newProject ? ` in ${newProject.name}` : ""}. It replies in the language you write in, can
+            read public web pages, and asks before writing or remembering anything.
+          </Empty>
         )}
+        {taskId !== null && taskProject && <p className="muted small">Project: {taskProject.name}</p>}
         {runs.map((run, i) => (
           <RunBlock key={run.id} run={run} index={i + 1} agentName={agentName} />
         ))}
         <Composer
           taskId={taskId}
+          projectId={projectId}
           disabled={!ready || streaming}
           onSent={(id) => {
             if (taskId === null) onCreated(id);
@@ -226,10 +264,12 @@ function RunBlock({ run, index, agentName }: { run: RunVM; index: number; agentN
 
 function Composer({
   taskId,
+  projectId,
   disabled,
   onSent,
 }: {
   taskId: string | null;
+  projectId: string | null;
   disabled: boolean;
   onSent: (taskId: string) => void;
 }) {
@@ -245,7 +285,8 @@ function Composer({
     setBusy(true);
     setError(null);
     try {
-      const sent = await api.sendMessage(taskId, intentKey.current, text);
+      // A follow-up stays in its task's project; only a new task is placed.
+      const sent = await api.sendMessage(taskId, taskId === null ? projectId : null, intentKey.current, text);
       intentKey.current = crypto.randomUUID();
       setText("");
       onSent(sent.conversation_id);
