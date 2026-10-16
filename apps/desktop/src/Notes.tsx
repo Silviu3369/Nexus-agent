@@ -96,7 +96,7 @@ export function NotesPanel({ initialRunId }: { initialRunId?: RunId | null }) {
 
       <section className="card" aria-labelledby="activity-heading">
         <h2 id="activity-heading">
-          <NotesIcon /> Activity
+          <NotesIcon /> Notes
         </h2>
         {listError && (
           <p className="error" role="alert">

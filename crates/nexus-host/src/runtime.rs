@@ -10,7 +10,8 @@ use nexus_core::{ActionState, OperationState, RunState};
 use nexus_protocol::{
     ApprovalDecision, ArtifactId, ArtifactSummary, BackupSummary, DecideApprovalRequest, ErrorCode,
     EventView, EventsPage, NexusError, NotePreview, OperationId, PendingApproval, RunFailure,
-    RunId, RunStatus, RunView, Snapshot, SubmitNoteRequest, SubmitNoteResponse,
+    RunId, RunOrigin, RunStatus, RunView, Snapshot, SubmitNoteRequest, SubmitNoteResponse,
+    SystemStatusView,
 };
 use nexus_storage::{
     Decision, NewAction, NewOperation, RunDetail, RunError, StorageError, Store, SubmitOutcome,
@@ -21,6 +22,7 @@ use tokio::sync::{Notify, watch};
 
 use crate::backup;
 use crate::fault;
+use crate::system::SystemMonitor;
 use crate::tools::markdown_artifact::{self as note_tool, ArtifactPaths, NoteContent, Observed};
 use crate::vault::SecretVault;
 
@@ -82,6 +84,7 @@ pub struct Runtime {
     gemini_base_url: String,
     reply_deadline: Duration,
     replies: chat::Replies,
+    system: SystemMonitor,
 }
 
 #[derive(Debug, Clone)]
@@ -134,6 +137,7 @@ impl Runtime {
             gemini_base_url: config.gemini_base_url,
             reply_deadline: config.reply_deadline,
             replies: chat::Replies::default(),
+            system: SystemMonitor::default(),
         });
         if paused {
             tracing::warn!(
@@ -640,6 +644,10 @@ impl Runtime {
         })
     }
 
+    pub async fn system_status(&self) -> SystemStatusView {
+        self.system.status().await
+    }
+
     pub async fn create_backup(&self) -> Result<BackupSummary, NexusError> {
         let (dir, manifest) = backup::create(
             &self.store,
@@ -750,6 +758,11 @@ impl Runtime {
                 sha256: a.sha256.clone(),
                 size_bytes: u32::try_from(a.size_bytes).unwrap_or(u32::MAX),
                 created_at_ms: a.created_at_ms,
+            }),
+            origin: d.origin.as_ref().map(|o| RunOrigin {
+                message_id: o.message_id,
+                conversation_id: o.conversation_id,
+                conversation_title: o.conversation_title.clone(),
             }),
             created_at_ms: d.run.created_at_ms,
             updated_at_ms: d.run.updated_at_ms,

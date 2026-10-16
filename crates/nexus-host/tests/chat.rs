@@ -216,6 +216,13 @@ async fn ai02_a_proposed_note_waits_for_approval_and_other_tools_are_ignored() {
         .expect("the note proposal becomes a run");
 
     let waiting = wait_run(&client, run, RunStatus::AwaitingApproval).await;
+    let origin = waiting
+        .origin
+        .clone()
+        .expect("the run names the reply that proposed it");
+    assert_eq!(origin.message_id, sent.reply_message_id);
+    assert_eq!(origin.conversation_id, sent.conversation_id);
+    assert_eq!(origin.conversation_title, "Salvează planul ca notă");
     let pending = waiting.pending_approval.expect("it waits for the user");
     assert_eq!(pending.preview.unwrap().content, "# Plan\n\npasul 1\n");
     assert!(
@@ -228,6 +235,22 @@ async fn ai02_a_proposed_note_waits_for_approval_and_other_tools_are_ignored() {
         1,
         "one proposal per reply; tools the host does not offer are ignored"
     );
+    assert_eq!(
+        snapshot.runs[0].origin.as_ref().map(|o| o.message_id),
+        Some(sent.reply_message_id),
+        "the snapshot carries the origin too"
+    );
+
+    // A note the user submits directly has no agent origin.
+    let direct = client
+        .submit_note(nexus_protocol::SubmitNoteRequest {
+            idempotency_key: "direct-note".into(),
+            title: "Mine".into(),
+            body: "typed by me".into(),
+        })
+        .await
+        .unwrap();
+    assert!(client.run(direct.run_id).await.unwrap().origin.is_none());
 
     client
         .decide_approval(DecideApprovalRequest {

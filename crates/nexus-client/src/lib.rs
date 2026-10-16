@@ -311,6 +311,10 @@ impl NexusClient {
         Ok(self.client.create_backup(context::current()).await??)
     }
 
+    pub async fn system_status(&self) -> Result<nexus_protocol::SystemStatusView, CallError> {
+        Ok(self.client.get_system_status(context::current()).await??)
+    }
+
     pub async fn stop_host(&self) -> Result<(), CallError> {
         Ok(self.client.stop_host(context::current()).await??)
     }

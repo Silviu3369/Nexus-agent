@@ -10,13 +10,19 @@
   temporary profile; drives the window through Windows UI Automation.
   Covers: refused key not stored, key stored only in the Windows vault,
   model choice, persona version, streamed reply, a proposed note that waits
-  for approval, stopping a reply, a quota error, reopening the window, and
-  removing the connection with its vault entry. Build first:
+  on the approval card, stopping a reply, a quota error, reopening the
+  window, a task given from the command bar with its steps, the Nexus Core
+  path and the activity log, and removing the connection with its vault
+  entry. Build first:
     cargo build -p nexus-host --locked
     cargo build -p nexus-host --example fake_gemini_server --locked
     pnpm --filter @nexus/desktop tauri build --no-bundle
 #>
-param([string]$Root = (Resolve-Path "$PSScriptRoot\..").Path)
+param(
+  [string]$Root = (Resolve-Path "$PSScriptRoot\..").Path,
+  # Folder holding the release desktop.exe (another target dir works too).
+  [string]$Bin = (Join-Path $Root "target\release")
+)
 
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
@@ -24,7 +30,7 @@ $A = [System.Windows.Automation.AutomationElement]
 $S = [System.Windows.Automation.TreeScope]
 $True_ = [System.Windows.Automation.Condition]::TrueCondition
 
-$exe = Join-Path $Root "target\release\desktop.exe"
+$exe = Join-Path (Resolve-Path $Bin).Path "desktop.exe"
 $hostExe = Join-Path $Root "target\debug\nexus-host.exe"
 $fakeExe = Join-Path $Root "target\debug\examples\fake_gemini_server.exe"
 foreach ($f in $exe, $hostExe, $fakeExe) { if (-not (Test-Path $f)) { throw "missing $f - build first (see the header)" } }
@@ -103,6 +109,9 @@ function Invoke-Element($element) {
     $pattern.Invoke()
   } elseif ($element.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$pattern)) {
     $pattern.Toggle()
+  } elseif ($element.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$pattern)) {
+    # Disclosure buttons (aria-expanded) are exposed as expand/collapse.
+    if ($pattern.Current.ExpandCollapseState -eq [System.Windows.Automation.ExpandCollapseState]::Collapsed) { $pattern.Expand() } else { $pattern.Collapse() }
   } else {
     throw "element '$($element.Current.Name)' cannot be activated"
   }
@@ -132,6 +141,31 @@ function Set-Field($win, [string]$label, [string]$value) {
     Start-Sleep -Milliseconds 200
   }
   throw "field '$label' not found"
+}
+
+# A button whose accessible name contains $fragment.
+function Find-Like($win, [string]$fragment) {
+  $win.FindAll($S::Descendants, $True_) | Where-Object { $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $_.Current.Name -like "*$fragment*" } | Select-Object -First 1
+}
+
+function Wait-Like($win, [string]$fragment, [int]$seconds = 15) {
+  $deadline = (Get-Date).AddSeconds($seconds)
+  while ((Get-Date) -lt $deadline) {
+    $b = Find-Like $win $fragment
+    if ($b) { return $b }
+    Start-Sleep -Milliseconds 250
+  }
+  return $null
+}
+
+function Wait-Match($win, [string]$regex, [int]$seconds = 15) {
+  $deadline = (Get-Date).AddSeconds($seconds)
+  while ((Get-Date) -lt $deadline) {
+    $hit = Get-Names $win | Where-Object { $_ -match $regex } | Select-Object -First 1
+    if ($hit) { return $hit }
+    Start-Sleep -Milliseconds 250
+  }
+  return $null
 }
 
 function Send-Chat($win, [string]$text) {
@@ -166,17 +200,22 @@ try {
 
   $ui = Start-Process $exe -PassThru
   $win = Get-Window $ui.Id
-  Check (Wait-Text $win "Host online") "the window connected to the host of the test profile"
+  Check (Wait-Text $win "Nexus.Host") "the window connected to the host of the test profile"
 
   # --- AI-03: nothing can be sent without a chosen connection and model ---
-  Click-Button $win "Chat"
-  Check ($null -ne (Wait-Contains $win "You don't have an AI connection yet.")) "chat says no AI connection exists yet"
-  $send = Find-Named $win "Send" ([System.Windows.Automation.ControlType]::Button)
-  Check ($send -and -not $send.Current.IsEnabled) "the send button is disabled without a connection"
+  Check ($null -ne (Wait-Contains $win "Nexus sends nothing until you choose a connection and a model")) "the command bar says no model is chosen yet"
+  $run = Find-Named $win "Run" ([System.Windows.Automation.ControlType]::Button)
+  Check ($run -and -not $run.Current.IsEnabled) "the command bar cannot run a task without a connection"
+  Click-Button $win "Tasks"
+  $send = $null
+  $deadline = (Get-Date).AddSeconds(10)
+  while (-not $send -and (Get-Date) -lt $deadline) { $send = Find-Named $win "Send" ([System.Windows.Automation.ControlType]::Button); if (-not $send) { Start-Sleep -Milliseconds 200 } }
+  Check ($send -and -not $send.Current.IsEnabled) "the task composer is disabled without a connection"
 
   # --- a refused key is not stored ---
-  Click-Button $win "Open Settings"
-  Check (Wait-Text $win "AI connections") "settings show the AI connections"
+  Click-Button $win "Set up a model"
+  Check (Wait-Text $win "AI connections") "Models shows the AI connections"
+  Check ($null -ne (Wait-Contains $win "No adapter")) "providers without an adapter are shown as such"
   Check ($null -ne (Wait-Contains $win "personal data, passwords")) "the free-tier notice is shown"
   Set-Field $win "Gemini API key" $wrongKey
   Click-Button $win "Verify and save"
@@ -193,34 +232,40 @@ try {
   Check ((Vault-Entries).Count -eq 1) "exactly one Credential Manager entry exists for this profile"
   Check (-not (Get-Names $win | Where-Object { $_.Contains($testKey) })) "the key is not shown anywhere in the window"
 
-  # --- model choice (no fallback: chat stays closed until a model is chosen) ---
+  # --- model choice (no fallback: nothing runs until a model is chosen) ---
   Click-Button $win "Load models" 20
   Click-Button $win "Use this model" 20
   Check (Wait-Text $win "gemini-fake-flash") "the chosen model is shown on the connection"
+  Check ($null -ne (Wait-Contains $win "Chosen by you")) "routing says why this model is used"
 
   # --- persona version ---
+  Click-Button $win "Settings"
   Set-Field $win "Assistant name" "Ada"
   Click-Button $win "Save persona"
   Check ($null -ne (Wait-Contains $win "Saved as version 2")) "saving the persona creates version 2"
 
-  # --- AI-01: streamed reply from the chosen model ---
-  Click-Button $win "Chat"
-  Check ($null -ne (Wait-Contains $win "Google AI Studio · gemini-fake-flash")) "chat shows the active connection and model"
+  # --- AI-01: streamed reply from the chosen model, in a new task ---
+  Click-Button $win "Tasks"
   Send-Chat $win "Hello!"
   Check (Wait-Text $win "Hello! I'm your Nexus assistant.") "the streamed reply is shown"
-  Check ($null -ne (Wait-Contains $win "gemini-fake-flash · persona v2")) "the reply records its model and persona version"
-  Check ($null -ne (Wait-Contains $win "Model gemini-fake-flash")) "the model call is shown as a step of the reply"
+  Check ($null -ne (Wait-Contains $win "gemini-fake-flash · persona v2")) "the run records its model and persona version"
+  Check ($null -ne (Wait-Like $win "Model call")) "the model call is shown as a step of the run"
 
-  # --- AI-02: a proposed note waits for approval ---
+  # --- AI-02: a proposed note waits on the approval card ---
   Send-Chat $win "Save the plan as a note"
-  Check ($null -ne (Wait-Contains $win "The assistant proposed a note.")) "the proposal is shown as a proposal"
-  Check (Wait-Text $win "What will be written") "its exact preview is shown"
-  Check ($null -ne (Wait-Contains $win 'Proposed note "Chat plan"')) "the proposal is shown as a step"
+  Check ($null -ne (Wait-Contains $win "Approval required")) "the proposal raises an approval card"
+  Check ($null -ne (Wait-Contains $win 'Create note “Chat plan”')) "the card names the exact action"
+  Check ($null -ne (Wait-Contains $win "Ada · task")) "the card says which agent and task asked"
+  Check ($null -ne (Wait-Like $win 'Propose note "Chat plan"')) "the proposal is shown as a step"
+  Check ($null -ne (Wait-Contains $win "1 new file")) "the card states what it affects"
+  Click-Button $win "Inspect" 20
+  Check (Wait-Text $win "Exact content of the note") "its exact preview can be inspected"
   Check ((Note-Files).Count -eq 0) "nothing is written on the model's word"
-  Click-Button $win "Approve and create"
+  Click-Button $win "Approve" 20
   Check (Wait-Files 1) "approving writes exactly one note"
   $content = [System.IO.File]::ReadAllText((Note-Files)[0].FullName, [System.Text.UTF8Encoding]::new($false))
   Check ($content -ceq "# Chat plan`n`nstep 1 from chat`n") "the note holds exactly the approved preview"
+  Check ($null -ne (Wait-Contains $win "Written and verified")) "the write step reports the verified file"
 
   # --- stopping a reply keeps what arrived ---
   Send-Chat $win "Write a long essay"
@@ -233,42 +278,48 @@ try {
   Check ($null -ne (Wait-Contains $win "The provider's quota has been reached")) "a quota error is reported"
   Check ($null -ne (Wait-Contains $win "retry after 30 s")) "the retry hint from the provider is kept"
 
-  # --- closing and reopening the window keeps the conversation ---
+  # --- closing and reopening the window keeps the task ---
   $ui.CloseMainWindow() | Out-Null
   $ui.WaitForExit(10000) | Out-Null
   Check (-not $hostProc.HasExited) "the host survived closing the window"
   $ui = Start-Process $exe -PassThru
   $win = Get-Window $ui.Id
-  Check (Wait-Text $win "Host online") "the reopened window reconnected"
-  Click-Button $win "Chat"
+  Check (Wait-Text $win "Nexus.Host") "the reopened window reconnected"
+  Click-Button $win "Tasks"
   $row = $null
   $deadline = (Get-Date).AddSeconds(10)
   while (-not $row -and (Get-Date) -lt $deadline) {
     $row = $win.FindAll($S::Descendants, $True_) | Where-Object { $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $_.Current.Name -like "Hello!*" } | Select-Object -First 1
     if (-not $row) { Start-Sleep -Milliseconds 250 }
   }
-  Check ($null -ne $row) "the conversation is listed after reopening"
+  Check ($null -ne $row) "the task is listed after reopening"
   if ($row) { Invoke-Element $row }
-  Check (Wait-Text $win "Hello! I'm your Nexus assistant.") "its messages are loaded from the host"
+  Check (Wait-Text $win "Hello! I'm your Nexus assistant.") "its runs are loaded from the host"
 
-  # --- dashboard: a task started from the command bar, followed live ---
-  Click-Button $win "Dashboard"
-  Set-Field $win "Ask Nexus" "Check the private page"
+  # --- Overview: a task given from the command bar, followed live ---
+  Click-Button $win "Overview"
+  Check ($null -ne (Wait-Match $win "^\d+%$")) "the system panel shows a real CPU reading"
+  Set-Field $win "Give Nexus a task" "Check the private page"
   Click-Button $win "Run" 20
-  Check (Wait-Text $win "Done from the dashboard.") "a task started from the dashboard answers there"
-  Check ($null -ne (Wait-Contains $win "Read 127.0.0.1:1")) "the web read appears as a step"
+  Check (Wait-Text $win "Done from the dashboard.") "the live panel shows the run's output"
+  Check ($null -ne (Wait-Like $win "Read 127.0.0.1:1")) "the web read appears as a step"
   Check ($null -ne (Wait-Contains $win "does not resolve to a public address")) "the refused read says why"
-  Check (Wait-Text $win "Live activity") "the live activity feed is shown"
-  Check ($null -ne (Wait-Contains $win "Check the private page")) "the feed names the conversation each step belongs to"
+  Check (Wait-Text $win "Live execution") "the live execution panel is shown"
+  Check (Wait-Text $win "Execution path") "the core shows the path the run took"
+  Check ($null -ne (Wait-Like $win "Web read node")) "the web tool appears as a node around the core"
+
+  # --- Activity: the log names the task of each entry ---
+  Click-Button $win "Activity"
+  Check ($null -ne (Wait-Like $win "Check the private page")) "the activity log names the task each entry belongs to"
+  Check ($null -ne (Wait-Contains $win "Note written and verified")) "host events (the verified write) are in the log"
 
   # --- removing the connection removes its key ---
-  Click-Button $win "Settings"
+  Click-Button $win "Models"
   Click-Button $win "Remove connection"
   Click-Button $win "Confirm removal"
   Check (Wait-Text $win "No connections yet.") "the connection is removed"
   Check ((Vault-Entries).Count -eq 0) "its Credential Manager entry is gone"
-  Click-Button $win "Chat"
-  Check ($null -ne (Wait-Contains $win "You don't have an AI connection yet.")) "chat is closed again; there is no fallback"
+  Check ($null -ne (Wait-Contains $win "Nexus sends nothing until you choose a connection and a model")) "nothing can run again; there is no fallback"
 }
 finally {
   if ($ui -and -not $ui.HasExited) { $ui.CloseMainWindow() | Out-Null; $ui.WaitForExit(10000) | Out-Null }

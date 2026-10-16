@@ -19,6 +19,8 @@ pub fn run() {
             runs::artifact_content,
             runs::reveal_artifact,
             runs::create_backup,
+            runs::get_events,
+            runs::get_system_status,
             chat::list_connections,
             chat::save_gemini_connection,
             chat::remove_connection,

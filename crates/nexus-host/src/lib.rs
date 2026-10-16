@@ -2,6 +2,7 @@ pub mod backup;
 pub mod fault;
 pub mod runtime;
 pub mod server;
+pub mod system;
 pub mod tools;
 pub mod vault;
 

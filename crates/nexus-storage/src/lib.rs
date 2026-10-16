@@ -13,7 +13,7 @@ pub use chat::{
 };
 pub use repo::{
     ActionRow, ApprovalRow, ArtifactRow, Decision, EventRow, NewAction, NewOperation, OperationRow,
-    RunDetail, RunError, RunRow, SubmitOutcome, TaskRow,
+    RunDetail, RunError, RunOrigin, RunRow, SubmitOutcome, TaskRow,
 };
 pub use steps::AgentStepRow;
 

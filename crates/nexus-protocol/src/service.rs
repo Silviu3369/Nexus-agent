@@ -12,7 +12,7 @@ use crate::handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse};
 use crate::ids::{ArtifactId, ConnectionId, ConversationId, MessageId, RunId};
 use crate::runs::{
     BackupSummary, DecideApprovalRequest, EventsPage, RunView, Snapshot, SubmitNoteRequest,
-    SubmitNoteResponse,
+    SubmitNoteResponse, SystemStatusView,
 };
 
 #[tarpc::service]
@@ -95,6 +95,9 @@ pub trait NexusService {
     /// What the agent did most recently, across conversations, newest first
     /// (at most `limit`, capped by the host). Running steps are included.
     async fn get_activity(limit: u32) -> Result<Vec<AgentStepView>, NexusError>;
+
+    /// Host version plus CPU and memory of the machine, read when asked.
+    async fn get_system_status() -> Result<SystemStatusView, NexusError>;
 
     /// Explicit stop: no new work is taken, the current step finishes,
     /// uncertain effects stay recorded for reconciliation on next start.

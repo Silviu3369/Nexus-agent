@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::ids::{ApprovalId, ArtifactId, RunId, TaskId};
+use crate::ids::{ApprovalId, ArtifactId, ConversationId, MessageId, RunId, TaskId};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct SubmitNoteRequest {
@@ -87,8 +87,18 @@ pub struct RunView {
     pub failure: Option<RunFailure>,
     pub pending_approval: Option<PendingApproval>,
     pub artifact: Option<ArtifactSummary>,
+    /// The agent reply that proposed this run; `None` when the user
+    /// submitted the note directly.
+    pub origin: Option<RunOrigin>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct RunOrigin {
+    pub message_id: MessageId,
+    pub conversation_id: ConversationId,
+    pub conversation_title: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -128,6 +138,19 @@ pub struct BackupSummary {
     /// (edited outside Nexus); they are backed up as found and flagged.
     pub unmatched_artifacts: u32,
     pub database_sha256: String,
+}
+
+/// Facts about the machine and the host process, for the dashboard. Each
+/// figure is measured when asked; one that cannot be read is `None`.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct SystemStatusView {
+    pub host_version: String,
+    /// All logical processors, since the previous reading (or over a short
+    /// sample on the first one).
+    pub cpu_percent: Option<f32>,
+    pub memory_used_mib: Option<u32>,
+    pub memory_total_mib: Option<u32>,
+    pub logical_processors: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]

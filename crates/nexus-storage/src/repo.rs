@@ -7,7 +7,8 @@ use std::path::PathBuf;
 
 use nexus_core::{ActionState, OperationState, RunState};
 use nexus_protocol::{
-    ActionId, ApprovalId, ArtifactId, EventId, OperationId, ProjectId, RunId, TaskId,
+    ActionId, ApprovalId, ArtifactId, ConversationId, EventId, MessageId, OperationId, ProjectId,
+    RunId, TaskId,
 };
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
@@ -132,6 +133,16 @@ pub struct RunDetail {
     /// Read from the durable event log, so it survives repeated restarts
     /// even after the run itself has moved on to NeedsReconciliation.
     pub cancellation_requested: bool,
+    /// The reply that proposed this run; `None` for a note the user
+    /// submitted directly.
+    pub origin: Option<RunOrigin>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunOrigin {
+    pub message_id: MessageId,
+    pub conversation_id: ConversationId,
+    pub conversation_title: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1310,6 +1321,7 @@ fn load_detail(tx: &Transaction, run_id: RunId) -> Result<RunDetail, StorageErro
         [run_id.to_string()],
         |r| r.get(0),
     )?;
+    let origin = load_origin(tx, run_id)?;
     Ok(RunDetail {
         run,
         task,
@@ -1318,5 +1330,31 @@ fn load_detail(tx: &Transaction, run_id: RunId) -> Result<RunDetail, StorageErro
         operation,
         artifact,
         cancellation_requested,
+        origin,
     })
+}
+
+/// A settled reply records the run it proposed; while it is still being
+/// settled, its NoteProposed step already names the run.
+fn load_origin(tx: &Transaction, run_id: RunId) -> Result<Option<RunOrigin>, StorageError> {
+    let raw: Option<(String, String, String)> = tx
+        .query_row(
+            "SELECT m.id, m.conversation_id, c.title FROM messages m
+             JOIN conversations c ON c.id = m.conversation_id
+             WHERE m.proposed_run_id = ?1
+                OR m.id IN (SELECT message_id FROM agent_steps WHERE kind = 'NoteProposed'
+                            AND json_extract(detail_json, '$.run_id') = ?1)
+             ORDER BY m.seq LIMIT 1",
+            [run_id.to_string()],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    raw.map(|(message, conversation, title)| {
+        Ok(RunOrigin {
+            message_id: MessageId(parse_uuid(&message)?),
+            conversation_id: ConversationId(parse_uuid(&conversation)?),
+            conversation_title: title,
+        })
+    })
+    .transpose()
 }

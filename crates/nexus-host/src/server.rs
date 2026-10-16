@@ -11,7 +11,7 @@ use nexus_protocol::{
     GetHealthResponse, HandshakeRequest, HandshakeResponse, HealthStatus, MessageId, ModelView,
     NexusError, PROTOCOL_VERSION, PersonaView, RunId, RunView, SaveGeminiConnectionRequest,
     SavePersonaRequest, SendMessageRequest, SendMessageResponse, Snapshot, SubmitNoteRequest,
-    SubmitNoteResponse, ThinkingLevel,
+    SubmitNoteResponse, SystemStatusView, ThinkingLevel,
 };
 use tarpc::context::Context;
 use tarpc::server::{BaseChannel, Channel};
@@ -291,6 +291,11 @@ impl NexusService for HostServer {
     ) -> Result<Vec<AgentStepView>, NexusError> {
         self.require_session()?;
         self.runtime.get_activity(limit).await
+    }
+
+    async fn get_system_status(self, _ctx: Context) -> Result<SystemStatusView, NexusError> {
+        self.require_session()?;
+        Ok(self.runtime.system_status().await)
     }
 
     async fn stop_host(self, _ctx: Context) -> Result<(), NexusError> {

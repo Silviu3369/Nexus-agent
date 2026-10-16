@@ -142,6 +142,36 @@ async fn ipc02_calls_before_handshake_are_rejected() {
         Err(err) => assert_eq!(err.code, ErrorCode::Unauthenticated),
         Ok(_) => panic!("the host must not serve calls on a connection that never handshook"),
     }
+    let system = client
+        .get_system_status(tarpc::context::current())
+        .await
+        .expect("rpc transport must succeed");
+    assert!(
+        matches!(system, Err(ref e) if e.code == ErrorCode::Unauthenticated),
+        "machine facts are only served to a paired session"
+    );
+}
+
+#[tokio::test]
+async fn a_paired_session_reads_the_host_version_and_machine_figures() {
+    let pipe_name = unique_pipe_name();
+    let token = "correct-token".to_string();
+    let _profile = start_test_host(pipe_name.clone(), token.clone()).await;
+    let (client, _) = NexusClient::connect_with(&pipe_name, token, "test-client")
+        .await
+        .unwrap();
+
+    let status = client.system_status().await.unwrap();
+    assert_eq!(status.host_version, env!("CARGO_PKG_VERSION"));
+    assert!(
+        status
+            .cpu_percent
+            .is_some_and(|c| (0.0..=100.0).contains(&c))
+    );
+    assert!(matches!(
+        (status.memory_used_mib, status.memory_total_mib),
+        (Some(used), Some(total)) if total > 0 && used <= total
+    ));
 }
 
 #[tokio::test]

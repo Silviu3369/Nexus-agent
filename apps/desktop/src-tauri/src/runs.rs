@@ -5,13 +5,16 @@ use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 
 use nexus_protocol::{
-    ApprovalDecision, ApprovalId, ArtifactId, BackupSummary, DecideApprovalRequest, RunId,
-    RunStatus, RunView, Snapshot, SubmitNoteRequest, SubmitNoteResponse,
+    ApprovalDecision, ApprovalId, ArtifactId, BackupSummary, DecideApprovalRequest, EventsPage,
+    RunId, RunStatus, RunView, Snapshot, SubmitNoteRequest, SubmitNoteResponse, SystemStatusView,
 };
 
 use crate::host::{BridgeError, HostConnection};
 
 const DASHBOARD_RUNS: u32 = 50;
+/// One page of the durable event log; the dashboard follows it with the
+/// cursor the host returns.
+const EVENTS_PAGE: u32 = 200;
 
 type State<'a> = tauri::State<'a, HostConnection>;
 
@@ -39,6 +42,20 @@ pub async fn list_runs(connection: State<'_>) -> Result<Snapshot, BridgeError> {
     connection
         .call(async |c| c.snapshot(DASHBOARD_RUNS).await)
         .await
+}
+
+/// Events after `after` (a cursor from the snapshot or a previous page).
+/// They tell the dashboard what changed; they are never acted upon.
+#[tauri::command]
+pub async fn get_events(connection: State<'_>, after: i64) -> Result<EventsPage, BridgeError> {
+    connection
+        .call(async |c| c.events(after, EVENTS_PAGE).await)
+        .await
+}
+
+#[tauri::command]
+pub async fn get_system_status(connection: State<'_>) -> Result<SystemStatusView, BridgeError> {
+    connection.call(async |c| c.system_status().await).await
 }
 
 #[tauri::command]

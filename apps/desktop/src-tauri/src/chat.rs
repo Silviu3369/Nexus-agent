@@ -10,7 +10,8 @@ use nexus_protocol::{
 use crate::host::{BridgeError, HostConnection};
 
 const DASHBOARD_CONVERSATIONS: u32 = 50;
-const DASHBOARD_ACTIVITY: u32 = 40;
+/// Enough for the activity log; the host caps it at 200.
+const DASHBOARD_ACTIVITY: u32 = 100;
 
 type State<'a> = tauri::State<'a, HostConnection>;
 

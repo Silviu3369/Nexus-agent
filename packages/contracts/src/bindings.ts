@@ -54,13 +54,25 @@ export type ArtifactSummary = { artifact_id: ArtifactId; path: string; sha256: s
 
 export type RunFailure = { code: string; message: string }
 
-export type RunView = { run_id: RunId; title: string; status: RunStatus; revision: number; failure: RunFailure | null; pending_approval: PendingApproval | null; artifact: ArtifactSummary | null; created_at_ms: number; updated_at_ms: number }
+export type RunOrigin = { message_id: MessageId; conversation_id: ConversationId; conversation_title: string }
+
+export type RunView = { run_id: RunId; title: string; status: RunStatus; revision: number; failure: RunFailure | null; pending_approval: PendingApproval | null; artifact: ArtifactSummary | null; origin: RunOrigin | null; created_at_ms: number; updated_at_ms: number }
 
 export type Snapshot = { runs: RunView[]; watermark: number }
 
 export type SubmitNoteResponse = { task_id: TaskId; run_id: RunId; created: boolean }
 
 export type BackupSummary = { path: string; created_at_ms: number; artifacts: number; unmatched_artifacts: number; database_sha256: string }
+
+export type EventView = { seq: number; kind: string; entity_id: string; created_at_ms: number }
+
+export type EventsPage = { events: EventView[]; next_after: number }
+
+/**
+ * Facts about the machine and the host process, for the dashboard. Each
+ * figure is measured when asked; one that cannot be read is `None`.
+ */
+export type SystemStatusView = { host_version: string; cpu_percent: number | null; memory_used_mib: number | null; memory_total_mib: number | null; logical_processors: number | null }
 
 export type ConnectionId = string
 

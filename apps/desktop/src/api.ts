@@ -11,6 +11,7 @@ import type {
   ConversationSummary,
   ConversationView,
   ErrorCode,
+  EventsPage,
   HostStatus,
   MessageId,
   ModelView,
@@ -20,6 +21,7 @@ import type {
   SendMessageResponse,
   Snapshot,
   SubmitNoteResponse,
+  SystemStatusView,
   ThinkingLevel,
 } from "@nexus/contracts";
 
@@ -36,6 +38,9 @@ export const api = {
   artifactContent: (artifactId: ArtifactId) => invoke<string>("artifact_content", { artifactId }),
   revealArtifact: (runId: RunId) => invoke<null>("reveal_artifact", { runId }),
   createBackup: () => invoke<BackupSummary>("create_backup"),
+  /** Durable events after the cursor; they say what changed, nothing more. */
+  getEvents: (after: number) => invoke<EventsPage>("get_events", { after }),
+  getSystemStatus: () => invoke<SystemStatusView>("get_system_status"),
 
   listConnections: () => invoke<ConnectionView[]>("list_connections"),
   /** The key goes to the host's Windows vault; `null` keeps the stored one. */

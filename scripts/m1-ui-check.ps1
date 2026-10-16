@@ -1,6 +1,7 @@
 ﻿<#
 .SYNOPSIS
-  End-to-end check of the M1 note flow through the real release window.
+  End-to-end check of the M1 note flow through the real release window
+  (notes live in Tools > Files - Notes of the command-center dashboard).
 
 .DESCRIPTION
   Drives target\release\desktop.exe through Windows UI Automation (the
@@ -118,6 +119,22 @@ function Wait-Files([int]$count, [int]$seconds = 15) {
   return $false
 }
 
+# A button whose accessible name contains $fragment (rows carry their status).
+function Click-Like($win, [string]$fragment, [int]$seconds = 10) {
+  $deadline = (Get-Date).AddSeconds($seconds)
+  while ((Get-Date) -lt $deadline) {
+    $b = $win.FindAll($S::Descendants, $True_) | Where-Object { $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $_.Current.Name -like "*$fragment*" -and $_.Current.IsEnabled } | Select-Object -First 1
+    if ($b) { Invoke-Element $b; return }
+    Start-Sleep -Milliseconds 200
+  }
+  throw "no button containing '$fragment'"
+}
+
+function Open-Notes($win) {
+  Click-Button $win "Tools"
+  Click-Like $win "Files · Notes"
+}
+
 function New-Note($win, [string]$title, [string]$body) {
   Set-Field $win "Title" $title
   Set-Field $win "Content" $body
@@ -132,8 +149,8 @@ try {
   $win = Get-Window $ui.Id
   Check (Wait-Text $win "Start Host") "fresh profile shows the host as stopped"
   Click-Button $win "Start Host"
-  Check (Wait-Text $win "Host online") "the UI launched the host and connected"
-  Click-Button $win "Notes"
+  Check (Wait-Text $win "Nexus.Host") "the UI launched the host and connected"
+  Open-Notes $win
   Check (Wait-Text $win "No notes yet.") "empty activity state is shown"
 
   # --- RUN-01 + UI-02 through the window ---
@@ -162,8 +179,8 @@ try {
 
   $ui = Start-Process $exe -PassThru
   $win = Get-Window $ui.Id
-  Check (Wait-Text $win "Host online") "the reopened UI reconnected"
-  Click-Button $win "Notes"
+  Check (Wait-Text $win "Nexus.Host") "the reopened UI reconnected"
+  Open-Notes $win
   $row = $null
   $deadline = (Get-Date).AddSeconds(10)
   while (-not $row -and (Get-Date) -lt $deadline) {
@@ -212,7 +229,7 @@ try {
   Check (Wait-Text $win "Start Host") "the restored profile has no host running yet"
   Click-Button $win "Start Host"
   Check ($null -ne (Wait-Contains $win "Restored from a backup")) "the UI states that the restored profile executes nothing"
-  Click-Button $win "Notes"
+  Open-Notes $win
   Check ($null -ne (Wait-Contains $win "Third note")) "the restored history is visible"
   Check ($null -ne (Wait-Contains $win "Denied")) "restored runs keep their states"
 }
