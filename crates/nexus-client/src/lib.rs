@@ -322,6 +322,26 @@ impl NexusClient {
         Ok(self.client.cancel_reply(context::current(), id).await??)
     }
 
+    pub async fn delete_conversation(
+        &self,
+        id: nexus_protocol::ConversationId,
+    ) -> Result<nexus_protocol::DeletedView, CallError> {
+        Ok(self
+            .client
+            .delete_conversation(context::current(), id)
+            .await??)
+    }
+
+    pub async fn delete_exchange(
+        &self,
+        id: nexus_protocol::MessageId,
+    ) -> Result<nexus_protocol::DeletedView, CallError> {
+        Ok(self
+            .client
+            .delete_exchange(context::current(), id)
+            .await??)
+    }
+
     pub async fn create_backup(&self) -> Result<nexus_protocol::BackupSummary, CallError> {
         Ok(self.client.create_backup(context::current()).await??)
     }

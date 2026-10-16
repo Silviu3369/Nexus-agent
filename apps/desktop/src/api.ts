@@ -11,6 +11,7 @@ import type {
   ConversationId,
   ConversationSummary,
   ConversationView,
+  DeletedView,
   ErrorCode,
   EventsPage,
   HostStatus,
@@ -83,6 +84,11 @@ export const api = {
   sendMessage: (conversationId: ConversationId | null, projectId: ProjectId | null, idempotencyKey: string, text: string) =>
     invoke<SendMessageResponse>("send_message", { conversationId, projectId, idempotencyKey, text }),
   cancelReply: (messageId: MessageId) => invoke<null>("cancel_reply", { messageId }),
+  /** For good: the task, its messages and steps. Facts and notes stay. */
+  deleteConversation: (conversationId: ConversationId) =>
+    invoke<DeletedView>("delete_conversation", { conversationId }),
+  /** One request with its reply (either id); the only one takes the task. */
+  deleteExchange: (messageId: MessageId) => invoke<DeletedView>("delete_exchange", { messageId }),
   getActivity: () => invoke<AgentStepView[]>("get_activity"),
 
   listProjects: () => invoke<ProjectView[]>("list_projects"),
@@ -130,6 +136,12 @@ const CODE_TEXT: Partial<Record<ErrorCode, string>> = {
   DeadlineExceeded: "The AI provider did not respond in time.",
   ProviderUnavailable: "The AI provider is unavailable right now.",
 };
+
+/** The Host's stable error code of a rejected bridge call, if it has one. */
+export function errorCode(err: unknown): ErrorCode | null {
+  if (typeof err === "object" && err !== null && "code" in err) return (err as BridgeError).code ?? null;
+  return null;
+}
 
 /** Turns a rejected bridge call into a short English message plus detail. */
 export function describeError(err: unknown): string {

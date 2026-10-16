@@ -857,6 +857,7 @@ fn to_nexus_error(err: StorageError) -> NexusError {
         }
         StorageError::IllegalTransition(_) => (ErrorCode::InvalidRequest, err.to_string()),
         StorageError::RevisionConflict(_) => (ErrorCode::RevisionConflict, err.to_string()),
+        StorageError::ReplyInProgress => (ErrorCode::InvalidRequest, err.to_string()),
         _ => {
             tracing::error!(error = %err, "storage failure");
             (

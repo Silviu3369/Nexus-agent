@@ -101,7 +101,13 @@ export function TasksView({
           )}
         </div>
       </section>
-      <TaskDetail key={selected ?? "new"} taskId={selected} projectId={newTaskProject} onCreated={setSelected} />
+      <TaskDetail
+        key={selected ?? "new"}
+        taskId={selected}
+        projectId={newTaskProject}
+        onCreated={setSelected}
+        onDeleted={() => setSelected(null)}
+      />
     </div>
   );
 }
@@ -143,13 +149,18 @@ function TaskDetail({
   taskId,
   projectId,
   onCreated,
+  onDeleted,
 }: {
   taskId: string | null;
   projectId: string | null;
   onCreated: (id: string) => void;
+  onDeleted: () => void;
 }) {
   const { runsById, agentName, ready, pendingMemory, projectsById } = useDerived();
-  const { follow } = useNexusActions();
+  const { follow, forget, refresh } = useNexusActions();
+  const [confirm, setConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const { view, error, streaming } = useTask(taskId);
   const runs = useMemo(
     () => (view ? buildRuns(view, runsById, agentName, pendingMemory) : []),
@@ -157,6 +168,30 @@ function TaskDetail({
   );
   const taskProject = view?.project_id ? projectsById.get(view.project_id) : undefined;
   const newProject = projectId ? projectsById.get(projectId) : undefined;
+
+  async function deleteTask() {
+    if (!taskId) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await api.deleteConversation(taskId);
+      forget(taskId);
+      onDeleted();
+      await refresh();
+    } catch (err) {
+      setDeleteError(describeError(err));
+      setDeleting(false);
+    }
+  }
+
+  /** After a run was deleted; the whole task may have gone with it. */
+  async function afterRunDeleted(taskGone: boolean) {
+    if (taskGone && taskId) {
+      forget(taskId);
+      onDeleted();
+    }
+    await refresh();
+  }
   const last = runs.length > 0 ? runs[runs.length - 1] : null;
 
   return (
@@ -170,9 +205,37 @@ function TaskDetail({
               Follow live
             </button>
           )}
+          {taskId !== null && view && (
+            <button
+              type="button"
+              className="ghost danger-ghost"
+              disabled={streaming || confirm}
+              title={streaming ? "Stop the reply first" : "Delete this task and its messages"}
+              onClick={() => setConfirm(true)}
+            >
+              Delete task
+            </button>
+          )}
         </div>
       </header>
       <div className="panel-body task-body">
+        {confirm && view && (
+          <div className="confirm-bar" role="alert">
+            <p>
+              Delete “{view.title}” and its {view.messages.length} {view.messages.length === 1 ? "message" : "messages"} for
+              good? Facts it proposed stay in Memory and notes it wrote stay in Files.
+            </p>
+            <div className="actions">
+              <button type="button" className="danger" disabled={deleting || streaming} onClick={() => void deleteTask()}>
+                Delete for good
+              </button>
+              <button type="button" className="ghost" disabled={deleting} onClick={() => setConfirm(false)}>
+                Keep
+              </button>
+            </div>
+            <ErrorLine error={deleteError} />
+          </div>
+        )}
         <ErrorLine error={error} />
         {taskId === null && (
           <Empty>
@@ -182,7 +245,7 @@ function TaskDetail({
         )}
         {taskId !== null && taskProject && <p className="muted small">Project: {taskProject.name}</p>}
         {runs.map((run, i) => (
-          <RunBlock key={run.id} run={run} index={i + 1} agentName={agentName} />
+          <RunBlock key={run.id} run={run} index={i + 1} agentName={agentName} onDeleted={afterRunDeleted} />
         ))}
         <Composer
           taskId={taskId}
@@ -198,14 +261,38 @@ function TaskDetail({
   );
 }
 
-function RunBlock({ run, index, agentName }: { run: RunVM; index: number; agentName: string }) {
+function RunBlock({
+  run,
+  index,
+  agentName,
+  onDeleted,
+}: {
+  run: RunVM;
+  index: number;
+  agentName: string;
+  onDeleted: (taskGone: boolean) => Promise<void>;
+}) {
   const { runsById } = useDerived();
   const { refresh } = useNexusActions();
   const now = useNow(run.status === "running" ? 250 : 5000);
   const [stopping, setStopping] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const note = run.proposedRunId ? runsById.get(run.proposedRunId) : undefined;
   const elapsed = (run.finishedAt ?? now) - run.startedAt;
+
+  async function remove() {
+    setDeleting(true);
+    setError(null);
+    try {
+      const deleted = await api.deleteExchange(run.messageId);
+      await onDeleted(deleted.conversation_deleted);
+    } catch (err) {
+      setError(describeError(err));
+      setDeleting(false);
+    }
+  }
 
   async function stop() {
     setStopping(true);
@@ -237,7 +324,30 @@ function RunBlock({ run, index, agentName }: { run: RunVM; index: number; agentN
             .join(" · ")}
           {run.promptTokens !== null && ` · ${run.promptTokens} tokens sent · ${run.outputTokens ?? "?"} received`}
         </span>
+        <button
+          type="button"
+          className="ghost danger-ghost run-delete"
+          aria-label={`Delete request and reply ${index}`}
+          title={run.streaming ? "Stop the reply first" : "Delete this request and its reply"}
+          disabled={run.streaming || confirm}
+          onClick={() => setConfirm(true)}
+        >
+          Delete
+        </button>
       </header>
+      {confirm && (
+        <div className="confirm-bar" role="alert">
+          <p>Delete this request and its reply for good? The model will no longer see them in this task.</p>
+          <div className="actions">
+            <button type="button" className="danger" disabled={deleting || run.streaming} onClick={() => void remove()}>
+              Delete for good
+            </button>
+            <button type="button" className="ghost" disabled={deleting} onClick={() => setConfirm(false)}>
+              Keep
+            </button>
+          </div>
+        </div>
+      )}
       <Timeline items={run.items} now={now} label={`Steps of run ${index}`} />
       {run.text && <div className="message-text">{run.text}</div>}
       {run.streaming && (

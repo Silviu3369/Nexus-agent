@@ -129,6 +129,11 @@ export type ConversationView = { conversation_id: ConversationId; project_id: Pr
 
 export type SendMessageResponse = { conversation_id: ConversationId; user_message_id: MessageId; reply_message_id: MessageId }
 
+/**
+ * What a deletion removed.
+ */
+export type DeletedView = { conversation_id: ConversationId; messages: number; conversation_deleted: boolean }
+
 export type ProjectId = string
 
 export type MemoryId = string

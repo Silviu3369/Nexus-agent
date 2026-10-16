@@ -21,7 +21,7 @@ import type {
   RunView,
   SystemStatusView,
 } from "@nexus/contracts";
-import { api, describeError } from "../api";
+import { api, describeError, errorCode } from "../api";
 import { buildRuns, followedTask, invalidatedBy } from "../model/execution.ts";
 import type { Collection, RunVM } from "../model/execution.ts";
 
@@ -81,6 +81,8 @@ interface NexusActions {
   checkHost: () => Promise<void>;
   /** Follow this task in the live panel until another one starts working. */
   follow: (id: ConversationId) => void;
+  /** A task that no longer exists: stop following it. */
+  forget: (id: ConversationId) => void;
   setComposing: (on: boolean) => void;
 }
 
@@ -103,7 +105,16 @@ export function NexusProvider({ children }: { children: ReactNode }) {
         patch({ focus: null });
         return;
       }
-      const view = await api.getConversation(id);
+      let view: ConversationView;
+      try {
+        view = await api.getConversation(id);
+      } catch (err) {
+        if (errorCode(err) !== "NotFound") throw err;
+        // Deleted meanwhile: follow nothing until the next change picks a task.
+        if (pinned.current === id) pinned.current = null;
+        setData((d) => (d.focusId === id ? { ...d, focusId: null, focus: null } : d));
+        return;
+      }
       // A slower answer for a task no longer followed is dropped.
       setData((d) => (d.focusId === id ? { ...d, focus: view } : d));
     },
@@ -290,6 +301,10 @@ export function NexusProvider({ children }: { children: ReactNode }) {
         pinned.current = id;
         setData((d) => ({ ...d, focusId: id, focus: d.focusId === id ? d.focus : null }));
         void loadFocus(id).catch((err) => patch({ syncError: describeError(err) }));
+      },
+      forget: (id) => {
+        if (pinned.current === id) pinned.current = null;
+        setData((d) => (d.focusId === id ? { ...d, focusId: null, focus: null } : d));
       },
       setComposing: (on) => setData((d) => (d.composing === on ? d : { ...d, composing: on })),
     }),

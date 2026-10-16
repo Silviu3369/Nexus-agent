@@ -4,8 +4,8 @@
 
 use crate::chat::{
     AgentStepView, BackupModelView, ConnectionView, ConversationSummary, ConversationView,
-    ModelView, PersonaView, SaveConnectionRequest, SavePersonaRequest, SendMessageRequest,
-    SendMessageResponse, ThinkingLevel,
+    DeletedView, ModelView, PersonaView, SaveConnectionRequest, SavePersonaRequest,
+    SendMessageRequest, SendMessageResponse, ThinkingLevel,
 };
 use crate::error::NexusError;
 use crate::handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse};
@@ -105,6 +105,16 @@ pub trait NexusService {
 
     /// Stops a reply in progress; what arrived so far is kept, marked cancelled.
     async fn cancel_reply(message_id: MessageId) -> Result<(), NexusError>;
+
+    /// Deletes a task with its messages and steps, for good. Refused while
+    /// a reply is being written. Facts it proposed and notes it wrote stay.
+    async fn delete_conversation(
+        conversation_id: ConversationId,
+    ) -> Result<DeletedView, NexusError>;
+
+    /// Deletes one request with its reply (`message_id` names either), so
+    /// the model no longer sees them. The only exchange takes the task.
+    async fn delete_exchange(message_id: MessageId) -> Result<DeletedView, NexusError>;
 
     /// What the agent did most recently, across conversations, newest first
     /// (at most `limit`, capped by the host). Running steps are included.

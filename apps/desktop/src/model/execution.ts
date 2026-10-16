@@ -700,6 +700,8 @@ const EVENT_TEXT: Record<string, { title: string; tool: ActivityTool; status?: E
   MessageSent: { title: "Task request recorded", tool: "System" },
   MessageSettled: { title: "Reply settled", tool: "System" },
   MessagesInterrupted: { title: "Replies interrupted by a Host stop", tool: "System", status: "failed" },
+  ConversationDeleted: { title: "Task deleted with its messages", tool: "System" },
+  ExchangeDeleted: { title: "A request and its reply deleted", tool: "System" },
   AgentStepsInterrupted: { title: "Unfinished steps closed (stop or restart)", tool: "System" },
   ConnectionSaved: { title: "AI connection saved", tool: "System" },
   ConnectionRemoved: { title: "AI connection removed", tool: "System" },
@@ -825,6 +827,14 @@ export function invalidatedBy(events: EventView[]): Set<Collection> {
       out.add("focus");
       // A new task changes its project's task count.
       out.add("projects");
+    } else if (k === "ConversationDeleted" || k === "ExchangeDeleted") {
+      out.add("conversations");
+      out.add("steps");
+      out.add("focus");
+      out.add("projects");
+      // Notes and facts it led to lose their link to it.
+      out.add("runs");
+      out.add("memory");
     } else if (k.startsWith("Memory")) {
       out.add("memory");
       out.add("projects");

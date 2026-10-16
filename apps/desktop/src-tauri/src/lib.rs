@@ -37,6 +37,8 @@ pub fn run() {
             chat::get_conversation,
             chat::send_message,
             chat::cancel_reply,
+            chat::delete_conversation,
+            chat::delete_exchange,
             memory::list_projects,
             memory::save_project,
             memory::set_active_project,

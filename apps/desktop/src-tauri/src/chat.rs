@@ -3,8 +3,8 @@
 
 use nexus_protocol::{
     AgentStepView, BackupModelView, ConnectionId, ConnectionView, ConversationId,
-    ConversationSummary, ConversationView, MessageId, ModelView, PersonaView, ProjectId,
-    ProviderChoice, SaveConnectionRequest, SavePersonaRequest, SendMessageRequest,
+    ConversationSummary, ConversationView, DeletedView, MessageId, ModelView, PersonaView,
+    ProjectId, ProviderChoice, SaveConnectionRequest, SavePersonaRequest, SendMessageRequest,
     SendMessageResponse, ThinkingLevel,
 };
 
@@ -179,5 +179,25 @@ pub async fn get_activity(connection: State<'_>) -> Result<Vec<AgentStepView>, B
 pub async fn cancel_reply(connection: State<'_>, message_id: MessageId) -> Result<(), BridgeError> {
     connection
         .call(async |c| c.cancel_reply(message_id).await)
+        .await
+}
+
+#[tauri::command]
+pub async fn delete_conversation(
+    connection: State<'_>,
+    conversation_id: ConversationId,
+) -> Result<DeletedView, BridgeError> {
+    connection
+        .call(async |c| c.delete_conversation(conversation_id).await)
+        .await
+}
+
+#[tauri::command]
+pub async fn delete_exchange(
+    connection: State<'_>,
+    message_id: MessageId,
+) -> Result<DeletedView, BridgeError> {
+    connection
+        .call(async |c| c.delete_exchange(message_id).await)
         .await
 }

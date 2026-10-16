@@ -14,8 +14,9 @@
   window, a task given from the command bar with its steps, the Nexus Core
   path and the activity log, a temporary outage tried again, projects, a
   fact the agent proposes that is sent only after you approve it, a fact
-  you add, search and delete, and removing the connection with its vault
-  entry. Build first:
+  you add, search and delete, deleting a request with its reply and a whole
+  task (gone from the database files too), and removing the connection with
+  its vault entry. Build first:
     cargo build -p nexus-host --locked
     cargo build -p nexus-host --example fake_gemini_server --locked
     pnpm --filter @nexus/desktop tauri build --no-bundle
@@ -169,6 +170,27 @@ function Wait-Match($win, [string]$regex, [int]$seconds = 15) {
     Start-Sleep -Milliseconds 250
   }
   return $null
+}
+
+function Wait-Gone($win, [string]$fragment, [int]$seconds = 15) {
+  $deadline = (Get-Date).AddSeconds($seconds)
+  while ((Get-Date) -lt $deadline) {
+    if (-not (Find-Like $win $fragment)) { return $true }
+    Start-Sleep -Milliseconds 250
+  }
+  return $false
+}
+
+# The profile's database file and journal, read while the host has them open.
+function Profile-Bytes {
+  $all = New-Object System.Collections.Generic.List[byte]
+  foreach ($name in "nexus.db", "nexus.db-wal") {
+    $path = Join-Path $profileDir $name
+    if (-not (Test-Path $path)) { continue }
+    $fs = [System.IO.File]::Open($path, 'Open', 'Read', 'ReadWrite')
+    try { $buf = New-Object byte[] $fs.Length; [void]$fs.Read($buf, 0, $buf.Length); $all.AddRange($buf) } finally { $fs.Dispose() }
+  }
+  [System.Text.Encoding]::UTF8.GetString($all.ToArray())
 }
 
 function Send-Chat($win, [string]$text) {
@@ -363,6 +385,27 @@ try {
   Click-Button $win "Delete"
   Click-Button $win "Delete for good"
   Check (Wait-Text $win "No fact matches this search.") "a deleted fact is gone"
+
+  # --- deleting a request with its reply, then a whole task ---
+  Click-Button $win "Tasks"
+  $row = Wait-Like $win "Remember that I like short answers"
+  Check ($null -ne $row) "the task that proposed the fact is listed"
+  if ($row) { Invoke-Element $row }
+  Click-Button $win "Delete request and reply 1"
+  Check (Wait-Text $win "Delete this request and its reply for good? The model will no longer see them in this task.") "deleting a request asks first"
+  Click-Button $win "Delete for good"
+  Check (Wait-Gone $win "Remember that I like short answers") "deleting its only request removes the task"
+  Click-Button $win "Memory"
+  Check (Wait-Text $win "The user prefers short answers.") "the fact it proposed stays in Memory"
+  Click-Button $win "Tasks"
+  $row = Wait-Like $win "Check the private page"
+  if ($row) { Invoke-Element $row }
+  Click-Button $win "Delete task"
+  Check ($null -ne (Wait-Contains $win "Facts it proposed stay in Memory")) "deleting a task says what stays"
+  Click-Button $win "Delete for good"
+  Check (Wait-Gone $win "Check the private page") "the deleted task is gone from the list"
+  Check (-not (Profile-Bytes).Contains("Check the private page")) "its text is gone from the profile's database files"
+  Check ((Profile-Bytes).Contains("Answer briefly")) "other tasks are untouched on disk"
 
   # --- removing the connection removes its key ---
   Click-Button $win "Models"

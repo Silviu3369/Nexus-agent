@@ -21,8 +21,8 @@ pub use runs::{
 
 pub use chat::{
     AgentStepDetail, AgentStepStatus, AgentStepView, BackupModelView, ChatMessageView, ChatRole,
-    ChatStatus, ConnectionView, ConversationSummary, ConversationView, ModelView, PersonaView,
-    ProviderChoice, SaveConnectionRequest, SavePersonaRequest, SendMessageRequest,
+    ChatStatus, ConnectionView, ConversationSummary, ConversationView, DeletedView, ModelView,
+    PersonaView, ProviderChoice, SaveConnectionRequest, SavePersonaRequest, SendMessageRequest,
     SendMessageResponse, ThinkingLevel,
 };
 pub use error::{ErrorCode, NexusError};

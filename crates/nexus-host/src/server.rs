@@ -8,11 +8,12 @@ use nexus_protocol::service::NexusService;
 use nexus_protocol::{
     AddMemoryRequest, AgentStepView, ArtifactId, BackupModelView, BackupSummary, ConnectionId,
     ConnectionView, ConversationId, ConversationSummary, ConversationView, DecideApprovalRequest,
-    ErrorCode, EventsPage, GetHealthResponse, HandshakeRequest, HandshakeResponse, HealthStatus,
-    MemoryContextView, MemoryId, MemoryItemView, MemoryQuery, MessageId, ModelView, NexusError,
-    PROTOCOL_VERSION, PersonaView, ProjectId, ProjectView, RunId, RunView, SaveConnectionRequest,
-    SavePersonaRequest, SaveProjectRequest, SendMessageRequest, SendMessageResponse, Snapshot,
-    SubmitNoteRequest, SubmitNoteResponse, SystemStatusView, ThinkingLevel,
+    DeletedView, ErrorCode, EventsPage, GetHealthResponse, HandshakeRequest, HandshakeResponse,
+    HealthStatus, MemoryContextView, MemoryId, MemoryItemView, MemoryQuery, MessageId, ModelView,
+    NexusError, PROTOCOL_VERSION, PersonaView, ProjectId, ProjectView, RunId, RunView,
+    SaveConnectionRequest, SavePersonaRequest, SaveProjectRequest, SendMessageRequest,
+    SendMessageResponse, Snapshot, SubmitNoteRequest, SubmitNoteResponse, SystemStatusView,
+    ThinkingLevel,
 };
 use tarpc::context::Context;
 use tarpc::server::{BaseChannel, Channel};
@@ -298,6 +299,24 @@ impl NexusService for HostServer {
     async fn cancel_reply(self, _ctx: Context, message_id: MessageId) -> Result<(), NexusError> {
         self.require_session()?;
         self.runtime.cancel_reply(message_id).await
+    }
+
+    async fn delete_conversation(
+        self,
+        _ctx: Context,
+        conversation_id: ConversationId,
+    ) -> Result<DeletedView, NexusError> {
+        self.require_session()?;
+        self.runtime.delete_conversation(conversation_id).await
+    }
+
+    async fn delete_exchange(
+        self,
+        _ctx: Context,
+        message_id: MessageId,
+    ) -> Result<DeletedView, NexusError> {
+        self.require_session()?;
+        self.runtime.delete_exchange(message_id).await
     }
 
     async fn get_activity(

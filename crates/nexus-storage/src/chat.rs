@@ -485,16 +485,10 @@ impl Store {
                             .optional()?
                             .ok_or(StorageError::NotFound("project"))?,
                     };
-                    let title: String = new.text.trim().chars().take(60).collect();
                     tx.execute(
                         "INSERT INTO conversations (id, title, created_at_ms, updated_at_ms, project_id)
                          VALUES (?1, ?2, ?3, ?3, ?4)",
-                        params![
-                            id.to_string(),
-                            if title.is_empty() { "Untitled task".to_string() } else { title },
-                            now,
-                            project
-                        ],
+                        params![id.to_string(), title_from(&new.text), now, project],
                     )?;
                     id
                 }
@@ -661,6 +655,197 @@ impl Store {
         self.call(move |conn| load_message(&conn.transaction()?, id))
             .await
     }
+
+    /// Deletes a task for good: its messages and the steps of its replies.
+    /// A reply still being written must be stopped first. Facts it proposed
+    /// and notes it wrote stay (they are managed on their own) and only lose
+    /// the link to it.
+    pub async fn delete_conversation(
+        &self,
+        id: ConversationId,
+        now: i64,
+    ) -> Result<Deleted, StorageError> {
+        self.call(move |conn| {
+            let tx = conn.transaction()?;
+            let found: Option<i64> = tx
+                .query_row(
+                    "SELECT 1 FROM conversations WHERE id = ?1",
+                    [id.to_string()],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            found.ok_or(StorageError::NotFound("conversation"))?;
+            let writing: i64 = tx.query_row(
+                "SELECT count(*) FROM messages WHERE conversation_id = ?1 AND status = 'Streaming'",
+                [id.to_string()],
+                |r| r.get(0),
+            )?;
+            if writing > 0 {
+                return Err(StorageError::ReplyInProgress);
+            }
+            let ids: Vec<String> = {
+                let mut stmt = tx.prepare("SELECT id FROM messages WHERE conversation_id = ?1")?;
+                stmt.query_map([id.to_string()], |r| r.get(0))?
+                    .collect::<Result<_, _>>()?
+            };
+            let messages = remove_messages(&tx, &ids)?;
+            remove_conversation(&tx, id, messages, now)?;
+            tx.commit()?;
+            shrink_journal(conn);
+            Ok(Deleted {
+                conversation_id: id,
+                messages,
+                conversation_deleted: true,
+            })
+        })
+        .await
+    }
+
+    /// Deletes one request and the reply to it (`message` names either), so
+    /// the model no longer sees them in the task's history. Deleting the
+    /// only exchange deletes the task; deleting the first one retitles the
+    /// task from the request that is now first, so the title never keeps
+    /// deleted text.
+    pub async fn delete_exchange(
+        &self,
+        message: MessageId,
+        now: i64,
+    ) -> Result<Deleted, StorageError> {
+        self.call(move |conn| {
+            let tx = conn.transaction()?;
+            let picked = load_message(&tx, message)?;
+            let conversation = picked.conversation_id;
+            let partner_seq = match picked.role {
+                MessageRole::User => picked.seq + 1,
+                MessageRole::Model => picked.seq - 1,
+            };
+            let partner = load_message_at(&tx, conversation, partner_seq)?;
+            let mut pair = vec![picked];
+            // Every request is recorded with its reply; anything else is
+            // deleted alone rather than taking an unrelated message with it.
+            if let Some(partner) = partner.filter(|p| p.role != pair[0].role) {
+                pair.push(partner);
+            }
+            if pair.iter().any(|m| m.status == MessageStatus::Streaming) {
+                return Err(StorageError::ReplyInProgress);
+            }
+            let first_seq: i64 = tx.query_row(
+                "SELECT min(seq) FROM messages WHERE conversation_id = ?1",
+                [conversation.to_string()],
+                |r| r.get(0),
+            )?;
+            let ids: Vec<String> = pair.iter().map(|m| m.id.to_string()).collect();
+            let messages = remove_messages(&tx, &ids)?;
+            let remaining: i64 = tx.query_row(
+                "SELECT count(*) FROM messages WHERE conversation_id = ?1",
+                [conversation.to_string()],
+                |r| r.get(0),
+            )?;
+            let conversation_deleted = remaining == 0;
+            if conversation_deleted {
+                remove_conversation(&tx, conversation, messages, now)?;
+            } else {
+                if pair.iter().any(|m| m.seq == first_seq) {
+                    let first: Option<String> = tx
+                        .query_row(
+                            "SELECT text FROM messages WHERE conversation_id = ?1 AND role = 'User'
+                             ORDER BY seq LIMIT 1",
+                            [conversation.to_string()],
+                            |r| r.get(0),
+                        )
+                        .optional()?;
+                    tx.execute(
+                        "UPDATE conversations SET title = ?1 WHERE id = ?2",
+                        params![
+                            title_from(first.as_deref().unwrap_or("")),
+                            conversation.to_string()
+                        ],
+                    )?;
+                }
+                insert_event(
+                    &tx,
+                    "ExchangeDeleted",
+                    &conversation.to_string(),
+                    0,
+                    json!({"messages": messages}),
+                    now,
+                )?;
+            }
+            tx.commit()?;
+            shrink_journal(conn);
+            Ok(Deleted {
+                conversation_id: conversation,
+                messages,
+                conversation_deleted,
+            })
+        })
+        .await
+    }
+}
+
+/// What a deletion removed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Deleted {
+    pub conversation_id: ConversationId,
+    pub messages: usize,
+    /// The whole task is gone (deleted, or its last exchange was).
+    pub conversation_deleted: bool,
+}
+
+/// A task is named after its first request.
+fn title_from(text: &str) -> String {
+    let title: String = text.trim().chars().take(60).collect();
+    if title.is_empty() {
+        "Untitled task".to_string()
+    } else {
+        title
+    }
+}
+
+/// Removes messages with their steps; facts proposed in them keep their
+/// task but lose the message.
+fn remove_messages(tx: &Transaction, ids: &[String]) -> Result<usize, StorageError> {
+    for id in ids {
+        tx.execute(
+            "UPDATE memory_items SET message_id = NULL WHERE message_id = ?1",
+            [id],
+        )?;
+        tx.execute("DELETE FROM agent_steps WHERE message_id = ?1", [id])?;
+        tx.execute("DELETE FROM messages WHERE id = ?1", [id])?;
+    }
+    Ok(ids.len())
+}
+
+fn remove_conversation(
+    tx: &Transaction,
+    id: ConversationId,
+    messages: usize,
+    now: i64,
+) -> Result<(), StorageError> {
+    tx.execute(
+        "UPDATE memory_items SET conversation_id = NULL, message_id = NULL WHERE conversation_id = ?1",
+        [id.to_string()],
+    )?;
+    tx.execute("DELETE FROM conversations WHERE id = ?1", [id.to_string()])?;
+    insert_event(
+        tx,
+        "ConversationDeleted",
+        &id.to_string(),
+        0,
+        json!({"messages": messages}),
+        now,
+    )?;
+    Ok(())
+}
+
+/// After a deletion: copies the journal into the database file and empties
+/// it, so deleted text (already overwritten in place, `secure_delete`) does
+/// not linger in older journal frames either. Best effort: a reader holding
+/// an old snapshot only delays it to the next deletion.
+pub(crate) fn shrink_journal(conn: &rusqlite::Connection) {
+    let _ = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
+        r.get::<_, i64>(0)
+    });
 }
 
 fn load_connection(tx: &Transaction, id: ConnectionId) -> Result<ConnectionRow, StorageError> {

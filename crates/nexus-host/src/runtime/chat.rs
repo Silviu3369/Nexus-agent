@@ -13,8 +13,8 @@ use nexus_core::{
 use nexus_protocol::{
     AgentStepDetail, AgentStepId, AgentStepView, BackupModelView, ChatMessageView, ChatRole,
     ChatStatus, ConnectionId, ConnectionView, ConversationId, ConversationSummary,
-    ConversationView, ErrorCode, MessageId, ModelView, NexusError, PersonaView, ProjectId,
-    ProviderChoice, RunFailure, RunId, SaveConnectionRequest, SavePersonaRequest,
+    ConversationView, DeletedView, ErrorCode, MessageId, ModelView, NexusError, PersonaView,
+    ProjectId, ProviderChoice, RunFailure, RunId, SaveConnectionRequest, SavePersonaRequest,
     SendMessageRequest, SendMessageResponse, SubmitNoteRequest,
 };
 use nexus_providers::{
@@ -22,7 +22,7 @@ use nexus_providers::{
     ProviderRequest, Role, ToolDeclaration, detect_provider,
 };
 use nexus_storage::{
-    AgentStepRow, ConnectionRow, Exchange, MemoryRow, MessageRow, NewExchange, NewMemory,
+    AgentStepRow, ConnectionRow, Deleted, Exchange, MemoryRow, MessageRow, NewExchange, NewMemory,
     PersonaRow, Settlement, now_ms,
 };
 use serde_json::{Value, json};
@@ -1214,6 +1214,31 @@ impl Runtime {
         }
     }
 
+    pub async fn delete_conversation(&self, id: ConversationId) -> Result<DeletedView, NexusError> {
+        let deleted = self
+            .store
+            .delete_conversation(id, now_ms())
+            .await
+            .map_err(to_nexus_error)?;
+        tracing::info!(conversation = %id, messages = deleted.messages, "task deleted");
+        Ok(deleted_view(deleted))
+    }
+
+    pub async fn delete_exchange(&self, id: MessageId) -> Result<DeletedView, NexusError> {
+        let deleted = self
+            .store
+            .delete_exchange(id, now_ms())
+            .await
+            .map_err(to_nexus_error)?;
+        tracing::info!(
+            conversation = %deleted.conversation_id,
+            messages = deleted.messages,
+            task_deleted = deleted.conversation_deleted,
+            "exchange deleted"
+        );
+        Ok(deleted_view(deleted))
+    }
+
     /// Stops a reply in progress; what arrived so far is kept.
     pub async fn cancel_reply(&self, id: MessageId) -> Result<(), NexusError> {
         let live = self.replies.take(id);
@@ -1481,6 +1506,14 @@ fn memory_tool() -> ToolDeclaration {
 }
 
 /// The host of an http(s) address, without credentials or port.
+fn deleted_view(deleted: Deleted) -> DeletedView {
+    DeletedView {
+        conversation_id: deleted.conversation_id,
+        messages: u32::try_from(deleted.messages).unwrap_or(u32::MAX),
+        conversation_deleted: deleted.conversation_deleted,
+    }
+}
+
 fn url_host(url: &str) -> Option<String> {
     let rest = url.split_once("://")?.1;
     let authority = rest.split(['/', '?', '#']).next()?;

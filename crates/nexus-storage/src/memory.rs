@@ -361,6 +361,7 @@ impl Store {
                 now,
             )?;
             tx.commit()?;
+            crate::chat::shrink_journal(conn);
             Ok(())
         })
         .await

@@ -224,6 +224,15 @@ pub struct SendMessageRequest {
     pub text: String,
 }
 
+/// What a deletion removed.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct DeletedView {
+    pub conversation_id: ConversationId,
+    pub messages: u32,
+    /// The whole task is gone (it was deleted, or its last exchange was).
+    pub conversation_deleted: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct SendMessageResponse {
     pub conversation_id: ConversationId,

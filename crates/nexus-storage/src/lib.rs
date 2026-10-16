@@ -9,8 +9,8 @@ mod schema;
 mod steps;
 
 pub use chat::{
-    ConnectionRow, ConversationRow, DEFAULT_PERSONA_NAME, Exchange, MessageRow, NewExchange,
-    PersonaRow, Settlement,
+    ConnectionRow, ConversationRow, DEFAULT_PERSONA_NAME, Deleted, Exchange, MessageRow,
+    NewExchange, PersonaRow, Settlement,
 };
 pub use memory::{MemoryFilter, MemoryRow, NewMemory, ProjectRow};
 pub use repo::{
@@ -65,6 +65,8 @@ pub enum StorageError {
     ApprovalInvalidated(String),
     #[error("cancellation was requested before the effect started")]
     CancellationRequested,
+    #[error("a reply is still being written; stop it first")]
+    ReplyInProgress,
 }
 
 type Job = Box<dyn FnOnce(&mut Connection) + Send>;
@@ -149,6 +151,9 @@ fn open_connection(path: &Path) -> Result<Connection, StorageError> {
     // FULL: an intent must be durable before the side effect it guards.
     conn.pragma_update(None, "synchronous", "FULL")?;
     conn.pragma_update(None, "foreign_keys", true)?;
+    // What the user deletes is overwritten with zeros in the file, not just
+    // unlinked (`chat::shrink_journal` handles the journal).
+    conn.pragma_update(None, "secure_delete", true)?;
     schema::migrate(&mut conn)?;
     Ok(conn)
 }
