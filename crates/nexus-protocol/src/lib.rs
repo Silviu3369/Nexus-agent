@@ -19,15 +19,16 @@ pub use runs::{
 };
 
 pub use chat::{
-    ChatMessageView, ChatRole, ChatStatus, ConnectionView, ConversationSummary, ConversationView,
-    ModelView, PersonaView, SaveGeminiConnectionRequest, SavePersonaRequest, SendMessageRequest,
-    SendMessageResponse, ThinkingLevel,
+    AgentStepDetail, AgentStepStatus, AgentStepView, ChatMessageView, ChatRole, ChatStatus,
+    ConnectionView, ConversationSummary, ConversationView, ModelView, PersonaView,
+    SaveGeminiConnectionRequest, SavePersonaRequest, SendMessageRequest, SendMessageResponse,
+    ThinkingLevel,
 };
 pub use error::{ErrorCode, NexusError};
 pub use handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse, HealthStatus};
 pub use ids::{
-    ActionId, ApprovalId, ArtifactId, ConnectionId, ConversationId, EventId, MessageId,
-    OperationId, ProjectId, RequestId, RunId, StepId, TaskId,
+    ActionId, AgentStepId, ApprovalId, ArtifactId, ConnectionId, ConversationId, EventId,
+    MessageId, OperationId, ProjectId, RequestId, RunId, StepId, TaskId,
 };
 pub use service::{NexusService, NexusServiceClient};
 pub use version::PROTOCOL_VERSION;

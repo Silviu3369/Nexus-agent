@@ -6,12 +6,12 @@ use std::time::Instant;
 use futures::StreamExt;
 use nexus_protocol::service::NexusService;
 use nexus_protocol::{
-    ArtifactId, BackupSummary, ConnectionId, ConnectionView, ConversationId, ConversationSummary,
-    ConversationView, DecideApprovalRequest, ErrorCode, EventsPage, GetHealthResponse,
-    HandshakeRequest, HandshakeResponse, HealthStatus, MessageId, ModelView, NexusError,
-    PROTOCOL_VERSION, PersonaView, RunId, RunView, SaveGeminiConnectionRequest, SavePersonaRequest,
-    SendMessageRequest, SendMessageResponse, Snapshot, SubmitNoteRequest, SubmitNoteResponse,
-    ThinkingLevel,
+    AgentStepView, ArtifactId, BackupSummary, ConnectionId, ConnectionView, ConversationId,
+    ConversationSummary, ConversationView, DecideApprovalRequest, ErrorCode, EventsPage,
+    GetHealthResponse, HandshakeRequest, HandshakeResponse, HealthStatus, MessageId, ModelView,
+    NexusError, PROTOCOL_VERSION, PersonaView, RunId, RunView, SaveGeminiConnectionRequest,
+    SavePersonaRequest, SendMessageRequest, SendMessageResponse, Snapshot, SubmitNoteRequest,
+    SubmitNoteResponse, ThinkingLevel,
 };
 use tarpc::context::Context;
 use tarpc::server::{BaseChannel, Channel};
@@ -282,6 +282,15 @@ impl NexusService for HostServer {
     async fn cancel_reply(self, _ctx: Context, message_id: MessageId) -> Result<(), NexusError> {
         self.require_session()?;
         self.runtime.cancel_reply(message_id).await
+    }
+
+    async fn get_activity(
+        self,
+        _ctx: Context,
+        limit: u32,
+    ) -> Result<Vec<AgentStepView>, NexusError> {
+        self.require_session()?;
+        self.runtime.get_activity(limit).await
     }
 
     async fn stop_host(self, _ctx: Context) -> Result<(), NexusError> {

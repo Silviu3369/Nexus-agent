@@ -4,6 +4,6 @@
 pub mod state;
 
 pub use state::{
-    ActionState, IllegalTransition, MessageRole, MessageStatus, OperationState, RunState,
-    ThinkingLevel, UnknownState,
+    ActionState, AgentStepKind, AgentStepStatus, IllegalTransition, MessageRole, MessageStatus,
+    OperationState, RunState, ThinkingLevel, UnknownState,
 };

@@ -11,8 +11,9 @@ use nexus_client::NexusClient;
 use nexus_host::RuntimeConfig;
 use nexus_host::vault::SecretVault;
 use nexus_protocol::{
-    ApprovalDecision, ChatRole, ChatStatus, DecideApprovalRequest, ErrorCode, RunId, RunStatus,
-    RunView, SavePersonaRequest, SendMessageRequest, ThinkingLevel,
+    AgentStepDetail, AgentStepStatus, ApprovalDecision, ChatRole, ChatStatus,
+    DecideApprovalRequest, ErrorCode, RunId, RunStatus, RunView, SavePersonaRequest,
+    SendMessageRequest, ThinkingLevel,
 };
 use support::chat::{files_under, gemini, message, send, settled};
 use support::fake_gemini::{FakeGemini, MODEL, Reply, text_event};
@@ -583,6 +584,208 @@ async fn a_note_proposed_alongside_a_fetch_ends_the_turn_on_the_note_alone() {
         1,
         "a note in the same step ends the turn; fetch_url is not also run"
     );
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn every_agent_step_is_recorded_and_shown_in_the_reply_and_the_activity() {
+    let fake = FakeGemini::start(KEY).await;
+    let host = TestHost::start_with(TOKEN, config(&fake)).await;
+    let client = host.client().await;
+    connect_gemini(&client).await;
+
+    // Model asks to fetch (refused: loopback), sees why, then proposes a note.
+    fake.push(Reply::calls(&[(
+        "fetch_url",
+        serde_json::json!({"url": "http://127.0.0.1:1/private"}),
+    )]));
+    fake.push(Reply::calls(&[(
+        "propose_note",
+        serde_json::json!({"title": "Rezumat", "body": "nu am putut citi pagina"}),
+    )]));
+    let sent = send(&client, None, "s1", "Citește pagina și notează").await;
+    let reply = settled(&client, &sent).await;
+    let run = reply.proposed_run_id.expect("the note became a run");
+
+    let kinds: Vec<&str> = reply
+        .steps
+        .iter()
+        .map(|s| match s.detail {
+            AgentStepDetail::ModelCall { .. } => "model",
+            AgentStepDetail::Fetch { .. } => "fetch",
+            AgentStepDetail::NoteProposed { .. } => "note",
+        })
+        .collect();
+    assert_eq!(kinds, ["model", "fetch", "model", "note"]);
+    assert_eq!(
+        reply.steps.iter().map(|s| s.seq).collect::<Vec<_>>(),
+        [1, 2, 3, 4]
+    );
+    assert!(reply.steps.iter().all(|s| s.finished_at_ms.is_some()));
+
+    match &reply.steps[0].detail {
+        AgentStepDetail::ModelCall {
+            model,
+            duration_ms,
+            error,
+            ..
+        } => {
+            assert_eq!(model, MODEL);
+            assert!(duration_ms.is_some(), "the call is timed");
+            assert!(error.is_none());
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(reply.steps[1].status, AgentStepStatus::Failed);
+    match &reply.steps[1].detail {
+        AgentStepDetail::Fetch {
+            url,
+            error,
+            http_status,
+            ..
+        } => {
+            assert_eq!(url, "http://127.0.0.1:1/private");
+            assert!(
+                error.as_deref().is_some_and(|e| !e.is_empty()),
+                "the refusal says why"
+            );
+            assert_eq!(*http_status, None, "nothing was fetched");
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(reply.steps[3].status, AgentStepStatus::Done);
+    match &reply.steps[3].detail {
+        AgentStepDetail::NoteProposed { title, run_id, .. } => {
+            assert_eq!(title, "Rezumat");
+            assert_eq!(
+                *run_id,
+                Some(run),
+                "the step points at the run awaiting approval"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+
+    let activity = client.activity(20).await.unwrap();
+    assert_eq!(
+        activity.iter().map(|s| s.step_id).collect::<Vec<_>>(),
+        reply
+            .steps
+            .iter()
+            .rev()
+            .map(|s| s.step_id)
+            .collect::<Vec<_>>(),
+        "the dashboard feed shows the same steps, newest first"
+    );
+    assert!(
+        activity
+            .iter()
+            .all(|s| s.conversation_id == sent.conversation_id)
+    );
+    assert_eq!(activity[0].conversation_title, "Citește pagina și notează");
+
+    let user_message = message(&client, sent.conversation_id, sent.user_message_id).await;
+    assert!(user_message.steps.is_empty(), "steps belong to the reply");
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_failed_or_stopped_model_call_is_a_failed_step_not_a_running_one() {
+    let fake = FakeGemini::start(KEY).await;
+    let host = TestHost::start_with(TOKEN, config(&fake)).await;
+    let client = host.client().await;
+    connect_gemini(&client).await;
+
+    fake.push(Reply::status(503, r#"{"error":{"message":"overloaded"}}"#));
+    let sent = send(&client, None, "e1", "Salut").await;
+    let reply = settled(&client, &sent).await;
+    assert_eq!(reply.status, ChatStatus::Failed);
+    assert_eq!(reply.steps.len(), 1);
+    assert_eq!(reply.steps[0].status, AgentStepStatus::Failed);
+    match &reply.steps[0].detail {
+        AgentStepDetail::ModelCall { error, .. } => {
+            assert!(
+                error.as_deref().is_some_and(|e| e.contains("overloaded")),
+                "{error:?}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+
+    fake.push(Reply::SseThenHang(vec![text_event("Început ")]));
+    let sent = send(&client, Some(sent.conversation_id), "e2", "Scrie mult").await;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let live = message(&client, sent.conversation_id, sent.reply_message_id).await;
+        if live
+            .steps
+            .first()
+            .is_some_and(|s| s.status == AgentStepStatus::Running)
+            && live.text == "Început "
+        {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the running step never showed"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    client.cancel_reply(sent.reply_message_id).await.unwrap();
+    let stopped = message(&client, sent.conversation_id, sent.reply_message_id).await;
+    assert_eq!(stopped.steps.len(), 1);
+    assert_eq!(stopped.steps[0].status, AgentStepStatus::Failed);
+    match &stopped.steps[0].detail {
+        AgentStepDetail::ModelCall { error, .. } => {
+            assert_eq!(error.as_deref(), Some("stopped by the user"));
+        }
+        other => panic!("{other:?}"),
+    }
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_step_left_running_by_a_stopped_host_is_failed_on_restart() {
+    let fake = FakeGemini::start(KEY).await;
+    let host = TestHost::start_with(TOKEN, config(&fake)).await;
+    let client = host.client().await;
+    connect_gemini(&client).await;
+
+    fake.push(Reply::SseThenHang(vec![text_event("Început ")]));
+    let sent = send(&client, None, "r1", "Scrie mult").await;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while !message(&client, sent.conversation_id, sent.reply_message_id)
+        .await
+        .steps
+        .first()
+        .is_some_and(|s| s.status == AgentStepStatus::Running)
+    {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the step never started"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    drop(client);
+    let profile = host.shutdown().await;
+
+    let host = TestHost::start_in(profile, TOKEN, config(&fake)).await;
+    let client = host.client().await;
+    let reply = message(&client, sent.conversation_id, sent.reply_message_id).await;
+    assert_eq!(
+        reply.status,
+        ChatStatus::Failed,
+        "the reply itself is marked interrupted"
+    );
+    assert_eq!(reply.steps.len(), 1);
+    assert_eq!(reply.steps[0].status, AgentStepStatus::Failed);
+    match &reply.steps[0].detail {
+        AgentStepDetail::ModelCall { error, .. } => assert_eq!(
+            error.as_deref(),
+            Some("the host stopped before this step finished")
+        ),
+        other => panic!("{other:?}"),
+    }
     host.shutdown().await;
 }
 

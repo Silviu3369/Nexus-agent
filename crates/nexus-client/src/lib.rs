@@ -293,6 +293,16 @@ impl NexusClient {
             .await??)
     }
 
+    pub async fn activity(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<nexus_protocol::AgentStepView>, CallError> {
+        Ok(self
+            .client
+            .get_activity(context::current(), limit)
+            .await??)
+    }
+
     pub async fn cancel_reply(&self, id: nexus_protocol::MessageId) -> Result<(), CallError> {
         Ok(self.client.cancel_reply(context::current(), id).await??)
     }

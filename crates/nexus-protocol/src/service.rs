@@ -3,7 +3,7 @@
 //! implements this; `nexus-client` calls the generated client stub.
 
 use crate::chat::{
-    ConnectionView, ConversationSummary, ConversationView, ModelView, PersonaView,
+    AgentStepView, ConnectionView, ConversationSummary, ConversationView, ModelView, PersonaView,
     SaveGeminiConnectionRequest, SavePersonaRequest, SendMessageRequest, SendMessageResponse,
     ThinkingLevel,
 };
@@ -91,6 +91,10 @@ pub trait NexusService {
 
     /// Stops a reply in progress; what arrived so far is kept, marked cancelled.
     async fn cancel_reply(message_id: MessageId) -> Result<(), NexusError>;
+
+    /// What the agent did most recently, across conversations, newest first
+    /// (at most `limit`, capped by the host). Running steps are included.
+    async fn get_activity(limit: u32) -> Result<Vec<AgentStepView>, NexusError>;
 
     /// Explicit stop: no new work is taken, the current step finishes,
     /// uncertain effects stay recorded for reconciliation on next start.

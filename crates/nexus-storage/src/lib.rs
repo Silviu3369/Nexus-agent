@@ -5,6 +5,7 @@
 mod chat;
 mod repo;
 mod schema;
+mod steps;
 
 pub use chat::{
     ConnectionRow, ConversationRow, DEFAULT_PERSONA_NAME, Exchange, MessageRow, NewExchange,
@@ -14,6 +15,7 @@ pub use repo::{
     ActionRow, ApprovalRow, ArtifactRow, Decision, EventRow, NewAction, NewOperation, OperationRow,
     RunDetail, RunError, RunRow, SubmitOutcome, TaskRow,
 };
+pub use steps::AgentStepRow;
 
 use std::path::Path;
 use std::thread::JoinHandle;

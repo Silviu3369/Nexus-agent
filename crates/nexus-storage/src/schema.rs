@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::StorageError;
 
-pub const SUPPORTED_VERSION: i64 = 3;
+pub const SUPPORTED_VERSION: i64 = 4;
 
 /// Version 1: everything M1 persists. State columns are closed lists that a
 /// test keeps identical to the `nexus-core` enums. Times are UTC unix ms.
@@ -181,7 +181,29 @@ ALTER TABLE provider_connections
     CHECK (thinking_level IN ('Low', 'Medium', 'High'));
 "#;
 
-const MIGRATIONS: &[&str] = &[V1, V2, V3];
+/// Version 4: what the agent did while producing a reply (model calls, web
+/// reads, proposed notes), so the user can watch it work and look back.
+/// Only metadata — a fetched page's URL, status and size, never its text.
+const V4: &str = r#"
+CREATE TABLE agent_steps (
+    id             TEXT    PRIMARY KEY,
+    message_id     TEXT    NOT NULL REFERENCES messages (id),
+    seq            INTEGER NOT NULL CHECK (seq >= 1),
+    kind           TEXT    NOT NULL CHECK (kind IN ('ModelCall', 'Fetch', 'NoteProposed')),
+    status         TEXT    NOT NULL CHECK (status IN ('Running', 'Done', 'Failed')),
+    detail_json    TEXT    NOT NULL CHECK (json_valid(detail_json)),
+    started_at_ms  INTEGER NOT NULL,
+    finished_at_ms INTEGER,
+    -- A step is finished exactly when it is no longer running.
+    CHECK ((status = 'Running') = (finished_at_ms IS NULL)),
+    UNIQUE (message_id, seq)
+) STRICT;
+
+CREATE INDEX agent_steps_by_start ON agent_steps (started_at_ms);
+CREATE INDEX agent_steps_by_status ON agent_steps (status);
+"#;
+
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4];
 
 pub fn migrate(conn: &mut Connection) -> Result<(), StorageError> {
     let current: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;

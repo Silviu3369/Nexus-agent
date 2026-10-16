@@ -31,6 +31,13 @@ async fn main() {
         headers: vec![("retry-after", "30".to_string())],
         body: "{}".to_string(),
     });
+    // The dashboard command bar: a web read the host refuses (loopback),
+    // then an answer — so the check sees a failed step and a reply.
+    fake.push(Reply::calls(&[(
+        "fetch_url",
+        serde_json::json!({"url": "http://127.0.0.1:1/private"}),
+    )]));
+    fake.push(Reply::text(&["Done from the dashboard."]));
     println!("{}", fake.base_url);
     std::io::stdout().flush().expect("stdout");
     std::future::pending::<()>().await;

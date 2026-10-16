@@ -209,11 +209,13 @@ try {
   Send-Chat $win "Hello!"
   Check (Wait-Text $win "Hello! I'm your Nexus assistant.") "the streamed reply is shown"
   Check ($null -ne (Wait-Contains $win "gemini-fake-flash · persona v2")) "the reply records its model and persona version"
+  Check ($null -ne (Wait-Contains $win "Model gemini-fake-flash")) "the model call is shown as a step of the reply"
 
   # --- AI-02: a proposed note waits for approval ---
   Send-Chat $win "Save the plan as a note"
   Check ($null -ne (Wait-Contains $win "The assistant proposed a note.")) "the proposal is shown as a proposal"
   Check (Wait-Text $win "What will be written") "its exact preview is shown"
+  Check ($null -ne (Wait-Contains $win 'Proposed note "Chat plan"')) "the proposal is shown as a step"
   Check ((Note-Files).Count -eq 0) "nothing is written on the model's word"
   Click-Button $win "Approve and create"
   Check (Wait-Files 1) "approving writes exactly one note"
@@ -248,6 +250,16 @@ try {
   Check ($null -ne $row) "the conversation is listed after reopening"
   if ($row) { Invoke-Element $row }
   Check (Wait-Text $win "Hello! I'm your Nexus assistant.") "its messages are loaded from the host"
+
+  # --- dashboard: a task started from the command bar, followed live ---
+  Click-Button $win "Dashboard"
+  Set-Field $win "Ask Nexus" "Check the private page"
+  Click-Button $win "Run" 20
+  Check (Wait-Text $win "Done from the dashboard.") "a task started from the dashboard answers there"
+  Check ($null -ne (Wait-Contains $win "Read 127.0.0.1:1")) "the web read appears as a step"
+  Check ($null -ne (Wait-Contains $win "does not resolve to a public address")) "the refused read says why"
+  Check (Wait-Text $win "Live activity") "the live activity feed is shown"
+  Check ($null -ne (Wait-Contains $win "Check the private page")) "the feed names the conversation each step belongs to"
 
   # --- removing the connection removes its key ---
   Click-Button $win "Settings"

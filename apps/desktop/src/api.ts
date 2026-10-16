@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AgentStepView,
   ApprovalId,
   ArtifactId,
   BackupSummary,
@@ -61,6 +62,7 @@ export const api = {
   sendMessage: (conversationId: ConversationId | null, idempotencyKey: string, text: string) =>
     invoke<SendMessageResponse>("send_message", { conversationId, idempotencyKey, text }),
   cancelReply: (messageId: MessageId) => invoke<null>("cancel_reply", { messageId }),
+  getActivity: () => invoke<AgentStepView[]>("get_activity"),
 };
 
 const CODE_TEXT: Partial<Record<ErrorCode, string>> = {

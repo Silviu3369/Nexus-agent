@@ -10,6 +10,7 @@ import type {
 } from "@nexus/contracts";
 import { api, describeError } from "./api";
 import { RunDetail, time } from "./Notes";
+import { StepList } from "./Steps";
 import { ChatIcon, PlusIcon, SendIcon } from "./icons";
 
 /** Fast while a reply streams; otherwise the list is refreshed on demand. */
@@ -213,6 +214,7 @@ function MessageItem({ message, onChanged }: { message: ChatMessageView; onChang
           </span>
         )}
       </div>
+      {!mine && <StepList steps={message.steps} />}
       {message.text && <div className="message-text">{message.text}</div>}
       {message.status === "Streaming" && (
         <div className="actions">

@@ -3,9 +3,10 @@
 
 use std::path::PathBuf;
 
-use nexus_core::{MessageRole, MessageStatus, ThinkingLevel};
+use nexus_core::{AgentStepKind, AgentStepStatus, MessageRole, MessageStatus, ThinkingLevel};
 use nexus_protocol::ConnectionId;
 use nexus_storage::{NewExchange, SUPPORTED_VERSION, Settlement, StorageError, Store};
+use serde_json::json;
 
 struct Env {
     store: Store,
@@ -73,8 +74,9 @@ async fn an_existing_database_is_migrated_forward_keeping_its_data() {
         store
             .call(|c| {
                 c.execute_batch(
-                    "DROP TABLE messages; DROP TABLE conversations; DROP TABLE personas;
-                     DROP TABLE provider_connections; DROP TABLE settings; PRAGMA user_version = 1;",
+                    "DROP TABLE agent_steps; DROP TABLE messages; DROP TABLE conversations;
+                     DROP TABLE personas; DROP TABLE provider_connections; DROP TABLE settings;
+                     PRAGMA user_version = 1;",
                 )?;
                 Ok(())
             })
@@ -116,7 +118,10 @@ async fn an_existing_connection_defaults_to_low_thinking_after_migrating_to_v3()
         // Roll back to v2, as an M2 host before this change would have left it.
         store
             .call(|c| {
-                c.execute_batch("ALTER TABLE provider_connections DROP COLUMN thinking_level; PRAGMA user_version = 2;")?;
+                c.execute_batch(
+                    "DROP TABLE agent_steps; ALTER TABLE provider_connections DROP COLUMN thinking_level;
+                     PRAGMA user_version = 2;",
+                )?;
                 Ok(())
             })
             .await
@@ -306,4 +311,198 @@ async fn streaming_replies_left_by_a_restart_are_marked_interrupted() {
     let msg = env.store.message(ex.model_message.id).await.unwrap();
     assert_eq!(msg.status, MessageStatus::Failed);
     assert_eq!(msg.error_code.as_deref(), Some("Interrupted"));
+}
+
+#[tokio::test]
+async fn new_closed_columns_accept_exactly_the_domain_values() {
+    // Keeps the SQL CHECK lists and the nexus-core enums from drifting apart.
+    let env = env();
+    let conn = connection(&env).await;
+    let message = env
+        .store
+        .append_exchange(exchange(None, "k", "Salut", conn), 1)
+        .await
+        .unwrap()
+        .model_message
+        .id
+        .to_string();
+    let rejected = env
+        .store
+        .call(move |c| {
+            let mut rejected = Vec::new();
+            let mut seq = 0;
+            for kind in AgentStepKind::ALL {
+                for status in AgentStepStatus::ALL {
+                    seq += 1;
+                    let finished = (*status != AgentStepStatus::Running).then_some(1i64);
+                    c.execute(
+                        "INSERT INTO agent_steps VALUES (?1, ?2, ?3, ?4, ?5, '{}', 0, ?6)",
+                        (format!("s{seq}"), &message, seq, kind.as_str(), status.as_str(), finished),
+                    )?;
+                }
+            }
+            if c.execute(
+                "INSERT INTO agent_steps VALUES ('sx', ?1, 99, 'ShellCommand', 'Running', '{}', 0, NULL)",
+                [&message],
+            )
+            .is_err()
+            {
+                rejected.push("kind");
+            }
+            if c.execute(
+                "INSERT INTO agent_steps VALUES ('sy', ?1, 98, 'Fetch', 'Approved', '{}', 0, 1)",
+                [&message],
+            )
+            .is_err()
+            {
+                rejected.push("status");
+            }
+            for level in ThinkingLevel::ALL {
+                c.execute(
+                    "UPDATE provider_connections SET thinking_level = ?1",
+                    [level.as_str()],
+                )?;
+            }
+            if c.execute("UPDATE provider_connections SET thinking_level = 'Max'", []).is_err() {
+                rejected.push("thinking_level");
+            }
+            Ok(rejected)
+        })
+        .await
+        .unwrap();
+    assert_eq!(rejected, ["kind", "status", "thinking_level"]);
+}
+
+#[tokio::test]
+async fn agent_steps_are_ordered_settled_once_and_keep_their_start_detail() {
+    let env = env();
+    let conn = connection(&env).await;
+    let ex = env
+        .store
+        .append_exchange(exchange(None, "k", "Caută ceva", conn), 1)
+        .await
+        .unwrap();
+    let reply = ex.model_message.id;
+
+    let call = env
+        .store
+        .begin_step(
+            reply,
+            AgentStepKind::ModelCall,
+            json!({"model": "gemini-x"}),
+            10,
+        )
+        .await
+        .unwrap();
+    assert_eq!((call.seq, call.status), (1, AgentStepStatus::Running));
+    assert_eq!(call.finished_at_ms, None);
+    assert_eq!(call.conversation_id, ex.conversation_id);
+    assert_eq!(call.conversation_title, "Caută ceva");
+
+    let fetch = env
+        .store
+        .begin_step(
+            reply,
+            AgentStepKind::Fetch,
+            json!({"url": "https://example.com"}),
+            11,
+        )
+        .await
+        .unwrap();
+    assert_eq!(fetch.seq, 2);
+
+    let done = env
+        .store
+        .finish_step(
+            fetch.id,
+            AgentStepStatus::Done,
+            json!({"http_status": 200, "bytes": 171}),
+            12,
+        )
+        .await
+        .unwrap();
+    assert_eq!(done.status, AgentStepStatus::Done);
+    assert_eq!(done.finished_at_ms, Some(12));
+    assert_eq!(
+        done.detail,
+        json!({"url": "https://example.com", "http_status": 200, "bytes": 171}),
+        "the finish detail is merged into the start detail"
+    );
+    assert!(
+        env.store
+            .finish_step(fetch.id, AgentStepStatus::Failed, json!({}), 13)
+            .await
+            .is_err(),
+        "a settled step must not change again"
+    );
+
+    let in_conversation = env
+        .store
+        .steps_for_conversation(ex.conversation_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        in_conversation.iter().map(|s| s.seq).collect::<Vec<_>>(),
+        [1, 2]
+    );
+    let recent = env.store.recent_steps(10).await.unwrap();
+    assert_eq!(
+        recent.iter().map(|s| s.id).collect::<Vec<_>>(),
+        [fetch.id, call.id],
+        "newest first"
+    );
+}
+
+#[tokio::test]
+async fn running_steps_fail_when_their_reply_stops_or_the_host_restarts() {
+    let env = env();
+    let conn = connection(&env).await;
+    let a = env
+        .store
+        .append_exchange(exchange(None, "a", "Unu", conn), 1)
+        .await
+        .unwrap()
+        .model_message
+        .id;
+    let b = env
+        .store
+        .append_exchange(exchange(None, "b", "Doi", conn), 2)
+        .await
+        .unwrap()
+        .model_message
+        .id;
+    for message in [a, a, b] {
+        env.store
+            .begin_step(message, AgentStepKind::ModelCall, json!({}), 3)
+            .await
+            .unwrap();
+    }
+
+    assert_eq!(
+        env.store
+            .fail_running_steps(Some(a), "Cancelled", 4)
+            .await
+            .unwrap(),
+        2,
+        "only the stopped reply's steps"
+    );
+    assert_eq!(
+        env.store
+            .fail_running_steps(None, "Interrupted", 5)
+            .await
+            .unwrap(),
+        1
+    );
+    let all = env.store.recent_steps(10).await.unwrap();
+    assert!(all.iter().all(|s| s.status == AgentStepStatus::Failed));
+    assert!(
+        all.iter()
+            .filter(|s| s.message_id == a)
+            .all(|s| s.detail["error"] == "Cancelled")
+    );
+    assert!(
+        all.iter()
+            .filter(|s| s.message_id == b)
+            .all(|s| s.detail["error"] == "Interrupted")
+    );
 }

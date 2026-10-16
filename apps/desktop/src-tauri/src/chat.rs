@@ -2,14 +2,15 @@
 //! to the host's vault; nothing here stores, logs or returns it.
 
 use nexus_protocol::{
-    ConnectionId, ConnectionView, ConversationId, ConversationSummary, ConversationView, MessageId,
-    ModelView, PersonaView, SaveGeminiConnectionRequest, SavePersonaRequest, SendMessageRequest,
-    SendMessageResponse, ThinkingLevel,
+    AgentStepView, ConnectionId, ConnectionView, ConversationId, ConversationSummary,
+    ConversationView, MessageId, ModelView, PersonaView, SaveGeminiConnectionRequest,
+    SavePersonaRequest, SendMessageRequest, SendMessageResponse, ThinkingLevel,
 };
 
 use crate::host::{BridgeError, HostConnection};
 
 const DASHBOARD_CONVERSATIONS: u32 = 50;
+const DASHBOARD_ACTIVITY: u32 = 40;
 
 type State<'a> = tauri::State<'a, HostConnection>;
 
@@ -137,6 +138,14 @@ pub async fn send_message(
             })
             .await
         })
+        .await
+}
+
+/// The agent's most recent steps, for the dashboard's live feed.
+#[tauri::command]
+pub async fn get_activity(connection: State<'_>) -> Result<Vec<AgentStepView>, BridgeError> {
+    connection
+        .call(async |c| c.activity(DASHBOARD_ACTIVITY).await)
         .await
 }
 

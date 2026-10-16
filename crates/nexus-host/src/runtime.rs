@@ -144,6 +144,10 @@ impl Runtime {
         } else {
             runtime.reconcile_interrupted().await?;
             runtime.store.fail_interrupted_messages(now_ms()).await?;
+            runtime
+                .store
+                .fail_running_steps(None, "the host stopped before this step finished", now_ms())
+                .await?;
             runtime.sweep_unreferenced_secrets().await?;
         }
         Ok(runtime)

@@ -7,20 +7,21 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use nexus_core::{MessageRole, MessageStatus};
+use nexus_core::{AgentStepKind, AgentStepStatus, MessageRole, MessageStatus};
 use nexus_protocol::{
-    ChatMessageView, ChatRole, ChatStatus, ConnectionId, ConnectionView, ConversationId,
-    ConversationSummary, ConversationView, ErrorCode, MessageId, ModelView, NexusError,
-    PersonaView, RunFailure, RunId, SaveGeminiConnectionRequest, SavePersonaRequest,
-    SendMessageRequest, SendMessageResponse, SubmitNoteRequest,
+    AgentStepDetail, AgentStepId, AgentStepView, ChatMessageView, ChatRole, ChatStatus,
+    ConnectionId, ConnectionView, ConversationId, ConversationSummary, ConversationView, ErrorCode,
+    MessageId, ModelView, NexusError, PersonaView, RunFailure, RunId, SaveGeminiConnectionRequest,
+    SavePersonaRequest, SendMessageRequest, SendMessageResponse, SubmitNoteRequest,
 };
 use nexus_providers::gemini::GeminiClient;
 use nexus_providers::{
     ApiKey, Message, Part, ProviderError, ProviderEvent, ProviderRequest, Role, ToolDeclaration,
 };
 use nexus_storage::{
-    ConnectionRow, Exchange, MessageRow, NewExchange, PersonaRow, Settlement, now_ms,
+    AgentStepRow, ConnectionRow, Exchange, MessageRow, NewExchange, PersonaRow, Settlement, now_ms,
 };
+use serde_json::{Value, json};
 use zeroize::Zeroizing;
 
 use super::{Runtime, to_nexus_error};
@@ -41,6 +42,10 @@ const MAX_AGENT_STEPS: u32 = MAX_FETCH_CALLS + 2;
 const MAX_FETCH_CALLS: u32 = 4;
 /// Below this, starting another model call could not usefully finish.
 const MIN_STEP_BUDGET: std::time::Duration = std::time::Duration::from_secs(3);
+/// A fetched address is recorded for the user to see; a pathological one
+/// is cut here rather than stored whole.
+const MAX_STORED_URL: usize = 2048;
+const MAX_ACTIVITY: u32 = 200;
 
 /// Replies in progress: the partial text (ephemeral by design,
 /// `CONTRACTE_NEXUS_RO.md` §10) and the handle that cancels the call.
@@ -367,14 +372,39 @@ impl Runtime {
     ) -> Result<ConversationView, NexusError> {
         let (conversation, messages) =
             self.store.messages(id, 200).await.map_err(to_nexus_error)?;
+        let mut steps: HashMap<MessageId, Vec<AgentStepView>> = HashMap::new();
+        for row in self
+            .store
+            .steps_for_conversation(id)
+            .await
+            .map_err(to_nexus_error)?
+        {
+            steps
+                .entry(row.message_id)
+                .or_default()
+                .push(step_view(&row));
+        }
         Ok(ConversationView {
             conversation_id: conversation.id,
             title: conversation.title,
-            messages: messages.iter().map(|m| self.message_view(m)).collect(),
+            messages: messages
+                .iter()
+                .map(|m| self.message_view(m, steps.remove(&m.id).unwrap_or_default()))
+                .collect(),
         })
     }
 
-    fn message_view(&self, m: &MessageRow) -> ChatMessageView {
+    /// What the agent did most recently, across conversations.
+    pub async fn get_activity(&self, limit: u32) -> Result<Vec<AgentStepView>, NexusError> {
+        let rows = self
+            .store
+            .recent_steps(limit.clamp(1, MAX_ACTIVITY))
+            .await
+            .map_err(to_nexus_error)?;
+        Ok(rows.iter().map(step_view).collect())
+    }
+
+    fn message_view(&self, m: &MessageRow, steps: Vec<AgentStepView>) -> ChatMessageView {
         let text = match m.status {
             MessageStatus::Streaming => self.replies.text(m.id).unwrap_or_default(),
             _ => m.text.clone(),
@@ -402,6 +432,7 @@ impl Runtime {
             prompt_tokens: m.prompt_tokens,
             output_tokens: m.output_tokens,
             created_at_ms: m.created_at_ms,
+            steps,
         }
     }
 
@@ -484,6 +515,19 @@ impl Runtime {
     ) {
         let reply = exchange.model_message.id;
         let outcome = self.call_model(&exchange, &connection, &persona).await;
+        // Every step is settled where it runs; this only catches one left
+        // Running by an early return, so none stays "in progress" forever.
+        if let Err(err) = self
+            .store
+            .fail_running_steps(
+                Some(reply),
+                "the reply ended before this step finished",
+                now_ms(),
+            )
+            .await
+        {
+            tracing::warn!(message = %reply, error = %err, "could not settle leftover agent steps");
+        }
         let text = self.replies.take(reply).map(|r| r.text).unwrap_or_default();
         let (status, settlement) = match outcome {
             Ok((usage, proposed_run_id)) => (
@@ -570,11 +614,14 @@ impl Runtime {
                 thinking_level: Some(to_provider_thinking_level(thinking_level)),
             };
 
+            let call_step = self
+                .begin_step(reply, AgentStepKind::ModelCall, json!({ "model": model }))
+                .await;
             let mut step_text = String::new();
             let mut calls = Vec::new();
             let mut first_byte: Option<std::time::Duration> = None;
             let step_started = tokio::time::Instant::now();
-            client
+            let streamed = client
                 .stream(&request, |event| {
                     if first_byte.is_none() {
                         first_byte = Some(step_started.elapsed());
@@ -591,11 +638,14 @@ impl Runtime {
                         ProviderEvent::Finished(_) => {}
                     }
                 })
-                .await
-                .map_err(provider_error)?;
+                .await;
             // Timing, not content: how long the provider took, split into
             // "before the first event" (its own latency, e.g. thinking) and
             // the rest (streaming + our own processing).
+            let mut timing = json!({
+                "first_byte_ms": first_byte.map(millis),
+                "duration_ms": millis(step_started.elapsed()),
+            });
             tracing::info!(
                 step,
                 model = %model,
@@ -603,6 +653,15 @@ impl Runtime {
                 step_ms = step_started.elapsed().as_millis(),
                 "model call finished"
             );
+            if let Err(err) = streamed {
+                let err = provider_error(err);
+                timing["error"] = json!(err.message);
+                self.finish_step(call_step, AgentStepStatus::Failed, timing)
+                    .await;
+                return Err(err);
+            }
+            self.finish_step(call_step, AgentStepStatus::Done, timing)
+                .await;
 
             let note_call = calls.iter().find(|(name, _)| name == NOTE_TOOL);
             let fetch_call = calls.iter().find(|(name, _)| name == FETCH_TOOL);
@@ -630,7 +689,15 @@ impl Runtime {
                 return Ok((total_usage, None));
             };
             let url = arguments.get("url").and_then(|v| v.as_str()).unwrap_or("");
-            let response = self.execute_fetch(url).await;
+            let fetch_step = self
+                .begin_step(
+                    reply,
+                    AgentStepKind::Fetch,
+                    json!({ "url": truncate_chars(url, MAX_STORED_URL) }),
+                )
+                .await;
+            let (response, status, detail) = self.execute_fetch(url).await;
+            self.finish_step(fetch_step, status, detail).await;
             fetch_calls_used += 1;
 
             let mut model_parts = Vec::new();
@@ -665,11 +732,25 @@ impl Runtime {
 
     /// Submits the proposed note as an ordinary run; `None` if the host
     /// refused it (invalid arguments or the submission itself was refused).
-    async fn propose_note(&self, reply: MessageId, arguments: &serde_json::Value) -> Option<RunId> {
+    /// Either way the attempt is a visible step.
+    async fn propose_note(&self, reply: MessageId, arguments: &Value) -> Option<RunId> {
         let title = arguments.get("title").and_then(|v| v.as_str());
         let body = arguments.get("body").and_then(|v| v.as_str());
+        let step = self
+            .begin_step(
+                reply,
+                AgentStepKind::NoteProposed,
+                json!({ "title": title.unwrap_or_default() }),
+            )
+            .await;
         let (Some(title), Some(body)) = (title, body) else {
             tracing::warn!("ignored a note proposal with invalid arguments");
+            self.finish_step(
+                step,
+                AgentStepStatus::Failed,
+                json!({ "error": "the proposal had no title or no body" }),
+            )
+            .await;
             return None;
         };
         match self
@@ -680,20 +761,33 @@ impl Runtime {
             })
             .await
         {
-            Ok(submitted) => Some(submitted.run_id),
+            Ok(submitted) => {
+                self.finish_step(
+                    step,
+                    AgentStepStatus::Done,
+                    json!({ "run_id": submitted.run_id.to_string() }),
+                )
+                .await;
+                Some(submitted.run_id)
+            }
             Err(err) => {
                 tracing::warn!(error = %err, "the proposed note was refused");
+                self.finish_step(
+                    step,
+                    AgentStepStatus::Failed,
+                    json!({ "error": err.message }),
+                )
+                .await;
                 None
             }
         }
     }
 
-    /// Runs the read-only fetch and turns the outcome into the
-    /// `functionResponse` payload sent back to the model — a failure is
-    /// still a normal response (so the model can see it and adapt), never a
-    /// reply failure. Nothing beyond a tracing line is persisted: the tool
-    /// has no durable effect for the event log to audit.
-    async fn execute_fetch(&self, url: &str) -> serde_json::Value {
+    /// Runs the read-only fetch. Returns the `functionResponse` payload for
+    /// the model — a failure is still a normal response, so the model can
+    /// see it and adapt, never a reply failure — plus the visible step's
+    /// outcome, which keeps only metadata (never the page's text).
+    async fn execute_fetch(&self, url: &str) -> (Value, AgentStepStatus, Value) {
         match nexus_providers::web::fetch_url(url).await {
             Ok(page) => {
                 tracing::info!(
@@ -703,17 +797,53 @@ impl Runtime {
                     truncated = page.truncated,
                     "fetch_url executed"
                 );
-                serde_json::json!({
+                let detail = json!({
+                    "final_url": truncate_chars(&page.final_url, MAX_STORED_URL),
+                    "http_status": page.status,
+                    "text_bytes": page.text.len(),
+                    "truncated": page.truncated,
+                });
+                let response = json!({
                     "status": page.status,
                     "url": page.final_url,
                     "text": page.text,
                     "truncated": page.truncated,
-                })
+                });
+                (response, AgentStepStatus::Done, detail)
             }
             Err(err) => {
                 tracing::info!(url, error = %err, "fetch_url refused or failed");
-                serde_json::json!({ "error": err.to_string() })
+                let message = err.to_string();
+                (
+                    json!({ "error": message }),
+                    AgentStepStatus::Failed,
+                    json!({ "error": message }),
+                )
             }
+        }
+    }
+
+    /// Records a step as Running. Best effort: the step is for the user to
+    /// watch, so a failure to record it is logged and the reply goes on.
+    async fn begin_step(
+        &self,
+        message: MessageId,
+        kind: AgentStepKind,
+        detail: Value,
+    ) -> Option<AgentStepId> {
+        match self.store.begin_step(message, kind, detail, now_ms()).await {
+            Ok(row) => Some(row.id),
+            Err(err) => {
+                tracing::warn!(message = %message, error = %err, "could not record an agent step");
+                None
+            }
+        }
+    }
+
+    async fn finish_step(&self, step: Option<AgentStepId>, status: AgentStepStatus, detail: Value) {
+        let Some(step) = step else { return };
+        if let Err(err) = self.store.finish_step(step, status, detail, now_ms()).await {
+            tracing::warn!(step = %step, error = %err, "could not settle an agent step");
         }
     }
 
@@ -740,6 +870,11 @@ impl Runtime {
                 },
                 now_ms(),
             )
+            .await
+            .map_err(to_nexus_error)?;
+        // The aborted task never reaches its own step bookkeeping.
+        self.store
+            .fail_running_steps(Some(id), "stopped by the user", now_ms())
             .await
             .map_err(to_nexus_error)?;
         Ok(())
@@ -832,6 +967,61 @@ fn add_usage(a: nexus_providers::Usage, b: nexus_providers::Usage) -> nexus_prov
         output_tokens: a.output_tokens + b.output_tokens,
         total_tokens: a.total_tokens + b.total_tokens,
     }
+}
+
+/// The stored step, typed for the UI. The detail is read leniently: a field
+/// that is absent (a step still running, or recorded by an older build)
+/// is simply `None`.
+fn step_view(row: &AgentStepRow) -> AgentStepView {
+    let d = &row.detail;
+    let text = |k: &str| d.get(k).and_then(Value::as_str).map(str::to_string);
+    let number = |k: &str| d.get(k).and_then(Value::as_u64);
+    let detail = match row.kind {
+        AgentStepKind::ModelCall => AgentStepDetail::ModelCall {
+            model: text("model").unwrap_or_default(),
+            first_byte_ms: number("first_byte_ms").and_then(|n| u32::try_from(n).ok()),
+            duration_ms: number("duration_ms").and_then(|n| u32::try_from(n).ok()),
+            error: text("error"),
+        },
+        AgentStepKind::Fetch => AgentStepDetail::Fetch {
+            url: text("url").unwrap_or_default(),
+            final_url: text("final_url"),
+            http_status: number("http_status").and_then(|n| u16::try_from(n).ok()),
+            text_bytes: number("text_bytes").and_then(|n| u32::try_from(n).ok()),
+            truncated: d.get("truncated").and_then(Value::as_bool),
+            error: text("error"),
+        },
+        AgentStepKind::NoteProposed => AgentStepDetail::NoteProposed {
+            title: text("title").unwrap_or_default(),
+            run_id: text("run_id")
+                .and_then(|s| uuid::Uuid::parse_str(&s).ok())
+                .map(RunId),
+            error: text("error"),
+        },
+    };
+    AgentStepView {
+        step_id: row.id,
+        message_id: row.message_id,
+        conversation_id: row.conversation_id,
+        conversation_title: row.conversation_title.clone(),
+        seq: row.seq,
+        status: match row.status {
+            AgentStepStatus::Running => nexus_protocol::AgentStepStatus::Running,
+            AgentStepStatus::Done => nexus_protocol::AgentStepStatus::Done,
+            AgentStepStatus::Failed => nexus_protocol::AgentStepStatus::Failed,
+        },
+        detail,
+        started_at_ms: row.started_at_ms,
+        finished_at_ms: row.finished_at_ms,
+    }
+}
+
+fn millis(d: std::time::Duration) -> u64 {
+    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
+}
+
+fn truncate_chars(text: &str, max: usize) -> String {
+    text.chars().take(max).collect()
 }
 
 fn to_protocol_thinking_level(level: nexus_core::ThinkingLevel) -> nexus_protocol::ThinkingLevel {

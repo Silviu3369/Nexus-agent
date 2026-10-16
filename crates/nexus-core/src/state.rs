@@ -187,6 +187,28 @@ closed_enum!(MessageRole { User, Model });
 // Not a workflow state — stored on the connection, not transitioned.
 closed_enum!(ThinkingLevel { Low, Medium, High });
 
+// What the agent did while producing a reply, shown to the user as it
+// happens. Visibility, not authority: a step grants nothing.
+closed_enum!(AgentStepKind {
+    ModelCall,
+    Fetch,
+    NoteProposed,
+});
+
+closed_enum!(AgentStepStatus {
+    Running,
+    Done,
+    Failed,
+});
+
+impl AgentStepStatus {
+    /// Written as Running when the step starts, settled exactly once.
+    pub fn can_transition_to(self, next: AgentStepStatus) -> bool {
+        use AgentStepStatus::*;
+        matches!((self, next), (Running, Done | Failed))
+    }
+}
+
 closed_enum!(MessageStatus {
     Streaming,
     Complete,

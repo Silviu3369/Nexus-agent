@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::ids::{ConnectionId, ConversationId, MessageId, RunId};
+use crate::ids::{AgentStepId, ConnectionId, ConversationId, MessageId, RunId};
 use crate::runs::RunFailure;
 
 /// The user's speed/quality choice, where the model supports it (Gemini
@@ -96,6 +96,59 @@ pub struct ChatMessageView {
     pub prompt_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
     pub created_at_ms: i64,
+    /// What the agent did for this reply, in order (empty for the user's
+    /// own messages).
+    pub steps: Vec<AgentStepView>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub enum AgentStepStatus {
+    Running,
+    Done,
+    Failed,
+}
+
+/// One step's kind-specific facts. Metadata only: a web read shows its
+/// address, status and size, never the page's text.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind")]
+pub enum AgentStepDetail {
+    ModelCall {
+        model: String,
+        /// Time until the provider's first event — mostly its own thinking.
+        first_byte_ms: Option<u32>,
+        duration_ms: Option<u32>,
+        error: Option<String>,
+    },
+    Fetch {
+        url: String,
+        final_url: Option<String>,
+        http_status: Option<u16>,
+        /// Size of the extracted text that was given to the model.
+        text_bytes: Option<u32>,
+        truncated: Option<bool>,
+        error: Option<String>,
+    },
+    NoteProposed {
+        title: String,
+        /// The run waiting for the user's approval, when the proposal was
+        /// accepted as a run at all.
+        run_id: Option<RunId>,
+        error: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct AgentStepView {
+    pub step_id: AgentStepId,
+    pub message_id: MessageId,
+    pub conversation_id: ConversationId,
+    pub conversation_title: String,
+    pub seq: i64,
+    pub status: AgentStepStatus,
+    pub detail: AgentStepDetail,
+    pub started_at_ms: i64,
+    pub finished_at_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
