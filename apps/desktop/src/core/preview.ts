@@ -53,7 +53,7 @@ const SCENES: Record<CoreState, { nodes: CoreNodeInput[]; active: NodeKind | nul
   WAITING_APPROVAL: {
     nodes: [
       { id: "model", status: "done" },
-      { id: "files", status: "waiting" },
+      { id: "files", status: "waiting", proposed: true },
       { id: "approval", status: "waiting" },
     ],
     active: "approval",

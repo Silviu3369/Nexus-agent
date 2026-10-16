@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent } from "react";
 import type { CoreView, NodeKind } from "../model/execution.ts";
+import { ago } from "../model/format.ts";
 import { prefersReducedMotion, usePref } from "../state/prefs";
 import type { NexusCore, ScreenPoints } from "./NexusCore";
 
@@ -23,7 +24,7 @@ const STATE_TEXT: Record<CoreView["state"], string> = {
 /** Labels that only repeat the state; the caption leaves them out. */
 const REPEATS = new Set(["Idle", "Listening", "Done", "Waiting for your approval"]);
 
-export function CoreStage({ view, onNode }: { view: CoreView; onNode: (id: NodeKind) => void }) {
+export function CoreStage({ view, onNode, now }: { view: CoreView; onNode: (id: NodeKind) => void; now: number }) {
   const [mode] = usePref("core");
   const [failed, setFailed] = useState(false);
   const host = useRef<HTMLDivElement>(null);
@@ -70,7 +71,7 @@ export function CoreStage({ view, onNode }: { view: CoreView; onNode: (id: NodeK
     core.current?.setReducedMotion(reduced);
   }, [reduced]);
 
-  const nodeKey = view.nodes.map((n) => `${n.id}:${n.status}`).join("|");
+  const nodeKey = view.nodes.map((n) => `${n.id}:${n.status}:${n.proposed}`).join("|");
   const v = view.visual;
   const visualKey = [v.state, v.activeTool, v.activeModel, v.activityIntensity, v.hasPendingApproval, v.lastResult].join("|");
   useEffect(() => {
@@ -83,7 +84,10 @@ export function CoreStage({ view, onNode }: { view: CoreView; onNode: (id: NodeK
     const box = e.currentTarget.getBoundingClientRect();
     core.current?.setPointer(((e.clientX - box.left) / box.width) * 2 - 1, -(((e.clientY - box.top) / box.height) * 2 - 1));
   };
-  const detail = REPEATS.has(view.label) ? null : view.label;
+  // The outcome of the last run stays in words after the picture settles.
+  const outcome = view.outcome;
+  const detail = !REPEATS.has(view.label) ? view.label : outcome ? outcome.text : null;
+  const age = REPEATS.has(view.label) && outcome ? ago(outcome.at, now) : null;
 
   return (
     <div
@@ -105,7 +109,7 @@ export function CoreStage({ view, onNode }: { view: CoreView; onNode: (id: NodeK
           <button
             type="button"
             key={n.id}
-            className={`core-node core-node-${n.status}${view.active === n.id ? " core-node-current" : ""}`}
+            className={`core-node core-node-${n.status}${n.proposed ? " core-node-proposed" : ""}${view.active === n.id ? " core-node-current" : ""}`}
             style={style}
             onClick={() => onNode(n.id)}
             aria-label={`${n.label} node${n.sublabel ? `, ${n.sublabel}` : ""}`}
@@ -121,7 +125,12 @@ export function CoreStage({ view, onNode }: { view: CoreView; onNode: (id: NodeK
           <span className="core-title">Nexus Core</span>
           <span className="core-state">{STATE_TEXT[view.state]}</span>
         </span>
-        {detail && <span className="core-label">{detail}</span>}
+        {detail && (
+          <span className={`core-label${outcome && detail === outcome.text ? ` core-outcome-${outcome.result}` : ""}`}>
+            {detail}
+            {age && <span aria-hidden="true"> · {age}</span>}
+          </span>
+        )}
       </div>
       {view.path.length > 0 && (
         <ol className="core-path" aria-label="Execution path">

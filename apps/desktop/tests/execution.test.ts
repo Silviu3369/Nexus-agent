@@ -151,13 +151,17 @@ test("a proposed note waits on the approval, then the write, from the real run s
   assert.equal(core.state, "WAITING_APPROVAL", "approval outranks typing, and keeps the nodes on screen");
   assert.equal(core.active, "approval");
   assert.equal(core.visual.hasPendingApproval, true);
+  assert.equal(core.nodes.find((n) => n.id === "files")?.proposed, true, "the note is only an intent until it is written");
+  assert.equal(core.outcome, null, "a run waiting on you has no outcome yet");
   assert.equal(core.visual.activityIntensity, 0, "nothing runs while it waits");
   assert.equal(core.nodes.find((n) => n.id === "approval")?.status, "waiting");
   assert.match(nextLine(run), /Nothing is written until you approve/);
 
   const writing = new Map([["r-1", noteRun("Verifying")]]);
   const [after] = buildRuns(conversation(reply), writing, "Nexus");
-  assert.equal(deriveCore({ run: after, pendingApprovals: 0, composing: false, now: T0 + 4000 }).state, "EXECUTING");
+  const executing = deriveCore({ run: after, pendingApprovals: 0, composing: false, now: T0 + 4000 });
+  assert.equal(executing.state, "EXECUTING");
+  assert.equal(executing.nodes.find((n) => n.id === "files")?.proposed, false, "once written it is an executed effect");
 
   const denied = new Map([["r-1", noteRun("Denied")]]);
   const [rejected] = buildRuns(conversation(reply), denied, "Nexus");
@@ -182,6 +186,8 @@ test("success pulses briefly, errors linger a little, and finished runs leave th
   assert.equal(deriveCore({ run, pendingApprovals: 0, composing: false, now: T0 + 2000 }).visual.lastResult, "success");
   const later = deriveCore({ run, pendingApprovals: 0, composing: false, now: T0 + 5000 });
   assert.equal(later.state, "IDLE");
+  assert.deepEqual(later.outcome, { result: "completed", text: "Last task completed", at: T0 + 1000 }, "the picture settles, the outcome stays");
+  assert.equal(deriveCore({ run, pendingApprovals: 0, composing: false, now: T0 + 3_600_000 }).outcome?.result, "completed");
   assert.equal(later.nodes.length, 1, "a recent run keeps its nodes");
   assert.equal(deriveCore({ run, pendingApprovals: 0, composing: true, now: T0 + 5000 }).state, "LISTENING");
   assert.equal(deriveCore({ run, pendingApprovals: 0, composing: false, now: T0 + 200_000 }).nodes.length, 0);
@@ -194,6 +200,7 @@ test("success pulses briefly, errors linger a little, and finished runs leave th
   const core = deriveCore({ run: bad, pendingApprovals: 0, composing: false, now: T0 + 3000 });
   assert.equal(core.state, "ERROR");
   assert.equal(core.visual.lastResult, "error");
+  assert.equal(core.outcome?.text, "Last task failed: quota");
   assert.equal(core.label, "quota");
   assert.equal(core.nodes[0].status, "failed");
 });
@@ -310,6 +317,11 @@ test("a proposed fact waits for review only while the Host lists it as proposed"
   );
   const reply = message("Model", REPLY, [usedMemory, memoryStep("f-1")], { status: "Complete" });
   const [pending] = buildRuns(conversation(reply), new Map(), "Nexus", new Set(["f-1"]));
+  assert.equal(
+    deriveCore({ run: pending, pendingApprovals: 0, composing: false, now: T0 + 1200 }).nodes.find((n) => n.id === "memory")?.proposed,
+    true,
+    "a fact waiting for review is only proposed",
+  );
   assert.equal(pending.status, "completed", "a fact to review does not hold the reply open");
   assert.deepEqual(pending.items.map((i) => [i.kind, i.status]), [["model", "completed"], ["memory", "waiting"]]);
   assert.ok(pending.items[0].facts.some(([k, v]) => k === "Approved memory sent" && v === "2 facts"));

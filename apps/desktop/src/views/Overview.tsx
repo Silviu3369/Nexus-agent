@@ -40,7 +40,7 @@ export function Overview() {
             <p className="mission-title muted">No task yet</p>
           )}
         </div>
-        <CoreStage view={core} onNode={openNode} />
+        <CoreStage view={core} onNode={openNode} now={now} />
       </div>
       <div className="overview-strip">
         <RecentSummary steps={d.steps} pending={pending.length + (d.proposals?.length ?? 0)} now={now} />

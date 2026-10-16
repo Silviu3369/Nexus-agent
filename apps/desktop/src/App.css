@@ -1639,6 +1639,10 @@ button.approve:hover:not(:disabled) {
   color: #ffe2b0;
 }
 
+.core-node-proposed {
+  border-style: dashed;
+}
+
 .core-node-failed {
   border-color: rgba(246, 139, 139, 0.6);
   color: #ffd0d0;
@@ -1694,6 +1698,10 @@ button.approve:hover:not(:disabled) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.core-label.core-outcome-failed {
+  color: #f0a3a3;
 }
 
 .core-path {

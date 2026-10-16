@@ -442,6 +442,17 @@ export interface ContextNode {
   label: string;
   sublabel: string | null;
   status: "active" | "waiting" | "failed" | "done";
+  /** Only proposed so far: nothing has been executed on this node yet (a
+   *  note waiting for approval, a fact waiting for review). */
+  proposed: boolean;
+}
+
+/** How the followed run ended. It stays until the next run starts, so the
+ *  outcome is never lost when the core's picture settles. */
+export interface CoreOutcome {
+  result: "completed" | "failed" | "cancelled";
+  text: string;
+  at: number;
 }
 
 /** What the Nexus Core draws, derived only from state the dashboard already
@@ -468,6 +479,7 @@ export interface CoreView {
   active: NodeKind | null;
   label: string;
   visual: NexusCoreVisualState;
+  outcome: CoreOutcome | null;
 }
 
 const NODE_OF: Record<ItemKind, NodeKind> = {
@@ -504,7 +516,7 @@ export function deriveCore(input: {
       if (path[path.length - 1] !== "memory") path.push("memory");
       let memory = nodes.find((n) => n.id === "memory");
       if (!memory) {
-        memory = { id: "memory", label: "Memory", sublabel: null, status: "done" };
+        memory = { id: "memory", label: "Memory", sublabel: null, status: "done", proposed: false };
         nodes.push(memory);
       }
       memory.sublabel = `${item.memoryItems} ${item.memoryItems === 1 ? "fact" : "facts"} sent`;
@@ -513,9 +525,14 @@ export function deriveCore(input: {
     if (path[path.length - 1] !== id) path.push(id);
     let node = nodes.find((n) => n.id === id);
     if (!node) {
-      node = { id, label: nodeLabel(id, item), sublabel: null, status: "done" };
+      node = { id, label: nodeLabel(id, item), sublabel: null, status: "done", proposed: false };
       nodes.push(node);
     }
+    // Intent and execution are told apart: a proposal stays a proposal
+    // until the Host executes it (or it is decided).
+    if (item.kind === "note") node.proposed = true;
+    else if (item.kind === "write") node.proposed = item.status === "queued";
+    else if (item.kind === "memory") node.proposed = item.status === "waiting";
     node.sublabel = nodeSublabel(id, item) ?? node.sublabel;
     // The model node names whichever model answered last (e.g. the backup).
     if (id === "model") node.label = nodeLabel(id, item);
@@ -567,7 +584,21 @@ export function deriveCore(input: {
     hasPendingApproval: input.pendingApprovals > 0 || waiting !== undefined,
     lastResult: finished && run?.status === "completed" ? "success" : finished && run?.status === "failed" ? "error" : null,
   };
-  return { state, nodes, path, active, label, visual };
+  return { state, nodes, path, active, label, visual, outcome: outcomeOf(run) };
+}
+
+function outcomeOf(run: RunVM | null): CoreOutcome | null {
+  if (!run || run.finishedAt === null) return null;
+  switch (run.status) {
+    case "completed":
+      return { result: "completed", text: "Last task completed", at: run.finishedAt };
+    case "failed":
+      return { result: "failed", text: `Last task failed: ${run.failure?.message ?? "see the task"}`, at: run.finishedAt };
+    case "cancelled":
+      return { result: "cancelled", text: "Last task stopped", at: run.finishedAt };
+    default:
+      return null;
+  }
 }
 
 function nodeLabel(id: NodeKind, item: TimelineItem): string {

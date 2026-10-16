@@ -8,7 +8,11 @@
 // spokes to the core, faded with depth) and an outer shell (a faint rim).
 // Context nodes outside the shell (model, Web read, Memory, Notes, You) are
 // joined to it by beams; a tool in use receives a stream of packets from the
-// core that continues along its beam.
+// core that continues along its beam, while a tool that is only proposed
+// gets a dashed beam and signals that stop at the shell (intent is not
+// execution). The lattice also changes shape by state (it holds in when
+// waiting, opens and trembles while thinking, a cluster scatters on an
+// error), computed in the vertex shaders.
 //
 // Cost control: the camera never moves, geometry is fixed (160 nodes, ~300
 // links, 180 particles, 24 packets), each layer is one draw call, nothing is
@@ -41,6 +45,8 @@ export type CoreNodeStatus = "active" | "waiting" | "failed" | "done";
 export interface CoreNodeInput {
   id: string;
   status: CoreNodeStatus;
+  /** Only proposed so far: nothing has been executed on it yet. */
+  proposed?: boolean;
 }
 export type ScreenPoints = Record<string, { x: number; y: number }>;
 
@@ -61,19 +67,23 @@ interface Tuning {
   bands: number;
   /** Seconds between packets sent to the active tool; 0 sends none. */
   flowEvery: number;
+  /** Size of the lattice (1 at rest): held in, or opened up. */
+  shape: number;
+  /** Per-node tremble, in world units. */
+  tremble: number;
   fps: number;
 }
 
 const TUNING: Record<CoreState, Tuning> = {
-  IDLE: { spin: 0.04, packets: 0.12, clusters: 0, intensity: 0.5, core: 0.55, breathe: 0.07, breatheHz: 0.16, bands: 0.18, flowEvery: 0, fps: 8 },
-  LISTENING: { spin: 0.05, packets: 0.35, clusters: 0, intensity: 0.62, core: 0.72, breathe: 0.08, breatheHz: 0.4, bands: 0.35, flowEvery: 0, fps: 30 },
-  THINKING: { spin: 0.075, packets: 3.6, clusters: 1.3, intensity: 0.78, core: 0.9, breathe: 0.09, breatheHz: 0.95, bands: 0.9, flowEvery: 1.2, fps: 30 },
-  PLANNING: { spin: 0.055, packets: 0.25, clusters: 0, intensity: 0.72, core: 0.85, breathe: 0.07, breatheHz: 0.6, bands: 0.55, flowEvery: 0, fps: 30 },
-  USING_TOOL: { spin: 0.05, packets: 0.5, clusters: 0, intensity: 0.7, core: 0.88, breathe: 0.06, breatheHz: 0.55, bands: 0.6, flowEvery: 0.32, fps: 30 },
-  EXECUTING: { spin: 0.045, packets: 0, clusters: 0, intensity: 0.82, core: 1, breathe: 0.035, breatheHz: 0.5, bands: 0.7, flowEvery: 0.3, fps: 30 },
-  WAITING_APPROVAL: { spin: 0.012, packets: 0.05, clusters: 0, intensity: 0.3, core: 0.82, breathe: 0.06, breatheHz: 0.12, bands: 0.08, flowEvery: 0, fps: 8 },
-  SUCCESS: { spin: 0.05, packets: 0.3, clusters: 0, intensity: 0.68, core: 0.85, breathe: 0.06, breatheHz: 0.3, bands: 0.3, flowEvery: 0, fps: 30 },
-  ERROR: { spin: 0.025, packets: 0.08, clusters: 0, intensity: 0.42, core: 0.65, breathe: 0.04, breatheHz: 0.2, bands: 0.15, flowEvery: 0, fps: 24 },
+  IDLE: { spin: 0.04, packets: 0.12, clusters: 0, intensity: 0.5, core: 0.55, breathe: 0.07, breatheHz: 0.16, bands: 0.18, flowEvery: 0, shape: 1, tremble: 0.004, fps: 8 },
+  LISTENING: { spin: 0.05, packets: 0.35, clusters: 0, intensity: 0.62, core: 0.72, breathe: 0.08, breatheHz: 0.4, bands: 0.35, flowEvery: 0, shape: 1, tremble: 0.004, fps: 30 },
+  THINKING: { spin: 0.075, packets: 3.6, clusters: 1.3, intensity: 0.78, core: 0.9, breathe: 0.09, breatheHz: 0.95, bands: 0.9, flowEvery: 1.2, shape: 1.035, tremble: 0.02, fps: 30 },
+  PLANNING: { spin: 0.055, packets: 0.25, clusters: 0, intensity: 0.72, core: 0.85, breathe: 0.07, breatheHz: 0.6, bands: 0.55, flowEvery: 0, shape: 1.02, tremble: 0.01, fps: 30 },
+  USING_TOOL: { spin: 0.05, packets: 0.5, clusters: 0, intensity: 0.7, core: 0.88, breathe: 0.06, breatheHz: 0.55, bands: 0.6, flowEvery: 0.32, shape: 1, tremble: 0.008, fps: 30 },
+  EXECUTING: { spin: 0.045, packets: 0, clusters: 0, intensity: 0.82, core: 1, breathe: 0.035, breatheHz: 0.5, bands: 0.7, flowEvery: 0.3, shape: 0.985, tremble: 0, fps: 30 },
+  WAITING_APPROVAL: { spin: 0.012, packets: 0.05, clusters: 0, intensity: 0.3, core: 0.82, breathe: 0.06, breatheHz: 0.12, bands: 0.08, flowEvery: 0, shape: 0.93, tremble: 0, fps: 8 },
+  SUCCESS: { spin: 0.05, packets: 0.3, clusters: 0, intensity: 0.68, core: 0.85, breathe: 0.06, breatheHz: 0.3, bands: 0.3, flowEvery: 0, shape: 1, tremble: 0.004, fps: 30 },
+  ERROR: { spin: 0.025, packets: 0.08, clusters: 0, intensity: 0.42, core: 0.65, breathe: 0.04, breatheHz: 0.2, bands: 0.15, flowEvery: 0, shape: 1, tremble: 0.004, fps: 24 },
 };
 
 const NODE_COUNT = 160;
@@ -139,6 +149,23 @@ const DEPTH = /* glsl */ `
   float depthOf(vec4 mv) { return clamp((-mv.z - 4.95) / 2.5, 0.0, 1.0); }
 `;
 
+// The lattice's shape by state: held in or opened up (uShape), a fine
+// tremble (uTremble), and the scatter of one cluster on an error. The core
+// itself (cluster -2) never moves.
+const SHAPE = /* glsl */ `
+  uniform float uShape;
+  uniform float uTremble;
+  uniform float uHitCluster;
+  uniform float uScatter;
+  vec3 shaped(vec3 p, float seed, float cluster, float time) {
+    if (cluster < -1.5) return p;
+    vec3 q = p * uShape;
+    q += uTremble * vec3(sin(time * 1.7 + seed * 20.0), sin(time * 1.3 + seed * 13.0), sin(time * 2.1 + seed * 7.0));
+    if (abs(cluster - uHitCluster) < 0.5) q += normalize(p) * uScatter * (0.08 + 0.07 * fract(seed * 7.0));
+    return q;
+  }
+`;
+
 // A wave front moving through the lattice (inward while listening, outward
 // on success): a radial band around uWave.
 const WAVE = /* glsl */ `
@@ -154,6 +181,7 @@ const NODE_VERTEX = /* glsl */ `
   attribute float aAct;
   attribute float aSize;
   attribute float aSeed;
+  attribute float aCluster;
   uniform float uPixelRatio;
   uniform float uTime;
   uniform float uTwinkle;
@@ -162,11 +190,13 @@ const NODE_VERTEX = /* glsl */ `
   varying float vWave;
   ${DEPTH}
   ${WAVE}
+  ${SHAPE}
   void main() {
-    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    vec3 p = shaped(position, aSeed, aCluster, uTime);
+    vec4 mv = modelViewMatrix * vec4(p, 1.0);
     float depth = depthOf(mv);
     vDepth = 1.0 - depth * 0.72;
-    vWave = waveAt(position);
+    vWave = waveAt(p);
     vAct = aAct;
     float twinkle = 1.0 + uTwinkle * sin(uTime * 0.7 + aSeed * 6.2831);
     float size = aSize * twinkle + (aAct + vWave) * 9.0;
@@ -197,15 +227,21 @@ const NODE_FRAGMENT = /* glsl */ `
 
 const LINK_VERTEX = /* glsl */ `
   attribute float aAct;
+  attribute float aSeed;
+  attribute float aCluster;
+  uniform float uTime;
   varying float vAct;
   varying float vDepth;
   varying float vWave;
   ${DEPTH}
   ${WAVE}
+  ${SHAPE}
   void main() {
-    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    // Each end follows its node exactly.
+    vec3 p = shaped(position, aSeed, aCluster, uTime);
+    vec4 mv = modelViewMatrix * vec4(p, 1.0);
     vDepth = 1.0 - depthOf(mv) * 0.82;
-    vWave = waveAt(position);
+    vWave = waveAt(p);
     vAct = aAct;
     gl_Position = projectionMatrix * mv;
   }
@@ -234,12 +270,14 @@ const PACKET_VERTEX = /* glsl */ `
   attribute float aSize;
   attribute vec3 aColor;
   uniform float uPixelRatio;
+  uniform float uShape;
   varying float vAct;
   varying float vDepth;
   varying vec3 vColor;
   ${DEPTH}
   void main() {
-    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    // Signals ride the lattice as it holds in or opens up.
+    vec4 mv = modelViewMatrix * vec4(position * uShape, 1.0);
     vDepth = 1.0 - depthOf(mv) * 0.6;
     vAct = aAct;
     vColor = aColor;
@@ -386,9 +424,12 @@ const BEAM_POINT_FRAGMENT = /* glsl */ `
 
 const BEAM_LINE_VERTEX = /* glsl */ `
   attribute float aAct;
+  attribute float aDist;
   varying float vAct;
+  varying float vDist;
   void main() {
     vAct = aAct;
+    vDist = aDist;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `;
@@ -398,8 +439,12 @@ const BEAM_LINE_FRAGMENT = /* glsl */ `
   uniform vec3 uHot;
   uniform float uIntensity;
   uniform float uAlpha;
+  uniform float uDash;
   varying float vAct;
+  varying float vDist;
   void main() {
+    // A proposal is drawn dashed: an intent, not an executed effect.
+    if (uDash > 0.5 && fract(vDist * 7.0) > 0.5) discard;
     vec3 c = mix(uDim, uHot, clamp(vAct, 0.0, 1.0));
     float a = max(0.0, 0.10 + uIntensity * 0.12 + vAct * 0.75) * uAlpha;
     gl_FragColor = vec4(c * a, a);
@@ -452,6 +497,7 @@ interface Beam {
   ringMat: ShaderMaterial;
   status: CoreNodeStatus;
   active: boolean;
+  proposed: boolean;
   /** 0..1 while appearing, so a node fades in instead of popping. */
   presence: number;
   removing: boolean;
@@ -528,6 +574,10 @@ export class NexusCore {
   private readonly pixelRatio: { value: number };
   /** Shared by the node and link materials. */
   private readonly wave = { r: { value: 0 }, amp: { value: 0 }, color: { value: ICE.clone() } };
+  /** Shared by the lattice materials. */
+  private readonly shape = { size: { value: 1 }, tremble: { value: 0 }, hit: { value: -10 }, scatter: { value: 0 } };
+  /** Signals towards proposed tools, which stop at the shell. */
+  private proposalTimer = 0;
 
   private visual: NexusCoreVisualState = IDLE_VISUAL;
   private state: CoreState = "IDLE";
@@ -601,6 +651,9 @@ export class NexusCore {
     this.nodeGeo.setAttribute("aAct", new BufferAttribute(this.act, 1));
     this.nodeGeo.setAttribute("aSize", new BufferAttribute(nodeSizes, 1));
     this.nodeGeo.setAttribute("aSeed", new BufferAttribute(nodeSeeds, 1));
+    const nodeClusters = new Float32Array(NODE_COUNT);
+    for (let i = 0; i < NODE_COUNT; i++) nodeClusters[i] = this.cluster[i];
+    this.nodeGeo.setAttribute("aCluster", new BufferAttribute(nodeClusters, 1));
     this.nodeMat = additive(NODE_VERTEX, NODE_FRAGMENT, {
       uPixelRatio: this.pixelRatio,
       uTime: time,
@@ -611,24 +664,35 @@ export class NexusCore {
       uWave: this.wave.r,
       uWaveAmp: this.wave.amp,
       uWaveColor: this.wave.color,
+      ...this.shapeUniforms(),
     });
 
     // Links.
     const linkPositions = new Float32Array(this.edgeCount * 6);
+    const linkSeeds = new Float32Array(this.edgeCount * 2);
+    const linkClusters = new Float32Array(this.edgeCount * 2);
     for (let e = 0; e < this.edgeCount; e++) {
-      this.nodes[this.edges[e * 2]].toArray(linkPositions, e * 6);
-      this.nodes[this.edges[e * 2 + 1]].toArray(linkPositions, e * 6 + 3);
+      for (let end = 0; end < 2; end++) {
+        const n = this.edges[e * 2 + end];
+        this.nodes[n].toArray(linkPositions, e * 6 + end * 3);
+        linkSeeds[e * 2 + end] = n === CORE ? 0 : nodeSeeds[n];
+        linkClusters[e * 2 + end] = n === CORE ? -2 : this.cluster[n];
+      }
     }
     this.linkGeo = new BufferGeometry();
     this.linkGeo.setAttribute("position", new BufferAttribute(linkPositions, 3));
     this.linkGeo.setAttribute("aAct", new BufferAttribute(this.lineAct, 1));
+    this.linkGeo.setAttribute("aSeed", new BufferAttribute(linkSeeds, 1));
+    this.linkGeo.setAttribute("aCluster", new BufferAttribute(linkClusters, 1));
     this.linkMat = additive(LINK_VERTEX, LINK_FRAGMENT, {
+      uTime: time,
       uDim: { value: ICE_DIM.clone() },
       uHot: { value: ICE.clone() },
       uIntensity: { value: 0.5 },
       uWave: this.wave.r,
       uWaveAmp: this.wave.amp,
       uWaveColor: this.wave.color,
+      ...this.shapeUniforms(),
     });
 
     // Packets: a short tail of points each; unused points have no size.
@@ -640,7 +704,7 @@ export class NexusCore {
     this.packetGeo.setAttribute("aAct", new BufferAttribute(this.packetAct, 1));
     this.packetGeo.setAttribute("aSize", new BufferAttribute(this.packetSize, 1));
     this.packetGeo.setAttribute("aColor", new BufferAttribute(this.packetColor, 3));
-    this.packetMat = additive(PACKET_VERTEX, PACKET_FRAGMENT, { uPixelRatio: this.pixelRatio });
+    this.packetMat = additive(PACKET_VERTEX, PACKET_FRAGMENT, { uPixelRatio: this.pixelRatio, uShape: this.shape.size });
     this.packetAttributes = ["position", "aAct", "aSize", "aColor"].map((n) => this.packetGeo.getAttribute(n) as BufferAttribute);
 
     this.lattice.add(new LineSegments(this.linkGeo, this.linkMat));
@@ -720,6 +784,15 @@ export class NexusCore {
   }
 
   private readonly timeUniform: { value: number };
+
+  private shapeUniforms() {
+    return {
+      uShape: this.shape.size,
+      uTremble: this.shape.tremble,
+      uHitCluster: this.shape.hit,
+      uScatter: this.shape.scatter,
+    };
+  }
   private readonly packetAttributes: BufferAttribute[];
 
   /** Called when the GPU context is lost; the stage switches to its still fallback. */
@@ -1032,6 +1105,9 @@ export class NexusCore {
       this.accentColor.copy(RED);
       this.accent = Math.max(this.accent, 0.85);
       const hit = Math.floor(this.rand() * CLUSTER_COUNT);
+      // The hit cluster scatters briefly, then returns.
+      this.shape.hit.value = hit;
+      this.shape.scatter.value = 1;
       for (let e = 0; e < this.edgeCount; e++) {
         const near = this.cluster[this.edges[e * 2]] === hit || this.cluster[this.edges[e * 2 + 1]] === hit;
         if (near || this.rand() < 0.04) this.edgeBreak[e] = 1;
@@ -1142,7 +1218,8 @@ export class NexusCore {
       }
       beam.removing = false;
       beam.status = n.status;
-      beam.active = n.id === this.activeId;
+      beam.proposed = n.proposed === true;
+      beam.active = n.id === this.activeId && !beam.proposed;
     }
     this.publishLayout();
   }
@@ -1151,11 +1228,13 @@ export class NexusCore {
     const lineGeo = new BufferGeometry();
     lineGeo.setAttribute("position", new BufferAttribute(new Float32Array(6), 3));
     lineGeo.setAttribute("aAct", new BufferAttribute(new Float32Array([0.2, 1]), 1));
+    lineGeo.setAttribute("aDist", new BufferAttribute(new Float32Array(2), 1));
     const lineMat = additive(BEAM_LINE_VERTEX, BEAM_LINE_FRAGMENT, {
       uDim: { value: DONE.clone() },
       uHot: { value: ICE.clone() },
       uIntensity: { value: 0 },
       uAlpha: { value: 0 },
+      uDash: { value: 0 },
     });
     const line = new LineSegments(lineGeo, lineMat);
 
@@ -1197,6 +1276,7 @@ export class NexusCore {
       ringMat,
       status: "done",
       active: false,
+      proposed: false,
       presence: 0,
       removing: false,
     };
@@ -1211,6 +1291,9 @@ export class NexusCore {
     pos.setXYZ(0, beam.from.x, beam.from.y, beam.from.z);
     pos.setXYZ(1, beam.target.x, beam.target.y, beam.target.z);
     pos.needsUpdate = true;
+    const dist = beam.line.geometry.getAttribute("aDist") as BufferAttribute;
+    dist.setX(1, beam.from.distanceTo(beam.target));
+    dist.needsUpdate = true;
     beam.node.position.copy(beam.target);
     beam.ring.position.copy(beam.target);
   }
@@ -1307,6 +1390,7 @@ export class NexusCore {
     this.planAge = -1;
     this.jitter = 0;
     this.wave.amp.value = 0;
+    this.shape.scatter.value = 0;
     this.accent = this.state === "ERROR" ? 0.45 : this.state === "SUCCESS" ? 0.4 : this.accentGoal;
     if (this.state === "SUCCESS") this.accentColor.copy(GREEN);
     if (this.state === "ERROR") this.accentColor.copy(RED);
@@ -1338,6 +1422,11 @@ export class NexusCore {
     t.breatheHz += (g.breatheHz - t.breatheHz) * k;
     t.bands += (g.bands - t.bands) * k;
     t.flowEvery = g.flowEvery;
+    // Shape changes ease from wherever they are, so an interrupted change
+    // never jumps.
+    const ks = 1 - Math.exp(-dt * 2.2);
+    t.shape += (g.shape - t.shape) * ks;
+    t.tremble += (g.tremble - t.tremble) * ks;
 
     // Rotation and the pointer's parallax (the dust moves a little more,
     // which reads as depth).
@@ -1387,6 +1476,15 @@ export class NexusCore {
         }
       }
     }
+    // Signals towards proposed tools stop at the shell.
+    this.proposalTimer -= dt;
+    if (this.proposalTimer <= 0) {
+      this.proposalTimer = 3.5;
+      for (const beam of this.beams.values()) {
+        if (!beam.proposed || beam.removing) continue;
+        this.spawn(this.route(CORE, this.exitNode(this.tmp2.copy(beam.target).normalize())), 0.5, 0.9, PACKET_DIM);
+      }
+    }
     this.stepPlan(dt);
     this.stepPackets(dt);
 
@@ -1410,15 +1508,18 @@ export class NexusCore {
       this.wave.amp.value *= Math.exp(-dt / 0.2);
     }
 
-    // Error: links stay broken briefly, then mend.
+    // Error: links stay broken briefly, then mend; the scatter returns
+    // within about a second and a half.
     if (this.errorAge >= 0) {
       this.errorAge += dt;
+      if (this.errorAge > 0.25) this.shape.scatter.value *= Math.exp(-dt / 0.4);
       if (this.errorAge > 0.8) {
         const mend = Math.exp(-dt / 0.9);
         for (let e = 0; e < this.edgeCount; e++) this.edgeBreak[e] *= mend;
       }
       if (this.errorAge > 6) {
         this.edgeBreak.fill(0);
+        this.shape.scatter.value = 0;
         this.errorAge = -1;
       }
     }
@@ -1524,6 +1625,10 @@ export class NexusCore {
     this.nodeMat.uniforms.uTwinkle.value = this.state === "WAITING_APPROVAL" ? 0.05 : 0.15;
     this.dustMat.uniforms.uIntensity.value = t.intensity;
     this.dustMat.uniforms.uPull.value = this.state === "LISTENING" ? 1 : 0;
+    // On success every node pulses once, in step with the wave.
+    const pulse = this.successAge >= 0 ? 0.045 * Math.sin(Math.PI * Math.min(1, this.successAge / 1.4)) : 0;
+    this.shape.size.value = t.shape * (1 + pulse);
+    this.shape.tremble.value = t.tremble;
     // The success wave brightens the rim as it reaches it.
     const atRim = this.successAge >= 0 ? this.wave.amp.value * Math.max(0, this.wave.r.value - 1) * 1.2 : 0;
     this.shellMat.uniforms.uStrength.value = 0.13 + t.intensity * 0.08 + atRim;
@@ -1538,6 +1643,7 @@ export class NexusCore {
     (line.uDim.value as Vector3).copy(color).multiplyScalar(0.35);
     line.uIntensity.value = strong ? 0.6 : 0.05;
     line.uAlpha.value = p * (strong ? 1 : 0.5);
+    line.uDash.value = beam.proposed ? 1 : 0;
     const throb = still ? 1 : 0.75 + 0.25 * Math.sin(time * (beam.status === "waiting" ? 1.6 : 4));
     (beam.nodeMat.uniforms.uColor.value as Vector3).copy(color);
     beam.nodeMat.uniforms.uStrength.value = (strong ? 0.9 * throb : 0.45) * p;
@@ -1546,12 +1652,21 @@ export class NexusCore {
     beam.ring.scale.setScalar(strong && !still ? 1 + 0.12 * Math.sin(time * 2.2) : 1);
 
     // Travelling impulse: outward to an active tool, inward from a waiting
-    // approval (the core depends on it).
-    const moving = !still && (beam.active || beam.status === "waiting");
-    beam.headMat.uniforms.uAlpha.value = moving ? p : 0;
+    // approval (the core depends on it). A proposal's impulse waits at the
+    // shell, where the signals from the core stop: nothing has gone out.
+    const parked = beam.proposed;
+    const moving = !still && !parked && (beam.active || beam.status === "waiting");
+    beam.headMat.uniforms.uAlpha.value = moving ? p : parked ? p * (still ? 0.8 : 0.55 + 0.35 * Math.sin(time * 2.4)) : 0;
     (beam.headMat.uniforms.uHot.value as Vector3).copy(color);
     (beam.headMat.uniforms.uDim.value as Vector3).copy(color);
-    if (moving) {
+    if (parked) {
+      const pos = beam.head.geometry.getAttribute("position") as BufferAttribute;
+      for (let i = 0; i < 3; i++) {
+        this.tmp.copy(beam.from).lerp(beam.target, 0.02 + i * 0.012);
+        pos.setXYZ(i, this.tmp.x, this.tmp.y, this.tmp.z);
+      }
+      pos.needsUpdate = true;
+    } else if (moving) {
       const speed = beam.status === "waiting" ? 0.35 : 0.9;
       const pos = beam.head.geometry.getAttribute("position") as BufferAttribute;
       for (let i = 0; i < 3; i++) {
