@@ -27,6 +27,7 @@ use crate::tools::markdown_artifact::{self as note_tool, ArtifactPaths, NoteCont
 use crate::vault::SecretVault;
 
 mod chat;
+mod mcp;
 mod memory;
 
 pub const DEFAULT_APPROVAL_TTL: Duration = Duration::from_secs(10 * 60);
@@ -90,6 +91,9 @@ pub struct Runtime {
     retry_waits: Vec<Duration>,
     replies: chat::Replies,
     system: SystemMonitor,
+    /// Tests only: lets a loopback MCP server stand in for a remote one.
+    allow_loopback_mcp: bool,
+    mcp_clients: mcp::McpClients,
 }
 
 #[derive(Debug, Clone)]
@@ -107,6 +111,8 @@ pub struct RuntimeConfig {
     /// Pauses before trying a model call again after a temporary outage;
     /// one entry per retry (so at most `len + 1` tries).
     pub retry_waits: Vec<Duration>,
+    /// Tests and debug builds only: accept a loopback `http://` MCP server.
+    pub allow_loopback_mcp: bool,
 }
 
 impl Default for RuntimeConfig {
@@ -120,6 +126,7 @@ impl Default for RuntimeConfig {
             deepseek_base_url: production_base_url(ProviderKind::DeepSeek).to_string(),
             reply_deadline: Duration::from_secs(120),
             retry_waits: vec![Duration::from_secs(2), Duration::from_secs(5)],
+            allow_loopback_mcp: false,
         }
     }
 }
@@ -160,6 +167,8 @@ impl Runtime {
             retry_waits: config.retry_waits,
             replies: chat::Replies::default(),
             system: SystemMonitor::default(),
+            allow_loopback_mcp: config.allow_loopback_mcp,
+            mcp_clients: mcp::McpClients::default(),
         });
         if paused {
             tracing::warn!(

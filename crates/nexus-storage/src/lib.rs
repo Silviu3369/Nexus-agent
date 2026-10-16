@@ -3,6 +3,7 @@
 //! locks in the callers (`ARHITECTURA_NEXUS_RO.md` §5, §7).
 
 mod chat;
+mod mcp;
 mod memory;
 mod repo;
 mod schema;
@@ -12,6 +13,7 @@ pub use chat::{
     ConnectionRow, ConversationRow, DEFAULT_PERSONA_NAME, Deleted, Exchange, MessageRow,
     NewExchange, PersonaRow, Settlement,
 };
+pub use mcp::{McpServerRow, McpToolRow, NewMcpTool};
 pub use memory::{MemoryFilter, MemoryRow, NewMemory, ProjectRow};
 pub use repo::{
     ActionRow, ApprovalRow, ArtifactRow, Decision, EventRow, NewAction, NewOperation, OperationRow,

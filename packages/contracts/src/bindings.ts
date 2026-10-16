@@ -117,7 +117,7 @@ export type AgentStepStatus = "Running" | "Done" | "Failed"
  * One step's kind-specific facts. Metadata only: a web read shows its
  * address, status and size, never the page's text.
  */
-export type AgentStepDetail = { kind: "ModelCall"; model: string; first_byte_ms: number | null; duration_ms: number | null; error: string | null; attempt: number | null; backup: boolean | null; memory_items: number | null } | { kind: "Fetch"; url: string; final_url: string | null; http_status: number | null; text_bytes: number | null; truncated: boolean | null; error: string | null } | { kind: "MemoryProposed"; content: string; scope: MemoryScope | null; memory_id: MemoryId | null; error: string | null } | { kind: "NoteProposed"; title: string; run_id: RunId | null; error: string | null }
+export type AgentStepDetail = { kind: "ModelCall"; model: string; first_byte_ms: number | null; duration_ms: number | null; error: string | null; attempt: number | null; backup: boolean | null; memory_items: number | null } | { kind: "Fetch"; url: string; final_url: string | null; http_status: number | null; text_bytes: number | null; truncated: boolean | null; error: string | null } | { kind: "MemoryProposed"; content: string; scope: MemoryScope | null; memory_id: MemoryId | null; error: string | null } | { kind: "McpCall"; server: string; tool: string; arguments: string; result_chars: number | null; truncated: boolean | null; is_error: boolean | null; duration_ms: number | null; error: string | null } | { kind: "NoteProposed"; title: string; run_id: RunId | null; error: string | null }
 
 export type AgentStepView = { step_id: AgentStepId; message_id: MessageId; conversation_id: ConversationId; conversation_title: string; seq: number; status: AgentStepStatus; detail: AgentStepDetail; started_at_ms: number; finished_at_ms: number | null }
 
@@ -152,4 +152,10 @@ export type MemoryItemView = { memory_id: MemoryId; scope: MemoryScope; project_
  * Exactly the facts a request in this project carries to the model.
  */
 export type MemoryContextView = { project_id: ProjectId; items: MemoryItemView[]; max_items: number; max_chars: number }
+
+export type McpServerId = string
+
+export type McpToolView = { name: string; title: string | null; description: string; parameters: string[]; schema_json: string; read_only_hint: boolean | null; destructive_hint: boolean | null; definition_sha256: string; enabled: boolean; changed: boolean; available: boolean; blocked_reason: string | null }
+
+export type McpServerView = { server_id: McpServerId; name: string; url: string; has_key: boolean; checked_at_ms: number | null; last_error: string | null; tools: McpToolView[] }
 

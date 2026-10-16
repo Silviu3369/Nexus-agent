@@ -425,6 +425,55 @@ impl NexusClient {
             .await??)
     }
 
+    pub async fn mcp_servers(&self) -> Result<Vec<nexus_protocol::McpServerView>, CallError> {
+        Ok(self.client.list_mcp_servers(context::current()).await??)
+    }
+
+    /// Saving lists the server's tools, so it waits like a provider call.
+    pub async fn save_mcp_server(
+        &self,
+        request: nexus_protocol::SaveMcpServerRequest,
+    ) -> Result<nexus_protocol::McpServerView, CallError> {
+        Ok(self
+            .client
+            .save_mcp_server(provider_context(), request)
+            .await??)
+    }
+
+    pub async fn refresh_mcp_tools(
+        &self,
+        id: nexus_protocol::McpServerId,
+    ) -> Result<nexus_protocol::McpServerView, CallError> {
+        Ok(self
+            .client
+            .refresh_mcp_tools(provider_context(), id)
+            .await??)
+    }
+
+    pub async fn remove_mcp_server(
+        &self,
+        id: nexus_protocol::McpServerId,
+    ) -> Result<(), CallError> {
+        Ok(self
+            .client
+            .remove_mcp_server(context::current(), id)
+            .await??)
+    }
+
+    /// `definition_sha256` is the definition the user looked at; `None`
+    /// turns the tool off.
+    pub async fn set_mcp_tool_enabled(
+        &self,
+        id: nexus_protocol::McpServerId,
+        tool: String,
+        definition_sha256: Option<String>,
+    ) -> Result<nexus_protocol::McpServerView, CallError> {
+        Ok(self
+            .client
+            .set_mcp_tool_enabled(context::current(), id, tool, definition_sha256)
+            .await??)
+    }
+
     pub async fn system_status(&self) -> Result<nexus_protocol::SystemStatusView, CallError> {
         Ok(self.client.get_system_status(context::current()).await??)
     }

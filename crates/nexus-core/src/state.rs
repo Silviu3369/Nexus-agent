@@ -194,6 +194,7 @@ closed_enum!(AgentStepKind {
     Fetch,
     NoteProposed,
     MemoryProposed,
+    McpCall,
 });
 
 closed_enum!(AgentStepStatus {

@@ -8,6 +8,7 @@ mod client;
 pub mod gemini;
 mod http;
 mod kind;
+pub mod mcp;
 pub mod openai;
 mod sse;
 pub mod web;

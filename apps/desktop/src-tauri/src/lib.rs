@@ -1,6 +1,7 @@
 mod bindings;
 mod chat;
 mod host;
+mod mcp;
 mod memory;
 mod runs;
 
@@ -48,6 +49,11 @@ pub fn run() {
             memory::decide_memory,
             memory::delete_memory,
             memory::memory_context,
+            mcp::list_mcp_servers,
+            mcp::save_mcp_server,
+            mcp::refresh_mcp_tools,
+            mcp::remove_mcp_server,
+            mcp::set_mcp_tool_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -109,7 +109,7 @@ async fn resolve_allowed(target: &Url) -> Result<SocketAddr, FetchError> {
     Ok(addrs[0])
 }
 
-fn is_disallowed(ip: IpAddr) -> bool {
+pub(crate) fn is_disallowed(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_disallowed_v4(v4),
         IpAddr::V6(v6) => is_disallowed_v6(v6),

@@ -14,9 +14,11 @@
   window, a task given from the command bar with its steps, the Nexus Core
   path and the activity log, a temporary outage tried again, projects, a
   fact the agent proposes that is sent only after you approve it, a fact
-  you add, search and delete, deleting a request with its reply and a whole
-  task (gone from the database files too), and removing the connection with
-  its vault entry. Build first:
+  you add, search and delete, an MCP server (the test fake's, reachable only
+  because the debug host gets NEXUS_ALLOW_LOOPBACK_MCP=1) whose read-only
+  tool you enable and a task then calls, deleting a request with its reply
+  and a whole task (gone from the database files too), and removing the
+  connection with its vault entry. Build first:
     cargo build -p nexus-host --locked
     cargo build -p nexus-host --example fake_gemini_server --locked
     pnpm --filter @nexus/desktop tauri build --no-bundle
@@ -46,6 +48,7 @@ $env:NEXUS_PROFILE_DIR = $profileDir
 # Shaped like Google keys (AIza...), so the provider is detected from the format.
 $testKey = "AIzaSENTINEL-ui-check-" + [guid]::NewGuid()
 $wrongKey = "AIzaWRONG-ui-check-" + [guid]::NewGuid()
+$mcpKey = "SENTINEL-mcp-ui-check-" + [guid]::NewGuid()
 $failures = 0
 
 function Check([bool]$ok, [string]$what) {
@@ -212,16 +215,21 @@ $fake = $null
 $fakeOut = Join-Path $profileDir "fake-gemini.url"
 try {
   # --- the test fake, then a debug host pointed at it ---
-  $fake = Start-Process $fakeExe -ArgumentList $testKey -NoNewWindow -PassThru -RedirectStandardOutput $fakeOut
+  $fake = Start-Process $fakeExe -ArgumentList $testKey, $mcpKey -NoNewWindow -PassThru -RedirectStandardOutput $fakeOut
   $baseUrl = $null
-  for ($i = 0; $i -lt 50 -and -not $baseUrl; $i++) {
+  $mcpUrl = $null
+  for ($i = 0; $i -lt 50 -and -not $mcpUrl; $i++) {
     Start-Sleep -Milliseconds 100
-    $baseUrl = (Get-Content $fakeOut -ErrorAction SilentlyContinue | Select-Object -First 1)
+    $lines = @(Get-Content $fakeOut -ErrorAction SilentlyContinue)
+    if ($lines.Count -ge 2) { $baseUrl = $lines[0]; $mcpUrl = $lines[1] }
   }
   if (-not $baseUrl -or -not $baseUrl.StartsWith("http://127.0.0.1:")) { throw "the test fake did not start" }
+  if (-not $mcpUrl -or -not $mcpUrl.StartsWith("http://127.0.0.1:")) { throw "the MCP test fake did not start" }
   $env:NEXUS_GEMINI_BASE_URL = $baseUrl
+  $env:NEXUS_ALLOW_LOOPBACK_MCP = "1"
   $hostProc = Start-Process $hostExe -WindowStyle Hidden -PassThru
   Remove-Item Env:NEXUS_GEMINI_BASE_URL
+  Remove-Item Env:NEXUS_ALLOW_LOOPBACK_MCP
 
   $ui = Start-Process $exe -PassThru
   $win = Get-Window $ui.Id
@@ -386,6 +394,49 @@ try {
   Click-Button $win "Delete for good"
   Check (Wait-Text $win "No fact matches this search.") "a deleted fact is gone"
 
+  # --- MCP: a server you add, a read-only tool you enable, a task that uses it ---
+  Click-Button $win "Tools"
+  $mcpRow = Wait-Like $win "MCP servers"
+  Check ($null -ne $mcpRow) "Tools lists MCP servers"
+  if ($mcpRow) { Invoke-Element $mcpRow }
+  Check (Wait-Text $win "Add an MCP server") "the MCP tool offers adding a server"
+  Set-Field $win "Name" "Test docs"
+  Set-Field $win "Address" $mcpUrl
+  Set-Field $win "Key (optional)" $mcpKey
+  Click-Button $win "Add server" 20
+  Check (($null -ne (Wait-Contains $win "Enable docs_search" 20)) -and ($null -ne (Wait-Contains $win "Enable delete_page"))) "the server's tools are listed"
+  Check ($null -ne (Wait-Contains $win "2 listed · 0 enabled")) "no tool is enabled by default"
+  Check ((Vault-Entries).Count -eq 2) "the server's key went to Credential Manager"
+  Check (-not (Get-Names $win | Where-Object { $_.Contains($mcpKey) })) "the server's key is not shown anywhere"
+  Check ($null -ne (Wait-Contains $win "The server says")) "a tool's description is shown as the server's claim"
+  Check ($null -ne (Wait-Contains $win "read-only (server's claim)")) "the read-only hint is shown as a claim"
+  $blocked = Find-Named $win "Enable delete_page" ([System.Windows.Automation.ControlType]::CheckBox)
+  Check ($blocked -and -not $blocked.Current.IsEnabled) "a tool that may change things cannot be enabled"
+  Click-Button $win "Inspect schema"
+  Check ($null -ne (Wait-Contains $win '"properties"')) "a tool's parameter schema can be inspected"
+  $enable = Find-Named $win "Enable docs_search" ([System.Windows.Automation.ControlType]::CheckBox)
+  Check ($null -ne $enable) "the read-only tool has an enable switch"
+  if ($enable) { Invoke-Element $enable }
+  Check ($null -ne (Wait-Contains $win "2 listed · 1 enabled")) "the tool is enabled in the form shown"
+  Click-Button $win "Overview"
+  Set-Field $win "Give Nexus a task" "How do I create a named pipe?"
+  Click-Button $win "Run" 20
+  Check (Wait-Text $win "From the docs: use CreateNamedPipeW." 20) "the task answers after calling the tool"
+  Check ($null -ne (Wait-Like $win "Used docs_search")) "the MCP call is a step of the run"
+  Check ($null -ne (Wait-Like $win "Test docs node, docs_search")) "the server appears as a node around the core"
+  Click-Button $win "Activity"
+  Check ($null -ne (Wait-Contains $win "MCP tool enabled")) "enabling the tool is in the activity log"
+  Check (-not (Profile-Bytes).Contains($mcpKey)) "the server's key is not in the profile's database files"
+  Click-Button $win "Tools"
+  $mcpRow = Wait-Like $win "MCP servers"
+  if ($mcpRow) { Invoke-Element $mcpRow }
+  Check ($null -ne (Wait-Like $win "Used docs_search on Test docs")) "Tools lists the recent MCP call"
+  Click-Button $win "Remove"
+  Check ($null -ne (Wait-Contains $win "with its tools and its key")) "removing a server says what goes with it"
+  Click-Button $win "Remove for good"
+  Check ($null -ne (Wait-Contains $win "No MCP servers yet")) "the server is removed"
+  Check ((Vault-Entries).Count -eq 1) "its key is gone from Credential Manager"
+
   # --- deleting a request with its reply, then a whole task ---
   Click-Button $win "Tasks"
   $row = Wait-Like $win "Remember that I like short answers"
@@ -426,6 +477,7 @@ finally {
   Remove-Item -Recurse -Force $profileDir -ErrorAction SilentlyContinue
   Remove-Item Env:NEXUS_PROFILE_DIR -ErrorAction SilentlyContinue
   Remove-Item Env:NEXUS_GEMINI_BASE_URL -ErrorAction SilentlyContinue
+  Remove-Item Env:NEXUS_ALLOW_LOOPBACK_MCP -ErrorAction SilentlyContinue
 }
 
 if ($failures -gt 0) { Write-Output "$failures check(s) failed"; exit 1 }

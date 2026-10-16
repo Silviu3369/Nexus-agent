@@ -10,7 +10,7 @@ import { useGoTo } from "../shell/nav";
 import { useDerived, useNexus } from "../state/store";
 import { Empty, StatusPill } from "../ui";
 
-const TOOLS: (ActivityTool | "all")[] = ["all", "Model", "Web read", "Notes", "Memory", "System"];
+const TOOLS: (ActivityTool | "all")[] = ["all", "Model", "Web read", "Notes", "Memory", "MCP", "System"];
 const STATUSES: (ExecStatus | "all")[] = ["all", "running", "completed", "failed", "approval_required", "cancelled"];
 
 export function ActivityView() {

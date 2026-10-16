@@ -475,9 +475,11 @@ async fn cancelling_a_reply_keeps_what_arrived_and_stops_the_call() {
     host.shutdown().await;
 }
 
-// Must match MAX_FETCH_CALLS / MAX_AGENT_STEPS in nexus-host/src/runtime/chat.rs.
+// Must match MAX_FETCH_CALLS / MAX_MCP_CALLS / MAX_AGENT_STEPS in
+// nexus-host/src/runtime/chat.rs.
 const MAX_FETCH_CALLS: usize = 4;
-const MAX_AGENT_STEPS: usize = MAX_FETCH_CALLS + 2;
+const MAX_MCP_CALLS: usize = 4;
+const MAX_AGENT_STEPS: usize = MAX_FETCH_CALLS + MAX_MCP_CALLS + 2;
 
 #[tokio::test]
 async fn a_refused_fetch_is_reported_back_to_the_model_which_then_answers() {
@@ -581,6 +583,15 @@ async fn the_fetch_budget_is_enforced_then_the_tool_is_withdrawn() {
             "propose_note is always offered"
         );
     }
+    let fetches = reply
+        .steps
+        .iter()
+        .filter(|s| matches!(s.detail, AgentStepDetail::Fetch { .. }))
+        .count();
+    assert_eq!(
+        fetches, MAX_FETCH_CALLS,
+        "a fetch asked for after it was withdrawn is answered with an error, not performed"
+    );
     host.shutdown().await;
 }
 
@@ -646,6 +657,7 @@ async fn every_agent_step_is_recorded_and_shown_in_the_reply_and_the_activity() 
             AgentStepDetail::Fetch { .. } => "fetch",
             AgentStepDetail::NoteProposed { .. } => "note",
             AgentStepDetail::MemoryProposed { .. } => "memory",
+            AgentStepDetail::McpCall { .. } => "mcp",
         })
         .collect();
     assert_eq!(kinds, ["model", "fetch", "model", "note"]);

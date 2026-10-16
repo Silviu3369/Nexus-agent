@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::StorageError;
 
-pub const SUPPORTED_VERSION: i64 = 6;
+pub const SUPPORTED_VERSION: i64 = 7;
 
 /// Version 1: everything M1 persists. State columns are closed lists that a
 /// test keeps identical to the `nexus-core` enums. Times are UTC unix ms.
@@ -316,6 +316,63 @@ CREATE TRIGGER memory_items_au AFTER UPDATE OF content ON memory_items BEGIN
 END;
 "#;
 
+/// Version 7: remote MCP servers and their tools (`PLAN_NEXUS_RO.md`, step
+/// 3), and the agent step that calls one. A tool is offered only while the
+/// user has enabled exactly its current definition.
+const V7: &str = r#"
+CREATE TABLE agent_steps_v7 (
+    id             TEXT    PRIMARY KEY,
+    message_id     TEXT    NOT NULL REFERENCES messages (id),
+    seq            INTEGER NOT NULL CHECK (seq >= 1),
+    kind           TEXT    NOT NULL CHECK (kind IN ('ModelCall', 'Fetch', 'NoteProposed', 'MemoryProposed', 'McpCall')),
+    status         TEXT    NOT NULL CHECK (status IN ('Running', 'Done', 'Failed')),
+    detail_json    TEXT    NOT NULL CHECK (json_valid(detail_json)),
+    started_at_ms  INTEGER NOT NULL,
+    finished_at_ms INTEGER,
+    CHECK ((status = 'Running') = (finished_at_ms IS NULL)),
+    UNIQUE (message_id, seq)
+) STRICT;
+INSERT INTO agent_steps_v7
+    (id, message_id, seq, kind, status, detail_json, started_at_ms, finished_at_ms)
+SELECT id, message_id, seq, kind, status, detail_json, started_at_ms, finished_at_ms
+FROM agent_steps;
+DROP TABLE agent_steps;
+ALTER TABLE agent_steps_v7 RENAME TO agent_steps;
+CREATE INDEX agent_steps_by_start ON agent_steps (started_at_ms);
+CREATE INDEX agent_steps_by_status ON agent_steps (status);
+
+CREATE TABLE mcp_servers (
+    id            TEXT    PRIMARY KEY,
+    name          TEXT    NOT NULL CHECK (length(name) BETWEEN 1 AND 100),
+    url           TEXT    NOT NULL UNIQUE CHECK (length(url) BETWEEN 1 AND 2000),
+    -- The Windows vault entry holding its key; NULL when it needs none.
+    secret_name   TEXT,
+    revision      INTEGER NOT NULL CHECK (revision >= 1),
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    checked_at_ms INTEGER,
+    last_error    TEXT    CHECK (last_error IS NULL OR length(last_error) <= 500)
+) STRICT;
+
+CREATE TABLE mcp_tools (
+    server_id         TEXT    NOT NULL REFERENCES mcp_servers (id) ON DELETE CASCADE,
+    name              TEXT    NOT NULL CHECK (length(name) BETWEEN 1 AND 128),
+    title             TEXT,
+    description       TEXT    NOT NULL CHECK (length(description) <= 4000),
+    input_schema_json TEXT    NOT NULL CHECK (json_valid(input_schema_json)),
+    annotations_json  TEXT    NOT NULL CHECK (json_valid(annotations_json)),
+    -- SHA-256 of the definition as last listed, and of the one the user
+    -- enabled: a tool the server changed is off until enabled again.
+    definition_sha256 TEXT    NOT NULL CHECK (length(definition_sha256) = 64),
+    enabled_sha256    TEXT    CHECK (enabled_sha256 IS NULL OR length(enabled_sha256) = 64),
+    available         INTEGER NOT NULL CHECK (available IN (0, 1)),
+    position          INTEGER NOT NULL,
+    first_seen_at_ms  INTEGER NOT NULL,
+    updated_at_ms     INTEGER NOT NULL,
+    PRIMARY KEY (server_id, name)
+) STRICT;
+"#;
+
 struct Migration {
     sql: &'static str,
     /// Rebuilds a table other tables refer to (see [`V5`]).
@@ -345,6 +402,10 @@ const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         sql: V6,
+        rebuilds_parent_table: false,
+    },
+    Migration {
+        sql: V7,
         rebuilds_parent_table: false,
     },
 ];

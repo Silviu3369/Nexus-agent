@@ -9,7 +9,10 @@ use crate::chat::{
 };
 use crate::error::NexusError;
 use crate::handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse};
-use crate::ids::{ArtifactId, ConnectionId, ConversationId, MemoryId, MessageId, ProjectId, RunId};
+use crate::ids::{
+    ArtifactId, ConnectionId, ConversationId, McpServerId, MemoryId, MessageId, ProjectId, RunId,
+};
+use crate::mcp::{McpServerView, SaveMcpServerRequest};
 use crate::memory::{
     AddMemoryRequest, MemoryContextView, MemoryItemView, MemoryQuery, ProjectView,
     SaveProjectRequest,
@@ -152,6 +155,27 @@ pub trait NexusService {
 
     /// Exactly the facts a request in this project sends to the model.
     async fn memory_context(project_id: ProjectId) -> Result<MemoryContextView, NexusError>;
+
+    /// Remote MCP servers with their tools as last listed.
+    async fn list_mcp_servers() -> Result<Vec<McpServerView>, NexusError>;
+
+    /// Adds or edits a server, then asks it for its tools (a failure is
+    /// recorded on the server, not raised). A key goes to the vault.
+    async fn save_mcp_server(request: SaveMcpServerRequest) -> Result<McpServerView, NexusError>;
+
+    /// Asks the server for its tools again.
+    async fn refresh_mcp_tools(server_id: McpServerId) -> Result<McpServerView, NexusError>;
+
+    /// Removes the server, its tools and its key.
+    async fn remove_mcp_server(server_id: McpServerId) -> Result<(), NexusError>;
+
+    /// Enables exactly the definition shown (`Some(sha256)`) or turns the
+    /// tool off (`None`).
+    async fn set_mcp_tool_enabled(
+        server_id: McpServerId,
+        tool: String,
+        definition_sha256: Option<String>,
+    ) -> Result<McpServerView, NexusError>;
 
     /// Host version plus CPU and memory of the machine, read when asked.
     async fn get_system_status() -> Result<SystemStatusView, NexusError>;

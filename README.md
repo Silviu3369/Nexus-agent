@@ -42,7 +42,8 @@ cargo run -p nexus-client --example health
 # target\release\nexus-host.exe e blocat de un Host pornit.
 powershell -ExecutionPolicy Bypass -File scripts\m1-ui-check.ps1
 
-# Chatul M2 prin fereastra reală, față de serverul Gemini de test (Google nu e apelat):
+# Chatul M2 prin fereastra reală, față de serverele de test Gemini și MCP
+# (Google și niciun server MCP real nu sunt apelate):
 # Host debug + falsul de test, plus desktop.exe release.
 cargo build -p nexus-host --locked
 cargo build -p nexus-host --example fake_gemini_server --locked
@@ -59,6 +60,8 @@ Un profil restaurat pornește în pauză: vezi istoricul, dar nimic nu se execut
 Tipurile TypeScript din `packages/contracts` sunt generate din Rust. După o schimbare de contract: `$env:NEXUS_UPDATE_BINDINGS="1"; cargo test -p desktop`. Testul eșuează dacă fișierul generat a rămas în urmă.
 
 `NEXUS_GEMINI_BASE_URL` (doar în build-ul debug al Host-ului) trimite cererile Gemini la un server de test pe `http://127.0.0.1:<port>`. Build-ul release îl ignoră și vorbește doar cu `https://generativelanguage.googleapis.com`.
+
+`NEXUS_ALLOW_LOOPBACK_MCP=1` (tot doar în build-ul debug) permite un server MCP de test pe `http://127.0.0.1:<port>`. Build-ul release îl ignoră și acceptă doar servere MCP `https://` la adrese publice.
 
 Datele locale (tokenul de pairing și log-ul Host-ului, `logs\nexus-host.log`) stau în `%LOCALAPPDATA%\Nexus`, niciodată în repo. Cheile API stau în Credential Manager, sub `Nexus/<hash-profil>/…`, nu în fișiere.
 

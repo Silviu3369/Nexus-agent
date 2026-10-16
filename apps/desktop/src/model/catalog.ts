@@ -117,13 +117,18 @@ export const TOOLS: ToolInfo[] = [
   {
     id: "mcp",
     name: "MCP servers",
-    hostTool: null,
-    available: false,
-    permission: "—",
-    limits: [],
-    reason: "Nexus is not an MCP client yet.",
-    planned:
-      "Planned next after memory: remote (HTTP) servers first, with their tools under the same rules. Local servers run third-party code on this PC and stay off until an isolation decision.",
+    hostTool: "mcp<n>_<tool>",
+    available: true,
+    permission: "Read-only tools you enable · automatic",
+    limits: [
+      "Remote servers only, over https at public addresses. Local servers run third-party code on this PC and stay off until an isolation decision",
+      "Nothing is offered to the model until you enable a tool, one by one",
+      "Only tools the server declares read-only can be enabled for now; that is the server's claim, which Nexus cannot verify, so enable only servers you trust. Tools that can change things wait for per-call approvals (next step)",
+      "The definition you enabled is pinned: if the server changes a tool's description, parameters or hints, the tool is off until you enable it again",
+      "Up to 4 calls per reply, 30 s each; at most 20,000 characters of a result go back to the model",
+      "A server's key stays in the Windows vault and is sent only to that server, in its Authorization header; changing the address drops it",
+      "Descriptions and results are the server's data for the model, never instructions or permissions",
+    ],
   },
 ];
 
@@ -163,11 +168,12 @@ export const PLANNED_AGENTS: PlannedAgent[] = [
 export const ASSISTANT = {
   id: "assistant",
   role: "General assistant",
-  tools: ["web", "files", "memory"] as ToolId[],
+  tools: ["web", "files", "memory", "mcp"] as ToolId[],
   permissions: [
     "Read public web pages (GET), automatically",
     "Propose new notes; each write needs your approval",
     "Propose facts to remember; each one needs your approval",
+    "Call the read-only MCP tools you enabled, automatically",
     "No file reads, no commands, no PC control",
     "Persona changes tone and style only, never rights",
   ],

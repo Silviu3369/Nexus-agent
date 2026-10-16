@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { TimelineItem } from "../model/execution.ts";
 import { clock, seconds } from "../model/format.ts";
 import { StatusPill } from "../ui";
-import { AlertIcon, CheckIcon, ChevronDownIcon, GlobeIcon, LockIcon, NotesIcon, SparkleIcon } from "../icons";
+import { AlertIcon, CheckIcon, ChevronDownIcon, GlobeIcon, LockIcon, MemoryIcon, NotesIcon, PlugIcon, SparkleIcon } from "../icons";
 
 function KindIcon({ item }: { item: TimelineItem }) {
   switch (item.kind) {
@@ -13,6 +13,10 @@ function KindIcon({ item }: { item: TimelineItem }) {
     case "note":
     case "write":
       return <NotesIcon size={14} />;
+    case "memory":
+      return <MemoryIcon size={14} />;
+    case "mcp":
+      return <PlugIcon size={14} />;
     case "approval":
       return <LockIcon size={14} />;
   }

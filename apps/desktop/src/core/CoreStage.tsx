@@ -153,6 +153,7 @@ const STILL_POINTS: Record<string, { x: number; y: number }> = {
   files: { x: 84, y: 70 },
   approval: { x: 16, y: 70 },
   memory: { x: 14, y: 48 },
+  mcp: { x: 86, y: 48 },
 };
 
 function StillCore({ state }: { state: CoreView["state"] }) {

@@ -48,6 +48,7 @@ typed_id!(MessageId);
 // read, a proposed note) — not a step of a Run, which `StepId` names.
 typed_id!(AgentStepId);
 typed_id!(MemoryId);
+typed_id!(McpServerId);
 
 #[cfg(test)]
 mod tests {

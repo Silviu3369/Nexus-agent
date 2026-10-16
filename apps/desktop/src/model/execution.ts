@@ -58,7 +58,7 @@ export type CoreState =
   | "SUCCESS"
   | "ERROR";
 
-export type ItemKind = "model" | "web" | "note" | "memory" | "approval" | "write";
+export type ItemKind = "model" | "web" | "note" | "memory" | "mcp" | "approval" | "write";
 
 export interface TimelineItem {
   id: string;
@@ -78,6 +78,8 @@ export interface TimelineItem {
   facts: [string, string][];
   /** Model calls: how many approved facts the Host sent with the request. */
   memoryItems?: number;
+  /** MCP calls: which tool of which server. */
+  mcp?: { server: string; tool: string };
 }
 
 export interface RunVM {
@@ -159,6 +161,18 @@ export function describeStep(step: AgentStepView): { title: string; detail: stri
       const title = `Proposed to remember "${clip(d.content, 60)}"`;
       if (d.error) return { title, detail: d.error };
       return { title, detail: running ? null : "remembered only if you approve it" };
+    }
+    case "McpCall": {
+      const title = `${running ? "Using" : "Used"} ${d.tool} on ${d.server}`;
+      if (d.error) return { title, detail: d.error };
+      if (d.result_chars === null) return { title, detail: null };
+      const parts = [
+        `${d.result_chars.toLocaleString("en-US")} characters back`,
+        d.truncated ? "truncated" : null,
+        d.is_error ? "the tool reported an error" : null,
+        seconds(d.duration_ms),
+      ].filter(Boolean);
+      return { title, detail: parts.join(" · ") };
     }
   }
 }
@@ -258,6 +272,27 @@ function stepItem(step: AgentStepView, agent: string, pendingMemory: ReadonlySet
         ]),
       };
     }
+    case "McpCall":
+      return {
+        ...base,
+        kind: "mcp",
+        title: `${status === "running" ? "Using" : "Used"} ${d.tool} · ${d.server}`,
+        model: null,
+        tool: "MCP",
+        durationMs: d.duration_ms ?? base.durationMs,
+        outcome: detail,
+        mcp: { server: d.server, tool: d.tool },
+        facts: compact([
+          ["Server", d.server],
+          ["Tool", d.tool],
+          ["Arguments sent", d.arguments || null],
+          ["Result given to the model", d.result_chars === null ? null : `${d.result_chars.toLocaleString("en-US")} characters`],
+          ["Truncated", d.truncated ? "yes" : null],
+          ["Tool reported an error", d.is_error ? "yes" : null],
+          ["Duration", seconds(d.duration_ms)],
+          ["Error", d.error],
+        ]),
+      };
   }
 }
 
@@ -421,9 +456,11 @@ export function nextLine(run: RunVM | null): string {
   if (!run) return "Nothing is queued. Give Nexus a task below.";
   const running = run.items.find((i) => i.status === "running");
   if (running?.kind === "model")
-    return "The model is answering. It may read public web pages, propose a note or propose a fact to remember; anything that writes or is remembered waits for you.";
+    return "The model is answering. It may read public web pages, use the MCP tools you enabled, propose a note or propose a fact to remember; anything that writes or is remembered waits for you.";
   if (running?.kind === "web")
     return "The page text goes back to the model, which then continues the answer.";
+  if (running?.kind === "mcp")
+    return "The tool's answer goes back to the model as data, which then continues the answer.";
   if (running?.kind === "write") return "The Host writes the note, then verifies the file against its SHA-256.";
   if (run.items.some((i) => i.status === "approval_required"))
     return "Waiting for your approval. Nothing is written until you approve.";
@@ -435,7 +472,7 @@ export function nextLine(run: RunVM | null): string {
 
 // ---------- Core state and the context nodes around it ----------
 
-export type NodeKind = "model" | "web" | "files" | "memory" | "approval";
+export type NodeKind = "model" | "web" | "files" | "memory" | "mcp" | "approval";
 
 export interface ContextNode {
   id: NodeKind;
@@ -487,6 +524,7 @@ const NODE_OF: Record<ItemKind, NodeKind> = {
   web: "web",
   note: "files",
   memory: "memory",
+  mcp: "mcp",
   write: "files",
   approval: "approval",
 };
@@ -534,8 +572,9 @@ export function deriveCore(input: {
     else if (item.kind === "write") node.proposed = item.status === "queued";
     else if (item.kind === "memory") node.proposed = item.status === "waiting";
     node.sublabel = nodeSublabel(id, item) ?? node.sublabel;
-    // The model node names whichever model answered last (e.g. the backup).
-    if (id === "model") node.label = nodeLabel(id, item);
+    // The model node names whichever model answered last (e.g. the backup),
+    // the MCP node whichever server was used last.
+    if (id === "model" || id === "mcp") node.label = nodeLabel(id, item);
     node.status = mergeNodeStatus(node.status, item.status);
   }
 
@@ -555,6 +594,9 @@ export function deriveCore(input: {
     } else if (running.kind === "memory") {
       state = "USING_TOOL";
       label = "Proposing a fact to remember";
+    } else if (running.kind === "mcp") {
+      state = "USING_TOOL";
+      label = running.mcp ? `Using ${running.mcp.tool} on ${running.mcp.server}` : running.title;
     } else {
       state = "THINKING";
       label = running.model ? `Thinking — ${running.model}` : "Thinking";
@@ -611,6 +653,8 @@ function nodeLabel(id: NodeKind, item: TimelineItem): string {
       return "Notes";
     case "memory":
       return "Memory";
+    case "mcp":
+      return item.mcp?.server ?? "MCP";
     case "approval":
       return "You";
   }
@@ -626,6 +670,8 @@ function nodeSublabel(id: NodeKind, item: TimelineItem): string | null {
       return item.kind === "write" ? "write" : "proposal";
     case "memory":
       return item.status === "waiting" ? "proposal · your review" : "proposal";
+    case "mcp":
+      return item.mcp?.tool ?? "MCP tool";
     case "approval":
       return "approval";
   }
@@ -727,7 +773,7 @@ export function modelStats(steps: AgentStepView[]): ModelStats[] {
 
 // ---------- Activity log ----------
 
-export type ActivityTool = "Model" | "Web read" | "Notes" | "Memory" | "System";
+export type ActivityTool = "Model" | "Web read" | "Notes" | "Memory" | "MCP" | "System";
 
 export interface ActivityEntry {
   id: string;
@@ -772,6 +818,13 @@ const EVENT_TEXT: Record<string, { title: string; tool: ActivityTool; status?: E
   MemoryEdited: { title: "Fact corrected", tool: "Memory" },
   MemoryDecided: { title: "Proposed fact decided", tool: "Memory" },
   MemoryDeleted: { title: "Fact deleted", tool: "Memory" },
+  McpServerAdded: { title: "MCP server added", tool: "MCP" },
+  McpServerUpdated: { title: "MCP server changed", tool: "MCP" },
+  McpServerRemoved: { title: "MCP server removed with its tools and key", tool: "MCP" },
+  McpToolsListed: { title: "MCP server's tools listed", tool: "MCP" },
+  McpServerCheckFailed: { title: "MCP server could not be asked for its tools", tool: "MCP", status: "failed" },
+  McpToolEnabled: { title: "MCP tool enabled", tool: "MCP" },
+  McpToolDisabled: { title: "MCP tool turned off", tool: "MCP" },
 };
 
 /** Events whose facts the agent steps already show in more detail, or that
@@ -846,6 +899,7 @@ const TOOL_OF_STEP: Record<AgentStepView["detail"]["kind"], ActivityTool> = {
   Fetch: "Web read",
   NoteProposed: "Notes",
   MemoryProposed: "Memory",
+  McpCall: "MCP",
 };
 
 function splitWords(kind: string): string {
@@ -863,6 +917,7 @@ export type Collection =
   | "persona"
   | "projects"
   | "memory"
+  | "mcp"
   | "focus";
 
 /** What each durable event invalidates. Events are notifications only;
@@ -902,6 +957,8 @@ export function invalidatedBy(events: EventView[]): Set<Collection> {
       out.add("connections");
     } else if (k === "PersonaSaved") {
       out.add("persona");
+    } else if (k.startsWith("Mcp")) {
+      out.add("mcp");
     }
   }
   return out;

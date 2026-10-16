@@ -9,11 +9,11 @@ use nexus_protocol::{
     AddMemoryRequest, AgentStepView, ArtifactId, BackupModelView, BackupSummary, ConnectionId,
     ConnectionView, ConversationId, ConversationSummary, ConversationView, DecideApprovalRequest,
     DeletedView, ErrorCode, EventsPage, GetHealthResponse, HandshakeRequest, HandshakeResponse,
-    HealthStatus, MemoryContextView, MemoryId, MemoryItemView, MemoryQuery, MessageId, ModelView,
-    NexusError, PROTOCOL_VERSION, PersonaView, ProjectId, ProjectView, RunId, RunView,
-    SaveConnectionRequest, SavePersonaRequest, SaveProjectRequest, SendMessageRequest,
-    SendMessageResponse, Snapshot, SubmitNoteRequest, SubmitNoteResponse, SystemStatusView,
-    ThinkingLevel,
+    HealthStatus, McpServerId, McpServerView, MemoryContextView, MemoryId, MemoryItemView,
+    MemoryQuery, MessageId, ModelView, NexusError, PROTOCOL_VERSION, PersonaView, ProjectId,
+    ProjectView, RunId, RunView, SaveConnectionRequest, SaveMcpServerRequest, SavePersonaRequest,
+    SaveProjectRequest, SendMessageRequest, SendMessageResponse, Snapshot, SubmitNoteRequest,
+    SubmitNoteResponse, SystemStatusView, ThinkingLevel,
 };
 use tarpc::context::Context;
 use tarpc::server::{BaseChannel, Channel};
@@ -405,6 +405,51 @@ impl NexusService for HostServer {
     ) -> Result<MemoryContextView, NexusError> {
         self.require_session()?;
         self.runtime.memory_context(project_id).await
+    }
+
+    async fn list_mcp_servers(self, _ctx: Context) -> Result<Vec<McpServerView>, NexusError> {
+        self.require_session()?;
+        self.runtime.list_mcp_servers().await
+    }
+
+    async fn save_mcp_server(
+        self,
+        _ctx: Context,
+        request: SaveMcpServerRequest,
+    ) -> Result<McpServerView, NexusError> {
+        self.require_session()?;
+        self.runtime.save_mcp_server(request).await
+    }
+
+    async fn refresh_mcp_tools(
+        self,
+        _ctx: Context,
+        server_id: McpServerId,
+    ) -> Result<McpServerView, NexusError> {
+        self.require_session()?;
+        self.runtime.refresh_mcp_tools(server_id).await
+    }
+
+    async fn remove_mcp_server(
+        self,
+        _ctx: Context,
+        server_id: McpServerId,
+    ) -> Result<(), NexusError> {
+        self.require_session()?;
+        self.runtime.remove_mcp_server(server_id).await
+    }
+
+    async fn set_mcp_tool_enabled(
+        self,
+        _ctx: Context,
+        server_id: McpServerId,
+        tool: String,
+        definition_sha256: Option<String>,
+    ) -> Result<McpServerView, NexusError> {
+        self.require_session()?;
+        self.runtime
+            .set_mcp_tool_enabled(server_id, tool, definition_sha256)
+            .await
     }
 
     async fn get_system_status(self, _ctx: Context) -> Result<SystemStatusView, NexusError> {

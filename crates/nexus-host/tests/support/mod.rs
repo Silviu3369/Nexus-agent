@@ -5,6 +5,7 @@
 
 pub mod chat;
 pub mod fake_gemini;
+pub mod fake_mcp;
 pub mod fake_provider;
 
 use std::path::{Path, PathBuf};

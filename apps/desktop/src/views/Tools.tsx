@@ -8,6 +8,7 @@ import type { ToolId, ToolInfo } from "../model/catalog.ts";
 import { describeStep, stepStatus } from "../model/execution.ts";
 import { ago, clock } from "../model/format.ts";
 import { NotesPanel } from "../Notes";
+import { McpServers } from "../components/McpServers";
 import { useGoTo } from "../shell/nav";
 import { useDerived, useNexus, useNow } from "../state/store";
 import { Empty, Facts, Panel, StatusPill, Unavailable } from "../ui";
@@ -83,6 +84,7 @@ function useToolUsage(): Partial<Record<ToolId, Usage>> {
     const reads = steps.filter((s) => s.detail.kind === "Fetch");
     const proposals = steps.filter((s) => s.detail.kind === "NoteProposed");
     const facts = steps.filter((s) => s.detail.kind === "MemoryProposed");
+    const calls = steps.filter((s) => s.detail.kind === "McpCall");
     const artifactTimes = runs.flatMap((r) => (r.artifact ? [r.artifact.created_at_ms] : []));
     const fileTimes = [...proposals.map((s) => s.started_at_ms), ...artifactTimes];
     return {
@@ -93,6 +95,7 @@ function useToolUsage(): Partial<Record<ToolId, Usage>> {
         count: proposals.length + runs.length,
       },
       memory: { running: facts.some((s) => s.status === "Running"), lastAt: facts[0]?.started_at_ms ?? null, count: facts.length },
+      mcp: { running: calls.some((s) => s.status === "Running"), lastAt: calls[0]?.started_at_ms ?? null, count: calls.length },
     };
   }, [d.steps, d.runs]);
 }
@@ -134,7 +137,13 @@ function ToolDetail({ tool }: { tool: ToolInfo }) {
           </>
         )}
       </Panel>
-      {tool.id === "web" && <RecentReads />}
+      {tool.id === "web" && <RecentSteps kind="Fetch" title="Recent reads" empty="No web reads yet." />}
+      {tool.id === "mcp" && (
+        <>
+          <McpServers />
+          <RecentSteps kind="McpCall" title="Recent MCP calls" empty="No MCP tool calls yet." />
+        </>
+      )}
       {tool.id === "files" && (
         <div className="notes-workspace">
           <NotesPanel />
@@ -144,14 +153,15 @@ function ToolDetail({ tool }: { tool: ToolInfo }) {
   );
 }
 
-function RecentReads() {
+function RecentSteps({ kind, title: heading, empty }: { kind: "Fetch" | "McpCall"; title: string; empty: string }) {
   const d = useNexus();
   const goTo = useGoTo();
-  const reads = (d.steps ?? []).filter((s) => s.detail.kind === "Fetch").slice(0, 12);
+  const reads = (d.steps ?? []).filter((s) => s.detail.kind === kind).slice(0, 12);
+  const Icon = kind === "Fetch" ? GlobeIcon : PlugIcon;
   return (
-    <Panel title="Recent reads" icon={<GlobeIcon size={15} />} id="recent-reads">
+    <Panel title={heading} icon={<Icon size={15} />} id={kind === "Fetch" ? "recent-reads" : "recent-mcp-calls"}>
       {reads.length === 0 ? (
-        <Empty>No web reads yet.</Empty>
+        <Empty>{empty}</Empty>
       ) : (
         <ul className="row-list">
           {reads.map((s) => {

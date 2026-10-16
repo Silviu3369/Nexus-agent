@@ -23,6 +23,7 @@ export function Overview() {
     else if (id === "web") goTo({ section: "tools", tool: "web" });
     else if (id === "files") goTo({ section: "tools", tool: "files" });
     else if (id === "memory") goTo({ section: "memory" });
+    else if (id === "mcp") goTo({ section: "tools", tool: "mcp" });
     else goTo({ section: "tasks", taskId: focusRun?.taskId ?? null });
   }
 

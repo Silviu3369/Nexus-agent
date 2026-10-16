@@ -175,6 +175,19 @@ pub enum AgentStepDetail {
         memory_id: Option<MemoryId>,
         error: Option<String>,
     },
+    /// A tool of a remote MCP server the user enabled.
+    McpCall {
+        server: String,
+        tool: String,
+        /// What was sent, shortened (the model chose it).
+        arguments: String,
+        result_chars: Option<u32>,
+        truncated: Option<bool>,
+        /// The tool reported a failure of its own.
+        is_error: Option<bool>,
+        duration_ms: Option<u32>,
+        error: Option<String>,
+    },
     NoteProposed {
         title: String,
         /// The run waiting for the user's approval, when the proposal was

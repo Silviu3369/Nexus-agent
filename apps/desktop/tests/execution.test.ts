@@ -362,3 +362,68 @@ test("activity and tasks carry the project of their task", () => {
   ], "newest first; the proposal event repeats the step, so only the step is listed");
   assert.deepEqual(taskRows(conversations, [], []).map((r) => r.projectId), ["p-1", "p-2"]);
 });
+
+const mcpCall = (status: AgentStepView["status"], start: number, end: number | null, error: string | null = null) =>
+  step(
+    {
+      kind: "McpCall",
+      server: "Microsoft Learn",
+      tool: "microsoft_docs_search",
+      arguments: '{"query":"named pipes"}',
+      result_chars: status === "Done" ? 19304 : null,
+      truncated: status === "Done" ? false : null,
+      is_error: status === "Done" ? false : null,
+      duration_ms: status === "Done" ? 820 : null,
+      error,
+    },
+    status,
+    start,
+    end,
+  );
+
+test("an MCP call is a tool step on its own node, named by server and tool", () => {
+  const steps = [model("Done", T0, T0 + 900), mcpCall("Running", T0 + 900, null)];
+  const [run] = buildRuns(conversation(message("Model", REPLY, steps)), new Map(), "Nexus");
+  assert.deepEqual(run.items.map((i) => [i.kind, i.status]), [["model", "completed"], ["mcp", "running"]]);
+  assert.equal(run.items[1].tool, "MCP");
+  assert.match(nextLine(run), /answer goes back to the model as data/);
+
+  const core = deriveCore({ run, pendingApprovals: 0, composing: false, now: T0 + 1000 });
+  assert.equal(core.state, "USING_TOOL");
+  assert.equal(core.label, "Using microsoft_docs_search on Microsoft Learn");
+  assert.equal(core.active, "mcp");
+  assert.deepEqual(core.path, ["model", "mcp"]);
+  const node = core.nodes.find((n) => n.id === "mcp");
+  assert.equal(node?.label, "Microsoft Learn");
+  assert.equal(node?.sublabel, "microsoft_docs_search");
+  assert.equal(node?.proposed, false, "a read-only call is executed, not proposed");
+
+  const [done] = buildRuns(conversation(message("Model", REPLY, [model("Done", T0, T0 + 900), mcpCall("Done", T0 + 900, T0 + 1720)], { status: "Complete" })), new Map(), "Nexus");
+  const item = done.items[1];
+  assert.equal(item.durationMs, 820);
+  assert.match(item.outcome ?? "", /19,304 characters back/);
+  assert.ok(item.facts.some(([k, v]) => k === "Arguments sent" && v === '{"query":"named pipes"}'));
+
+  const [failed] = buildRuns(conversation(message("Model", REPLY, [mcpCall("Failed", T0, T0 + 30, "this tool is not enabled any more")], { status: "Complete" })), new Map(), "Nexus");
+  assert.equal(failed.items[0].status, "failed");
+  assert.equal(failed.items[0].outcome, "this tool is not enabled any more");
+
+  const activity = buildActivity({
+    steps: [mcpCall("Done", T0, T0 + 820)],
+    events: [{ seq: 9, kind: "McpToolEnabled", entity_id: "srv", created_at_ms: T0 - 10 }],
+    runs: [],
+    conversations: [],
+    agent: "Nexus",
+  });
+  assert.deepEqual(activity.map((e) => [e.tool, e.title]), [
+    ["MCP", "Used microsoft_docs_search on Microsoft Learn"],
+    ["MCP", "MCP tool enabled"],
+  ]);
+});
+
+test("MCP events refresh the servers only", () => {
+  const ev = (kind: string) => ({ seq: 1, kind, entity_id: "x", created_at_ms: T0 });
+  for (const kind of ["McpServerAdded", "McpToolsListed", "McpServerCheckFailed", "McpToolEnabled", "McpToolDisabled", "McpServerRemoved"]) {
+    assert.deepEqual([...invalidatedBy([ev(kind)])], ["mcp"], kind);
+  }
+});

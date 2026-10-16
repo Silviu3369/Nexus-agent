@@ -57,6 +57,8 @@ fn runtime_config() -> nexus_host::RuntimeConfig {
         set("NEXUS_OPENAI_BASE_URL", &mut config.openai_base_url);
         set("NEXUS_ANTHROPIC_BASE_URL", &mut config.anthropic_base_url);
         set("NEXUS_DEEPSEEK_BASE_URL", &mut config.deepseek_base_url);
+        config.allow_loopback_mcp =
+            std::env::var("NEXUS_ALLOW_LOOPBACK_MCP").is_ok_and(|v| v == "1");
     }
     config
 }

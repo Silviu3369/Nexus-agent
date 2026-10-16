@@ -73,6 +73,9 @@ mod tests {
             ts::export::<nexus_protocol::ProjectView>(&conf),
             ts::export::<nexus_protocol::MemoryItemView>(&conf),
             ts::export::<nexus_protocol::MemoryContextView>(&conf),
+            ts::export::<nexus_protocol::McpServerId>(&conf),
+            ts::export::<nexus_protocol::McpToolView>(&conf),
+            ts::export::<nexus_protocol::McpServerView>(&conf),
         ];
         let mut out = String::from(HEADER);
         for exported in types {

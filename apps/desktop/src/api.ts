@@ -20,6 +20,8 @@ import type {
   MemoryItemView,
   MemoryScope,
   MemoryStatus,
+  McpServerId,
+  McpServerView,
   MessageId,
   ModelView,
   PersonaView,
@@ -121,6 +123,19 @@ export const api = {
   deleteMemory: (memoryId: MemoryId) => invoke<null>("delete_memory", { memoryId }),
   /** Exactly the approved facts the Host sends with a request in this project. */
   memoryContext: (projectId: ProjectId) => invoke<MemoryContextView>("memory_context", { projectId }),
+
+  listMcpServers: () => invoke<McpServerView[]>("list_mcp_servers"),
+  /** Adds (`serverId: null`) or changes a server, then lists its tools. The
+   *  key goes to the Host's Windows vault; `null` keeps the stored one, and
+   *  a new address drops it. */
+  saveMcpServer: (serverId: McpServerId | null, name: string, url: string, key: string | null, clearKey: boolean) =>
+    invoke<McpServerView>("save_mcp_server", { serverId, name, url, key, clearKey }),
+  refreshMcpTools: (serverId: McpServerId) => invoke<McpServerView>("refresh_mcp_tools", { serverId }),
+  /** For good: the server, its tools and its key. */
+  removeMcpServer: (serverId: McpServerId) => invoke<null>("remove_mcp_server", { serverId }),
+  /** Names the definition the user looked at; `null` turns the tool off. */
+  setMcpToolEnabled: (serverId: McpServerId, tool: string, definitionSha256: string | null) =>
+    invoke<McpServerView>("set_mcp_tool_enabled", { serverId, tool, definitionSha256 }),
 };
 
 const CODE_TEXT: Partial<Record<ErrorCode, string>> = {
