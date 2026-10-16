@@ -355,7 +355,8 @@ const CORE_FRAGMENT = /* glsl */ `
   void main() {
     vec2 p = (vUv - 0.5) * 2.0;
     float r = length(p);
-    float nucleus = exp(-r * r * 1100.0) * 1.15 + exp(-r * r * 170.0) * 0.5;
+    // A small, crisp nucleus with only a short halo (the glow stays low).
+    float nucleus = exp(-r * r * 1800.0) * 0.85 + exp(-r * r * 420.0) * 0.14;
     float R = 0.27 * uBreath;
     float inside = 1.0 - smoothstep(R * 0.82, R, r);
     float rim = smoothstep(R * 0.5, R * 0.97, r) * inside;
@@ -363,9 +364,9 @@ const CORE_FRAGMENT = /* glsl */ `
     float bands = 0.5 + 0.5 * sin(ang * 3.0 + uTime * uBands + sin(r * 26.0 - uTime * uBands * 1.7) * 0.9);
     float swirl = 0.5 + 0.5 * sin(r * 38.0 - uTime * (0.4 + uBands * 1.4));
     float env = inside * (0.035 + 0.17 * bands * swirl) + rim * rim * 0.42;
-    float fall = exp(-r * 6.0) * 0.2;
+    float fall = exp(-r * 7.0) * 0.12;
     vec3 tint = mix(uEnv, uAccent, uAccentAmt);
-    vec3 c = vec3(0.9, 0.97, 1.0) * nucleus * (0.55 + 0.45 * uEnergy)
+    vec3 c = vec3(0.9, 0.97, 1.0) * nucleus * (0.6 + 0.3 * uEnergy)
       + tint * env * (0.45 + 0.6 * uEnergy)
       + tint * fall * (0.35 + 0.65 * uEnergy);
     gl_FragColor = vec4(c, 1.0);
@@ -1574,7 +1575,8 @@ export class NexusCore {
   /** Each link shows the brighter of its ends and the signals on it; a
    *  broken link goes darker than at rest. */
   private syncLinks() {
-    const coreAct = 0.2 + this.tune.core * 0.35 + this.coreKick;
+    // Spokes stay quiet at the core, so it does not read as a starburst.
+    const coreAct = 0.08 + this.tune.core * 0.18 + this.coreKick * 0.8;
     for (let e = 0; e < this.edgeCount; e++) {
       const a = this.edges[e * 2];
       const b = this.edges[e * 2 + 1];
