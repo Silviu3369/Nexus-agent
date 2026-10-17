@@ -1,0 +1,37 @@
+[package]
+name = "nexus-worker"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# Isolation backend for work Nexus does not trust (`ARHITECTURA_NEXUS_RO.md`
+# §10, ADR-ISO-001): a strict AppContainer (LPAC) inside a Job Object.
+# `nexus-probe` is a test helper run inside the container; it is not part
+# of a release package.
+
+[[bin]]
+name = "nexus-probe"
+path = "src/bin/nexus-probe.rs"
+test = false
+
+[dependencies]
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Security_Credentials",
+    "Win32_Security_Isolation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_JobObjects",
+    "Win32_System_Pipes",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+    "Win32_System_WindowsProgramming",
+] }
+
+[dev-dependencies]
+nexus-host = { path = "../nexus-host" }
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "net"] }
+uuid = { version = "1.28.0", features = ["v4"] }

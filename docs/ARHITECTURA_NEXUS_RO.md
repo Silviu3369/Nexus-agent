@@ -182,6 +182,51 @@ Pentru cod și extensii neîncrezătoare, alegem un backend de izolare OS sau vi
 
 Job Objects pot gestiona procese și resurse, dar nu înlocuiesc un model de izolare a accesului. AppContainer sau o mașină virtuală sunt candidați de evaluat, cu limitările reale ale uneltelor de dezvoltare. [Microsoft Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects), [Microsoft AppContainer](https://learn.microsoft.com/en-us/windows/win32/secauthz/appcontainer-isolation)
 
+### ADR-ISO-001 — Izolarea pentru cod și unelte neîncrezătoare
+
+**Stare:** închis prin probă, 2026-10-17. Decizia utilizatorului pentru M3: munca de cod o face un agent de cod extern (Codex CLI, deja instalat și autentificat), dar acesta rulează doar în izolarea Nexus, pe o copie de lucru separată, niciodată pe proiectul original.
+
+**Decizie:** AppContainer strict (LPAC), cu capabilitatea `registryRead`, într-un Job Object. Implementarea e în `crates/nexus-worker`, cu funcții Windows documentate (`CreateAppContainerProfile`, atributele de proces `SECURITY_CAPABILITIES` și `ALL_APPLICATION_PACKAGES_POLICY`, Job Objects), fără dependențe noi.
+- **Acces la fișiere:** doar prin intrări ACL adăugate pentru identitatea containerului, pe căile date explicit, la citire sau la citire și scriere.
+- **Rețea:** doar internet, și doar când e cerută (`internetClient`). Bucla locală și adresele acestui PC rămân închise.
+- **Mediu:** procesul nu moștenește mediul; îl primește explicit.
+- **Limite pe tot arborele de procese:** memorie, număr de procese, timp de procesor, timp real, ieșire, restricții de interfață. Arborele se încheie odată cu procesul principal.
+
+**Alternative respinse:**
+- Windows Sandbox nu există pe Windows 11 Home.
+- WSL2 cere instalare cu drepturi de administrator și vede implicit discul C:.
+- Izolarea proprie a lui Codex pe Windows limitează doar scrierea: citirea rămâne deschisă, iar rețeaua e limitată slab fără administrator.
+- MXC (Microsoft, iunie 2026) e declarat în previzualizare și „nu o graniță de securitate”.
+
+**Probe ISO-01/ISO-02** (`crates/nexus-worker/tests/isolation.rs`, backendul real). Fiecare refuz are în pereche aceeași probă rulată în afara containerului, unde reușește. Probele arată că procesul rulează ca AppContainer și că:
+- citirea bazei Nexus (`nexus.db`), a dosarelor Documents și Desktop și a profilului utilizatorului e refuzată (cod 5);
+- scrierea e refuzată în afara folderului de lucru, inclusiv într-o cale acordată doar la citire și în dosarul Windows;
+- Credential Manager e inaccesibil (cod 1702), deși în afara containerului se văd 8 intrări;
+- bucla locală și adresa proprie a PC-ului sunt refuzate chiar cu internetul permis;
+- internetul fără permisiune e refuzat local de Windows (cod 10013);
+- conectarea la pipe-ul real al Host-ului e refuzată (cod 5);
+- deschiderea altui proces al utilizatorului e refuzată;
+- mediul conține doar `SystemRoot`, `TEMP`, `TMP` și `LOCALAPPDATA`;
+- limitele de memorie (64 MiB), procese (3), timp real (2 s), timp de procesor (1 s) și ieșire (10 KB) sunt aplicate;
+- procesul copil lăsat în urmă de procesul principal se încheie odată cu el.
+
+Codex CLI 0.154.0 pornește în container (`--version`, `exec --help`), fără acces la rețea și fără date de autentificare.
+
+**Limitări cunoscute:**
+- Ce Windows permite tuturor aplicațiilor restricționate (citirea dosarelor Windows și Program Files) rămâne permis; acolo nu sunt date ale utilizatorului.
+- `registryRead` dă citire din registru unde aceasta e permisă containerelor. Fără el, LPAC nu poate porni procese copil, iar uneltele (Codex, Git, terminalul) au nevoie de ele.
+- Intrările ACL adăugate pe căile acordate rămân, identitatea containerului fiind stabilă. Nexus acordă doar căi pe care le administrează sau pe care utilizatorul le aprobă.
+- Cu internetul permis, procesul poate trimite în afară ce poate citi, adică doar ce i s-a acordat. Asta trebuie spus utilizatorului înaintea fiecărei sarcini de cod.
+- Profilul containerului e creat în registrul utilizatorului; testele folosesc `Nexus.Worker.Test`. Windows cere `LOCALAPPDATA` în mediu și îl îndreaptă spre dosarul containerului.
+- Probele au rulat dintr-un proces pornit de aplicația de dezvoltare (pachet MSIX). Comportamentul din Host-ul pornit de utilizator, nepachetat, se verifică la integrarea Codex.
+
+**Următorul pas (M3):** Codex în container, pe o copie de lucru (`git worktree`) în profilul Nexus. Containerul are nevoie de:
+- internet, pentru OpenAI;
+- dosarul de autentificare al Codex (o schimbare de permisiuni pe `~/.codex`, cu acordul utilizatorului);
+- Git și Node, doar la citire.
+
+Prima sarcină reală se face doar cu acordul utilizatorului, pentru că folosește contul lui și trimite cod la OpenAI.
+
 Nu încărcăm implicit DLL-uri/pluginuri terțe în Host. Manifestele declară versiuni, instrumente, permisiuni, capabilități și compatibilitate; activarea și actualizarea trec prin validare. Contractele de transport permit înlocuirea unui adaptor fără modificarea domeniului.
 
 Capabilitățile Tauri restrâng accesul frontendului la comenzile expuse. Ele nu izolează automat întregul cod nativ Rust; brokerul și limitele OS rămân necesare. [Tauri security](https://v2.tauri.app/security/)
