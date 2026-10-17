@@ -157,6 +157,11 @@ pub enum AgentStepDetail {
         backup: Option<bool>,
         /// How many approved memory facts the request carried.
         memory_items: Option<u32>,
+        /// MCP servers whose enabled tools the model could call in this
+        /// request (whether it did shows in the steps after it).
+        mcp_servers: Option<Vec<String>>,
+        /// How many of their tools were offered.
+        mcp_tools: Option<u32>,
     },
     Fetch {
         url: String,

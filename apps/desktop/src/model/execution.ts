@@ -82,6 +82,8 @@ export interface TimelineItem {
   mcp?: { server: string; tool: string };
   /** Only proposed: it waits for the user before anything is done. */
   proposal?: boolean;
+  /** Model calls: MCP servers whose tools the model could call. */
+  mcpAvailable?: string[];
 }
 
 export interface RunVM {
@@ -217,9 +219,16 @@ function stepItem(step: AgentStepView, agent: string, pendingMemory: ReadonlySet
         durationMs: d.duration_ms ?? base.durationMs,
         outcome: detail,
         memoryItems: d.memory_items ?? 0,
+        mcpAvailable: d.mcp_servers ?? undefined,
         facts: compact([
           ["Model", d.model],
           ["Approved memory sent", d.memory_items ? `${d.memory_items} ${d.memory_items === 1 ? "fact" : "facts"}` : null],
+          [
+            "MCP tools available",
+            d.mcp_servers?.length
+              ? `${d.mcp_servers.join(", ")} (${d.mcp_tools ?? 0} ${d.mcp_tools === 1 ? "tool" : "tools"})`
+              : null,
+          ],
           ["Try", d.attempt ? String(d.attempt) : null],
           ["Backup model", d.backup ? "yes — the active model stayed unavailable" : null],
           ["First response", seconds(d.first_byte_ms)],
@@ -561,7 +570,18 @@ export function buildRuns(
     out.push(current);
     request = null;
   }
+  for (const run of out) noteUnusedMcp(run);
   return out;
+}
+
+/** A finished run whose model could call MCP tools but did not: said on
+ *  its last model call, so "available but unused" is visible. */
+function noteUnusedMcp(run: RunVM): void {
+  if (run.status === "running" || run.items.some((i) => i.kind === "mcp")) return;
+  const last = [...run.items].reverse().find((i) => i.kind === "model" && i.mcpAvailable?.length);
+  if (!last?.mcpAvailable) return;
+  const note = `${last.mcpAvailable.join(", ")} available; answered without it`;
+  last.outcome = last.outcome ? `${last.outcome} · ${note}` : note;
 }
 
 function sum(a: number | null, b: number | null): number | null {

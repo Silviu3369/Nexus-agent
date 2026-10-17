@@ -137,7 +137,18 @@ async fn a_tool_reaches_the_model_only_once_enabled_and_its_result_comes_back_as
     // Listed but not enabled: the model is not told about it.
     fake.push(Reply::text(&["No tools needed."]));
     let sent = send(&client, None, "c1", "Search the docs").await;
-    settled(&client, &sent).await;
+    let first = settled(&client, &sent).await;
+    assert!(
+        first.steps.iter().all(|s| matches!(
+            &s.detail,
+            AgentStepDetail::ModelCall {
+                mcp_servers: None,
+                mcp_tools: None,
+                ..
+            }
+        )),
+        "no MCP tool was available to that call"
+    );
     let body = fake.generations().pop().unwrap().json();
     assert!(
         declared(&body).iter().all(|n| !n.starts_with("mcp")),
@@ -156,6 +167,23 @@ async fn a_tool_reaches_the_model_only_once_enabled_and_its_result_comes_back_as
     let reply = settled(&client, &sent).await;
     assert_eq!(reply.status, ChatStatus::Complete);
     assert_eq!(reply.text, "Use CreateNamedPipeW.");
+    let offered: Vec<_> = reply
+        .steps
+        .iter()
+        .filter_map(|s| match &s.detail {
+            AgentStepDetail::ModelCall {
+                mcp_servers,
+                mcp_tools,
+                ..
+            } => Some((mcp_servers.clone(), *mcp_tools)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        offered[0],
+        (Some(vec!["Docs".to_string()]), Some(1)),
+        "the model call says which MCP servers it could use"
+    );
 
     let step = reply
         .steps

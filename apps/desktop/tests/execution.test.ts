@@ -539,3 +539,34 @@ test("a call that can change things waits for approval, then is made once", () =
   });
   assert.deepEqual(activity.map((e) => [e.tool, e.title]), [["MCP", "MCP call requested"]]);
 });
+
+test("a model call says which MCP servers it could use, and a run that did not use them says so", () => {
+  const offered = step(
+    {
+      kind: "ModelCall",
+      model: "gemini-3.8-flash",
+      first_byte_ms: 3800,
+      duration_ms: 8600,
+      error: null,
+      attempt: null,
+      backup: null,
+      memory_items: 0,
+      mcp_servers: ["Microsoft Learn"],
+      mcp_tools: 3,
+    },
+    "Done",
+    T0,
+    T0 + 8600,
+  );
+  const [unused] = buildRuns(conversation(message("Model", REPLY, [offered], { status: "Complete" })), new Map(), "Nexus");
+  const item = unused.items[0];
+  assert.ok(item.facts.some(([k, v]) => k === "MCP tools available" && v === "Microsoft Learn (3 tools)"));
+  assert.match(item.outcome ?? "", /Microsoft Learn available; answered without it$/);
+
+  const [used] = buildRuns(
+    conversation(message("Model", REPLY, [offered, mcpCall("Done", T0 + 8600, T0 + 9000)], { status: "Complete" })),
+    new Map(),
+    "Nexus",
+  );
+  assert.doesNotMatch(used.items[0].outcome ?? "", /answered without it/);
+});
