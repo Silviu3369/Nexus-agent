@@ -2,6 +2,7 @@
 //! (ADR-IPC-001: tarpc instead of a separate schema language). `nexus-host`
 //! implements this; `nexus-client` calls the generated client stub.
 
+use crate::automation::{AutomationRunView, AutomationView, SaveAutomationRequest};
 use crate::chat::{
     AgentStepView, BackupModelView, ConnectionView, ConversationSummary, ConversationView,
     DeletedView, ModelView, PersonaView, SaveConnectionRequest, SavePersonaRequest,
@@ -10,7 +11,8 @@ use crate::chat::{
 use crate::error::NexusError;
 use crate::handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse};
 use crate::ids::{
-    ArtifactId, ConnectionId, ConversationId, McpServerId, MemoryId, MessageId, ProjectId, RunId,
+    ArtifactId, AutomationId, ConnectionId, ConversationId, McpServerId, MemoryId, MessageId,
+    ProjectId, RunId,
 };
 use crate::mcp::{McpServerView, SaveMcpServerRequest};
 use crate::memory::{
@@ -156,6 +158,25 @@ pub trait NexusService {
 
     /// Exactly the facts a request in this project sends to the model.
     async fn memory_context(project_id: ProjectId) -> Result<MemoryContextView, NexusError>;
+
+    /// Automations with their next run and last outcome.
+    async fn list_automations() -> Result<Vec<AutomationView>, NexusError>;
+
+    async fn save_automation(request: SaveAutomationRequest) -> Result<AutomationView, NexusError>;
+
+    /// For good; the tasks it started stay.
+    async fn delete_automation(automation_id: AutomationId) -> Result<(), NexusError>;
+
+    /// Starts it now, as if due (not counted against its schedule).
+    async fn run_automation_now(
+        automation_id: AutomationId,
+    ) -> Result<AutomationRunView, NexusError>;
+
+    /// Its last `limit` runs, newest first.
+    async fn automation_runs(
+        automation_id: AutomationId,
+        limit: u32,
+    ) -> Result<Vec<AutomationRunView>, NexusError>;
 
     /// Remote MCP servers with their tools as last listed.
     async fn list_mcp_servers() -> Result<Vec<McpServerView>, NexusError>;

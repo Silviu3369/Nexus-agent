@@ -296,14 +296,16 @@ test("events invalidate only what they describe", () => {
   assert.deepEqual([...invalidatedBy([ev("DailyTokenBudgetSet")])], ["usage"]);
   assert.deepEqual([...invalidatedBy([ev("ModelPriceSet")])], ["usage"]);
   assert.deepEqual([...invalidatedBy([ev("PersonaSaved")])], ["persona"]);
+  assert.deepEqual([...invalidatedBy([ev("AutomationRan")])], ["automations"]);
+  assert.deepEqual([...invalidatedBy([ev("AutomationCreated")])], ["automations"]);
   assert.deepEqual([...invalidatedBy([ev("ProjectCreated")])], ["projects"]);
   assert.deepEqual([...invalidatedBy([ev("ActiveProjectChanged")])], ["projects"]);
   assert.deepEqual([...invalidatedBy([ev("MemoryDecided")])].sort(), ["focus", "memory", "projects"]);
   assert.ok(invalidatedBy([ev("MessageSent")]).has("projects"), "a new task changes its project's count");
   assert.deepEqual(
     [...invalidatedBy([ev("ConversationDeleted")])].sort(),
-    ["conversations", "focus", "memory", "projects", "runs", "steps"],
-    "a deleted task changes the lists, and the notes and facts that linked to it",
+    ["automations", "conversations", "focus", "memory", "projects", "runs", "steps"],
+    "a deleted task changes the lists, and the notes, facts and automation runs that linked to it",
   );
   assert.deepEqual([...invalidatedBy([ev("ExchangeDeleted")])].sort(), [...invalidatedBy([ev("ConversationDeleted")])].sort());
   assert.equal(invalidatedBy([ev("SomethingElse")]).size, 0);

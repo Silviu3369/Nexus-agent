@@ -3,6 +3,7 @@
 //! contracts (`CONTRACTE_NEXUS_RO.md` §1) — `nexus-host` and `nexus-client`
 //! depend on it; it depends on neither.
 
+pub mod automation;
 pub mod chat;
 pub mod error;
 pub mod handshake;
@@ -21,6 +22,9 @@ pub use runs::{
     RunStatus, RunView, Snapshot, SubmitNoteRequest, SubmitNoteResponse, SystemStatusView,
 };
 
+pub use automation::{
+    AutomationRunStatus, AutomationRunView, AutomationView, SaveAutomationRequest, Schedule,
+};
 pub use chat::{
     AgentStepDetail, AgentStepStatus, AgentStepView, BackupModelView, ChatMessageView, ChatRole,
     ChatStatus, ConnectionView, ConversationSummary, ConversationView, DeletedView, ModelView,
@@ -30,8 +34,9 @@ pub use chat::{
 pub use error::{ErrorCode, NexusError};
 pub use handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse, HealthStatus};
 pub use ids::{
-    ActionId, AgentStepId, ApprovalId, ArtifactId, ConnectionId, ConversationId, EventId,
-    McpServerId, MemoryId, MessageId, OperationId, ProjectId, RequestId, RunId, StepId, TaskId,
+    ActionId, AgentStepId, ApprovalId, ArtifactId, AutomationId, ConnectionId, ConversationId,
+    EventId, McpServerId, MemoryId, MessageId, OperationId, ProjectId, RequestId, RunId, StepId,
+    TaskId,
 };
 pub use mcp::{McpServerView, McpToolView, SaveMcpServerRequest};
 pub use memory::{

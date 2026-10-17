@@ -345,6 +345,7 @@ async fn projects_are_explicit_and_the_default_one_takes_new_tasks_until_another
                 connection_id: connection,
                 model: "m".into(),
                 persona_version: 1,
+                title: None,
             },
             4,
         )

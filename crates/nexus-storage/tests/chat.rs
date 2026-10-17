@@ -50,7 +50,7 @@ async fn connection(env: &Env) -> ConnectionId {
 /// MCP tables from v7, no memory, no project on conversations, no project
 /// description), keeping every row.
 const UNDO_V6: &str = "PRAGMA foreign_keys = OFF;
-    DROP TABLE model_usage; DROP TABLE model_prices; DROP TABLE paused_turns; ALTER TABLE runs DROP COLUMN outcome_json;
+    DROP TABLE automation_runs; DROP TABLE automations; DROP TABLE model_usage; DROP TABLE model_prices; DROP TABLE paused_turns; ALTER TABLE runs DROP COLUMN outcome_json;
     DROP TABLE mcp_tools; DROP TABLE mcp_servers;
     DROP TRIGGER memory_items_ai; DROP TRIGGER memory_items_ad; DROP TRIGGER memory_items_au;
     DROP TABLE memory_fts; DROP TABLE memory_items;
@@ -77,6 +77,7 @@ fn exchange(
         connection_id: connection,
         model: "gemini-test".to_string(),
         persona_version: 1,
+        title: None,
     }
 }
 

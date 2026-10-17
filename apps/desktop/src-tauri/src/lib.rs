@@ -1,3 +1,4 @@
+mod automation;
 mod autostart;
 mod bindings;
 mod chat;
@@ -53,6 +54,11 @@ pub fn run() {
             memory::decide_memory,
             memory::delete_memory,
             memory::memory_context,
+            automation::list_automations,
+            automation::save_automation,
+            automation::delete_automation,
+            automation::run_automation_now,
+            automation::automation_runs,
             mcp::list_mcp_servers,
             mcp::save_mcp_server,
             mcp::refresh_mcp_tools,

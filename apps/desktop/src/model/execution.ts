@@ -937,7 +937,7 @@ export function modelStats(steps: AgentStepView[]): ModelStats[] {
 
 // ---------- Activity log ----------
 
-export type ActivityTool = "Model" | "Web read" | "Notes" | "Memory" | "MCP" | "System";
+export type ActivityTool = "Model" | "Web read" | "Notes" | "Memory" | "MCP" | "Automations" | "System";
 
 export interface ActivityEntry {
   id: string;
@@ -992,6 +992,10 @@ const EVENT_TEXT: Record<string, { title: string; tool: ActivityTool; status?: E
   McpToolEnabled: { title: "MCP tool enabled", tool: "MCP" },
   McpToolDisabled: { title: "MCP tool turned off", tool: "MCP" },
   RemoteCallCompleted: { title: "Approved MCP call made once", tool: "MCP", status: "completed" },
+  AutomationCreated: { title: "Automation created", tool: "Automations" },
+  AutomationUpdated: { title: "Automation changed", tool: "Automations" },
+  AutomationDeleted: { title: "Automation deleted (its tasks stay)", tool: "Automations" },
+  AutomationRan: { title: "Automation time recorded (started, skipped, missed or not started)", tool: "Automations" },
 };
 
 /** Run events read differently when the run is a call to an MCP tool. */
@@ -1095,6 +1099,7 @@ export type Collection =
   | "memory"
   | "mcp"
   | "usage"
+  | "automations"
   | "focus";
 
 /** What each durable event invalidates. Events are notifications only;
@@ -1125,6 +1130,8 @@ export function invalidatedBy(events: EventView[]): Set<Collection> {
       // Notes and facts it led to lose their link to it.
       out.add("runs");
       out.add("memory");
+      // An automation's run keeps its entry without the task.
+      out.add("automations");
     } else if (k.startsWith("Memory")) {
       out.add("memory");
       out.add("projects");
@@ -1142,6 +1149,8 @@ export function invalidatedBy(events: EventView[]): Set<Collection> {
       out.add("mcp");
     } else if (k === "DailyTokenBudgetSet" || k === "ModelPriceSet") {
       out.add("usage");
+    } else if (k.startsWith("Automation")) {
+      out.add("automations");
     }
   }
   return out;

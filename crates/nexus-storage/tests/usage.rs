@@ -139,6 +139,7 @@ async fn migrating_to_v9_keeps_every_message() {
                     connection_id: connection,
                     model: "m".into(),
                     persona_version: 1,
+                    title: None,
                 },
                 2,
             )
@@ -147,7 +148,7 @@ async fn migrating_to_v9_keeps_every_message() {
         store
             .call(|c| {
                 c.execute_batch(
-                    "DROP TABLE model_usage; DROP TABLE model_prices; PRAGMA user_version = 8;",
+                    "DROP TABLE automation_runs; DROP TABLE automations; DROP TABLE model_usage; DROP TABLE model_prices; PRAGMA user_version = 8;",
                 )?;
                 Ok(())
             })

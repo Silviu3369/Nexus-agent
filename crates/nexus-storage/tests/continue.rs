@@ -60,6 +60,7 @@ async fn exchange(store: &Store, conversation: Option<ConversationId>, key: &str
                 connection_id: connection,
                 model: "gemini-test".into(),
                 persona_version: 1,
+                title: None,
             },
             2,
         )
@@ -245,7 +246,7 @@ async fn migrating_to_v8_keeps_every_message() {
         store
             .call(|c| {
                 c.execute_batch(
-                    "DROP TABLE model_usage; DROP TABLE model_prices; DROP TABLE paused_turns; ALTER TABLE runs DROP COLUMN outcome_json;
+                    "DROP TABLE automation_runs; DROP TABLE automations; DROP TABLE model_usage; DROP TABLE model_prices; DROP TABLE paused_turns; ALTER TABLE runs DROP COLUMN outcome_json;
                      PRAGMA user_version = 7;",
                 )?;
                 Ok(())

@@ -20,7 +20,8 @@
   things waits for your approval of the exact call, then the task continuing
   after each decision (the note, the call), deleting a request with its reply
   and a whole task (gone from the database files too), and removing the
-  connection with its vault entry. Build first:
+  connection with its vault entry; an automation you create and run now, with
+  its history, its task, turning it off and deleting it. Build first:
     cargo build -p nexus-host --locked
     cargo build -p nexus-host --example fake_gemini_server --locked
     pnpm --filter @nexus/desktop tauri build --no-bundle
@@ -500,6 +501,34 @@ try {
   Click-Button $win "Models"
   Click-Button $win "Remove limit" 20
   Check ($null -ne (Wait-Match $win "^[1-9][\d,]* · no daily limit$")) "the limit can be removed"
+
+  # --- automations: one you create, run now, its history and its task ---
+  Click-Button $win "Automations"
+  Check ($null -ne (Wait-Contains $win "No automations yet")) "Automations starts empty"
+  Click-Button $win "New automation"
+  Set-Field $win "Name" "Morning summary"
+  Set-Field $win "Instruction" "Summarise my notes for the morning"
+  Click-Button $win "Weekdays"
+  Check (Wait-Text $win "Weekdays at 09:00 (this PC's local time).") "the form says when it will run, in local time"
+  Click-Button $win "Create automation"
+  Check (Wait-Text $win "Weekdays at 09:00") "the automation is listed with its schedule"
+  Check ($null -ne (Wait-Match $win "^(Mon|Tue|Wed|Thu|Fri) \d+ \w+ \d{4}, 09:00 · in ")) "its next time is a weekday at 09:00"
+  Click-Button $win "Run now" 20
+  Check (Wait-Text $win "Started" 20) "Run now starts it at once"
+  Click-Button $win "Open task" 20
+  Check (Wait-Text $win "Your morning summary is ready." 20) "it ran as a task with the model's reply"
+  Check ($null -ne (Wait-Like $win "Morning summary · ")) "the task is named after the automation and its time"
+  Click-Button $win "Automations"
+  Click-Button $win "History"
+  Check (Wait-Text $win "History, newest first") "the history lists the run"
+  Click-Button $win "Turn off"
+  Check (Wait-Text $win "Off: it does not run until you turn it on") "turned off, it has no next time"
+  Click-Button $win "Delete"
+  Check ($null -ne (Wait-Contains $win "The tasks it started stay")) "deleting it says the tasks stay"
+  Click-Button $win "Delete for good"
+  Check ($null -ne (Wait-Contains $win "No automations yet")) "the automation is deleted"
+  Click-Button $win "Tasks"
+  Check ($null -ne (Wait-Like $win "Morning summary · ")) "the task it started stays"
 
   # --- removing the connection removes its key ---
   Click-Button $win "Models"

@@ -84,6 +84,8 @@ pub struct NewExchange {
     pub connection_id: ConnectionId,
     pub model: String,
     pub persona_version: i64,
+    /// The title of a new conversation (`None`: from the text).
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -516,7 +518,7 @@ impl Store {
                     tx.execute(
                         "INSERT INTO conversations (id, title, created_at_ms, updated_at_ms, project_id)
                          VALUES (?1, ?2, ?3, ?3, ?4)",
-                        params![id.to_string(), title_from(&new.text), now, project],
+                        params![id.to_string(), new.title.clone().unwrap_or_else(|| title_from(&new.text)), now, project],
                     )?;
                     id
                 }

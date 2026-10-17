@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::StorageError;
 
-pub const SUPPORTED_VERSION: i64 = 9;
+pub const SUPPORTED_VERSION: i64 = 10;
 
 /// Version 1: everything M1 persists. State columns are closed lists that a
 /// test keeps identical to the `nexus-core` enums. Times are UTC unix ms.
@@ -422,6 +422,46 @@ CREATE TABLE model_prices (
 ) STRICT;
 "#;
 
+/// Version 10: automations (`PLAN_NEXUS_RO.md` M4): an instruction run as a
+/// new task on a schedule, and what happened at each of its times. A run
+/// names the task it started; deleting that task keeps the entry without
+/// it. Deleting an automation removes its history, never its tasks.
+const V10: &str = r#"
+CREATE TABLE automations (
+    id             TEXT    PRIMARY KEY,
+    name           TEXT    NOT NULL CHECK (length(name) BETWEEN 1 AND 100),
+    prompt         TEXT    NOT NULL CHECK (length(prompt) BETWEEN 1 AND 16384),
+    project_id     TEXT    REFERENCES projects (id),
+    schedule_json  TEXT    NOT NULL CHECK (json_valid(schedule_json)),
+    enabled        INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+    catch_up       INTEGER NOT NULL CHECK (catch_up IN (0, 1)),
+    -- UTC unix ms of the next time due; NULL when it will not run again.
+    next_run_at_ms INTEGER,
+    revision       INTEGER NOT NULL CHECK (revision >= 1),
+    created_at_ms  INTEGER NOT NULL,
+    updated_at_ms  INTEGER NOT NULL,
+    CHECK (enabled = 1 OR next_run_at_ms IS NULL)
+) STRICT;
+
+CREATE INDEX automations_by_next_run ON automations (next_run_at_ms) WHERE next_run_at_ms IS NOT NULL;
+
+CREATE TABLE automation_runs (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    automation_id    TEXT    NOT NULL REFERENCES automations (id) ON DELETE CASCADE,
+    scheduled_for_ms INTEGER NOT NULL,
+    at_ms            INTEGER NOT NULL,
+    status           TEXT    NOT NULL CHECK (status IN ('Started', 'Skipped', 'Missed', 'Failed')),
+    reason           TEXT    CHECK (reason IS NULL OR length(reason) <= 500),
+    conversation_id  TEXT    REFERENCES conversations (id) ON DELETE SET NULL,
+    catch_up         INTEGER NOT NULL CHECK (catch_up IN (0, 1)),
+    manual           INTEGER NOT NULL CHECK (manual IN (0, 1)),
+    CHECK (status = 'Started' OR conversation_id IS NULL)
+) STRICT;
+
+CREATE INDEX automation_runs_by_automation ON automation_runs (automation_id, id);
+CREATE INDEX automation_runs_by_conversation ON automation_runs (conversation_id);
+"#;
+
 struct Migration {
     sql: &'static str,
     /// Rebuilds a table other tables refer to (see [`V5`]).
@@ -463,6 +503,10 @@ const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         sql: V9,
+        rebuilds_parent_table: false,
+    },
+    Migration {
+        sql: V10,
         rebuilds_parent_table: false,
     },
 ];

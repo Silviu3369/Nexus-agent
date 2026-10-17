@@ -49,6 +49,7 @@ typed_id!(MessageId);
 typed_id!(AgentStepId);
 typed_id!(MemoryId);
 typed_id!(McpServerId);
+typed_id!(AutomationId);
 
 #[cfg(test)]
 mod tests {

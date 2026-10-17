@@ -64,6 +64,7 @@ async fn turn(
                 connection_id: connection,
                 model: "gemini-test".to_string(),
                 persona_version: 1,
+                title: None,
             },
             1,
         )
@@ -197,6 +198,7 @@ async fn a_reply_still_being_written_blocks_the_deletion() {
                 connection_id: connection,
                 model: "gemini-test".into(),
                 persona_version: 1,
+                title: None,
             },
             1,
         )

@@ -89,6 +89,8 @@ async fn main() {
         serde_json::json!({"q": "page 7"}),
     )]));
     fake.push(Reply::text(&["Page 7 is deleted."]));
+    // An automation the user runs now: a task like any other.
+    fake.push(Reply::text(&["Your morning summary is ready."]));
     println!("{}", fake.base_url);
     println!("{}", mcp.url);
     std::io::stdout().flush().expect("stdout");

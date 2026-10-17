@@ -189,3 +189,16 @@ export type ModelUsageView = { provider: string; model: string; calls_today: num
 
 export type UsageView = { day_start_ms: number; daily_token_budget: number | null; tokens_today: number; models: ModelUsageView[]; estimated_cost_today: number | null }
 
+export type AutomationId = string
+
+/**
+ * When an automation runs, in this PC's local time.
+ */
+export type Schedule = { kind: "Once"; at_ms: number } | { kind: "Weekly"; days: number[]; hour: number; minute: number }
+
+export type AutomationRunStatus = "Started" | "Skipped" | "Missed" | "Failed"
+
+export type AutomationRunView = { scheduled_for_ms: number; at_ms: number; status: AutomationRunStatus; reason: string | null; conversation_id: ConversationId | null; catch_up: boolean; manual: boolean }
+
+export type AutomationView = { automation_id: AutomationId; name: string; prompt: string; project_id: ProjectId | null; schedule: Schedule; enabled: boolean; catch_up: boolean; next_run_at_ms: number | null; last_run: AutomationRunView | null; revision: number; created_at_ms: number }
+

@@ -6,14 +6,15 @@ use std::time::Instant;
 use futures::StreamExt;
 use nexus_protocol::service::NexusService;
 use nexus_protocol::{
-    AddMemoryRequest, AgentStepView, ArtifactId, BackupModelView, BackupSummary, ConnectionId,
-    ConnectionView, ConversationId, ConversationSummary, ConversationView, DecideApprovalRequest,
-    DeletedView, ErrorCode, EventsPage, GetHealthResponse, HandshakeRequest, HandshakeResponse,
-    HealthStatus, McpServerId, McpServerView, MemoryContextView, MemoryId, MemoryItemView,
-    MemoryQuery, MessageId, ModelPrice, ModelView, NexusError, PROTOCOL_VERSION, PersonaView,
-    ProjectId, ProjectView, RunId, RunView, SaveConnectionRequest, SaveMcpServerRequest,
-    SavePersonaRequest, SaveProjectRequest, SendMessageRequest, SendMessageResponse, Snapshot,
-    SubmitNoteRequest, SubmitNoteResponse, SystemStatusView, ThinkingLevel, UsageView,
+    AddMemoryRequest, AgentStepView, ArtifactId, AutomationId, AutomationRunView, AutomationView,
+    BackupModelView, BackupSummary, ConnectionId, ConnectionView, ConversationId,
+    ConversationSummary, ConversationView, DecideApprovalRequest, DeletedView, ErrorCode,
+    EventsPage, GetHealthResponse, HandshakeRequest, HandshakeResponse, HealthStatus, McpServerId,
+    McpServerView, MemoryContextView, MemoryId, MemoryItemView, MemoryQuery, MessageId, ModelPrice,
+    ModelView, NexusError, PROTOCOL_VERSION, PersonaView, ProjectId, ProjectView, RunId, RunView,
+    SaveAutomationRequest, SaveConnectionRequest, SaveMcpServerRequest, SavePersonaRequest,
+    SaveProjectRequest, SendMessageRequest, SendMessageResponse, Snapshot, SubmitNoteRequest,
+    SubmitNoteResponse, SystemStatusView, ThinkingLevel, UsageView,
 };
 use tarpc::context::Context;
 use tarpc::server::{BaseChannel, Channel};
@@ -430,6 +431,48 @@ impl NexusService for HostServer {
     ) -> Result<UsageView, NexusError> {
         self.require_session()?;
         self.runtime.set_model_price(provider, model, price).await
+    }
+
+    async fn list_automations(self, _ctx: Context) -> Result<Vec<AutomationView>, NexusError> {
+        self.require_session()?;
+        self.runtime.list_automations().await
+    }
+
+    async fn save_automation(
+        self,
+        _ctx: Context,
+        request: SaveAutomationRequest,
+    ) -> Result<AutomationView, NexusError> {
+        self.require_session()?;
+        self.runtime.save_automation(request).await
+    }
+
+    async fn delete_automation(
+        self,
+        _ctx: Context,
+        automation_id: AutomationId,
+    ) -> Result<(), NexusError> {
+        self.require_session()?;
+        self.runtime.delete_automation(automation_id).await
+    }
+
+    async fn run_automation_now(
+        self,
+        _ctx: Context,
+        automation_id: AutomationId,
+    ) -> Result<AutomationRunView, NexusError> {
+        self.require_session()?;
+        self.runtime.run_automation_now(automation_id).await
+    }
+
+    async fn automation_runs(
+        self,
+        _ctx: Context,
+        automation_id: AutomationId,
+        limit: u32,
+    ) -> Result<Vec<AutomationRunView>, NexusError> {
+        self.require_session()?;
+        self.runtime.automation_runs(automation_id, limit).await
     }
 
     async fn list_mcp_servers(self, _ctx: Context) -> Result<Vec<McpServerView>, NexusError> {

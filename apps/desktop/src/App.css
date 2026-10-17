@@ -2651,6 +2651,109 @@ button.ghost.danger-ghost {
   font-size: 1.2rem;
 }
 
+/* ---------- Automations ---------- */
+
+.automations {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.automations-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.automation-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.automation {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.automation.dim-soft {
+  opacity: 0.8;
+}
+
+.automation-form {
+  border: 1px solid var(--accent-line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.automation .automation-form {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.automation-prompt {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-2);
+  max-height: 7.5em;
+  overflow: auto;
+}
+
+.automation-when,
+.automation-repeat {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  align-items: center;
+}
+
+.field-label {
+  color: var(--text-2);
+}
+
+.stack .automation-time input:not([type="checkbox"]) {
+  width: auto;
+  min-width: 140px;
+}
+
+.automation-run {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  overflow-wrap: anywhere;
+}
+
+.automation-history {
+  list-style: none;
+  margin: 0;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.88rem;
+}
+
+.automation-history-head {
+  color: var(--text-3);
+  font-size: 0.8rem;
+}
+
 /* ---------- Narrow windows ---------- */
 
 @media (max-width: 1100px) {
@@ -2665,6 +2768,7 @@ button.ghost.danger-ghost {
   .models-top,
   .memory-grid,
   .projects,
+  .automations,
   .inspector-grid {
     grid-template-columns: minmax(0, 1fr);
   }

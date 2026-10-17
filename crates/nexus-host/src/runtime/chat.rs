@@ -31,7 +31,7 @@ use zeroize::Zeroizing;
 
 use super::{Runtime, to_nexus_error};
 
-const MAX_MESSAGE_BYTES: usize = 16 * 1024;
+pub(super) const MAX_MESSAGE_BYTES: usize = 16 * 1024;
 const HISTORY_MESSAGES: u32 = 40;
 /// Rough budget for the history sent back to the model (characters).
 const HISTORY_CHAR_BUDGET: usize = 48_000;
@@ -544,6 +544,16 @@ impl Runtime {
         self: &Arc<Self>,
         request: SendMessageRequest,
     ) -> Result<SendMessageResponse, NexusError> {
+        self.start_message(request, None).await
+    }
+
+    /// Sends a message as the user would; `title` names a new task (an
+    /// automation's run) instead of its first words.
+    pub(crate) async fn start_message(
+        self: &Arc<Self>,
+        request: SendMessageRequest,
+        title: Option<String>,
+    ) -> Result<SendMessageResponse, NexusError> {
         if self.paused {
             return Err(NexusError::new(
                 ErrorCode::Forbidden,
@@ -600,6 +610,7 @@ impl Runtime {
                     connection_id: connection.id,
                     model,
                     persona_version: persona.version,
+                    title,
                 },
                 now_ms(),
             )

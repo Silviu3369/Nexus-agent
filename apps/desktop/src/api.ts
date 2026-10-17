@@ -4,6 +4,9 @@ import type {
   AutostartView,
   ApprovalId,
   ArtifactId,
+  AutomationId,
+  AutomationRunView,
+  AutomationView,
   BackupModelView,
   BackupSummary,
   BridgeError,
@@ -32,6 +35,7 @@ import type {
   ProviderChoice,
   RunId,
   RunView,
+  Schedule,
   SendMessageResponse,
   Snapshot,
   SubmitNoteResponse,
@@ -138,6 +142,32 @@ export const api = {
   setModelPrice: (provider: string, model: string, price: ModelPrice | null) =>
     invoke<UsageView>("set_model_price", { provider, model, price }),
 
+  listAutomations: () => invoke<AutomationView[]>("list_automations"),
+  /** `automationId: null` creates one; the Host checks the schedule and computes the next time. */
+  saveAutomation: (
+    automationId: AutomationId | null,
+    revision: number,
+    name: string,
+    prompt: string,
+    projectId: ProjectId | null,
+    schedule: Schedule,
+    enabled: boolean,
+    catchUp: boolean,
+  ) =>
+    invoke<AutomationView>("save_automation", {
+      automationId,
+      revision,
+      name,
+      prompt,
+      projectId,
+      schedule,
+      enabled,
+      catchUp,
+    }),
+  deleteAutomation: (automationId: AutomationId) => invoke<null>("delete_automation", { automationId }),
+  runAutomationNow: (automationId: AutomationId) => invoke<AutomationRunView>("run_automation_now", { automationId }),
+  automationRuns: (automationId: AutomationId, limit: number) =>
+    invoke<AutomationRunView[]>("automation_runs", { automationId, limit }),
   listMcpServers: () => invoke<McpServerView[]>("list_mcp_servers"),
   /** Adds (`serverId: null`) or changes a server, then lists its tools. The
    *  key goes to the Host's Windows vault; `null` keeps the stored one, and

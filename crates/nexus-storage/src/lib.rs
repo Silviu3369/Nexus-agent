@@ -2,6 +2,7 @@
 //! and runs every read and write in order, so writes are serialised without
 //! locks in the callers (`ARHITECTURA_NEXUS_RO.md` §5, §7).
 
+mod automation;
 mod chat;
 mod mcp;
 mod memory;
@@ -10,6 +11,7 @@ mod schema;
 mod steps;
 mod usage;
 
+pub use automation::{AutomationRow, AutomationRunRow, NewAutomation};
 pub use chat::{
     ConnectionRow, Continuation, ConversationRow, DEFAULT_PERSONA_NAME, Deleted, Exchange,
     MessageRow, NewExchange, Pause, PersonaRow, Settlement,

@@ -26,6 +26,7 @@ use crate::system::SystemMonitor;
 use crate::tools::markdown_artifact::{self as note_tool, ArtifactPaths, NoteContent, Observed};
 use crate::vault::SecretVault;
 
+mod automation;
 mod chat;
 mod mcp;
 mod memory;
@@ -228,6 +229,7 @@ impl Runtime {
             }
             // Tasks whose proposal the user has decided go on from there.
             self.continue_waiting_replies().await;
+            self.run_due_automations().await;
             match self.step().await {
                 Ok(true) => continue,
                 Ok(false) => {}

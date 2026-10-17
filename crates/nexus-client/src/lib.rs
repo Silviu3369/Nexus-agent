@@ -425,6 +425,51 @@ impl NexusClient {
             .await??)
     }
 
+    pub async fn automations(&self) -> Result<Vec<nexus_protocol::AutomationView>, CallError> {
+        Ok(self.client.list_automations(context::current()).await??)
+    }
+
+    pub async fn save_automation(
+        &self,
+        request: nexus_protocol::SaveAutomationRequest,
+    ) -> Result<nexus_protocol::AutomationView, CallError> {
+        Ok(self
+            .client
+            .save_automation(context::current(), request)
+            .await??)
+    }
+
+    pub async fn delete_automation(
+        &self,
+        id: nexus_protocol::AutomationId,
+    ) -> Result<(), CallError> {
+        Ok(self
+            .client
+            .delete_automation(context::current(), id)
+            .await??)
+    }
+
+    pub async fn run_automation_now(
+        &self,
+        id: nexus_protocol::AutomationId,
+    ) -> Result<nexus_protocol::AutomationRunView, CallError> {
+        Ok(self
+            .client
+            .run_automation_now(context::current(), id)
+            .await??)
+    }
+
+    pub async fn automation_runs(
+        &self,
+        id: nexus_protocol::AutomationId,
+        limit: u32,
+    ) -> Result<Vec<nexus_protocol::AutomationRunView>, CallError> {
+        Ok(self
+            .client
+            .automation_runs(context::current(), id, limit)
+            .await??)
+    }
+
     pub async fn mcp_servers(&self) -> Result<Vec<nexus_protocol::McpServerView>, CallError> {
         Ok(self.client.list_mcp_servers(context::current()).await??)
     }

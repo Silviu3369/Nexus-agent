@@ -83,6 +83,11 @@ mod tests {
             ts::export::<nexus_protocol::ModelPrice>(&conf),
             ts::export::<nexus_protocol::ModelUsageView>(&conf),
             ts::export::<nexus_protocol::UsageView>(&conf),
+            ts::export::<nexus_protocol::AutomationId>(&conf),
+            ts::export::<nexus_protocol::Schedule>(&conf),
+            ts::export::<nexus_protocol::AutomationRunStatus>(&conf),
+            ts::export::<nexus_protocol::AutomationRunView>(&conf),
+            ts::export::<nexus_protocol::AutomationView>(&conf),
         ];
         let mut out = String::from(HEADER);
         for exported in types {
