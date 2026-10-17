@@ -187,6 +187,9 @@ pub enum AgentStepDetail {
         is_error: Option<bool>,
         duration_ms: Option<u32>,
         error: Option<String>,
+        /// A tool that can change things: the call waits for the user's
+        /// approval as this run instead of running.
+        run_id: Option<RunId>,
     },
     NoteProposed {
         title: String,

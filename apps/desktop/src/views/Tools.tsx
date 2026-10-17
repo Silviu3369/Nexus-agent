@@ -80,7 +80,7 @@ function useToolUsage(): Partial<Record<ToolId, Usage>> {
   const d = useNexus();
   return useMemo(() => {
     const steps = d.steps ?? [];
-    const runs = d.runs ?? [];
+    const runs = (d.runs ?? []).filter((r) => r.kind === "Note");
     const reads = steps.filter((s) => s.detail.kind === "Fetch");
     const proposals = steps.filter((s) => s.detail.kind === "NoteProposed");
     const facts = steps.filter((s) => s.detail.kind === "MemoryProposed");

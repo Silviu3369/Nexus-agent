@@ -10,7 +10,7 @@ use nexus_core::{ActionState, OperationState, RunState};
 use nexus_protocol::{
     ApprovalDecision, ArtifactId, ArtifactSummary, BackupSummary, DecideApprovalRequest, ErrorCode,
     EventView, EventsPage, NexusError, NotePreview, OperationId, PendingApproval, RunFailure,
-    RunId, RunOrigin, RunStatus, RunView, Snapshot, SubmitNoteRequest, SubmitNoteResponse,
+    RunId, RunKind, RunOrigin, RunStatus, RunView, Snapshot, SubmitNoteRequest, SubmitNoteResponse,
     SystemStatusView,
 };
 use nexus_storage::{
@@ -29,6 +29,7 @@ use crate::vault::SecretVault;
 mod chat;
 mod mcp;
 mod memory;
+mod remote_call;
 
 pub const DEFAULT_APPROVAL_TTL: Duration = Duration::from_secs(10 * 60);
 const IDLE_TICK: Duration = Duration::from_secs(1);
@@ -94,6 +95,8 @@ pub struct Runtime {
     /// Tests only: lets a loopback MCP server stand in for a remote one.
     allow_loopback_mcp: bool,
     mcp_clients: mcp::McpClients,
+    /// Answers of approved MCP calls, until their task continues.
+    answers: remote_call::Answers,
 }
 
 #[derive(Debug, Clone)]
@@ -169,6 +172,7 @@ impl Runtime {
             system: SystemMonitor::default(),
             allow_loopback_mcp: config.allow_loopback_mcp,
             mcp_clients: mcp::McpClients::default(),
+            answers: remote_call::Answers::default(),
         });
         if paused {
             tracing::warn!(
@@ -221,6 +225,8 @@ impl Runtime {
             if let Err(err) = self.store.expire_approvals(now_ms()).await {
                 tracing::warn!(error = %err, "could not expire approvals");
             }
+            // Tasks whose proposal the user has decided go on from there.
+            self.continue_waiting_replies().await;
             match self.step().await {
                 Ok(true) => continue,
                 Ok(false) => {}
@@ -242,6 +248,25 @@ impl Runtime {
             return Ok(false);
         };
         let run_id = detail.run.id;
+        if let Some(call) = remote_call::request_of(&detail) {
+            match detail.action.as_ref().map(|a| a.state) {
+                None => self.prepare_call(&detail, &call).await?,
+                Some(ActionState::Authorized) => self.execute_call(&detail, &call).await?,
+                Some(other) => {
+                    self.store
+                        .mark_needs_review(
+                            run_id,
+                            RunError::new(
+                                "OutcomeUnknown",
+                                format!("queued call has action in state {other}"),
+                            ),
+                            now_ms(),
+                        )
+                        .await?;
+                }
+            }
+            return Ok(true);
+        }
         let content = match note_content(&detail) {
             Ok(content) => content,
             Err(reason) => {
@@ -500,6 +525,13 @@ impl Runtime {
                 continue;
             };
 
+            if remote_call::request_of(&detail).is_some() {
+                // A call cannot be observed afterwards: it may have reached
+                // the server, so it is left for the user, never repeated.
+                tracing::info!(run = %run_id, "reconciling an interrupted MCP call");
+                self.reconcile_call(run_id).await?;
+                continue;
+            }
             let paths = self.paths(&detail, operation_id);
             let content = match note_content(&detail) {
                 Ok(c) => c,
@@ -729,11 +761,26 @@ impl Runtime {
     }
 
     fn view(&self, d: &RunDetail, with_preview: bool) -> RunView {
-        let request: Option<NoteRequest> = serde_json::from_str(&d.task.request_json).ok();
-        let title = request
-            .as_ref()
-            .map(|r| r.title.trim().to_string())
-            .unwrap_or_default();
+        let call = remote_call::request_of(d);
+        let request: Option<NoteRequest> = match call {
+            Some(_) => None,
+            None => serde_json::from_str(&d.task.request_json).ok(),
+        };
+        let title = match (&call, &request) {
+            (Some(c), _) => format!("{} on {}", c.tool, c.server_name),
+            (None, Some(r)) => r.title.trim().to_string(),
+            (None, None) => String::new(),
+        };
+        let awaiting = match (&d.action, &d.approval) {
+            (Some(action), Some(approval))
+                if action.state == ActionState::AwaitingApproval
+                    && approval.decision.is_none()
+                    && approval.revoked_at_ms.is_none() =>
+            {
+                Some(approval)
+            }
+            _ => None,
+        };
 
         let pending_approval = match (&d.action, &d.approval, &request) {
             (Some(action), Some(approval), Some(req))
@@ -768,9 +815,21 @@ impl Runtime {
                     manifest_sha256: approval.manifest_sha256.clone(),
                     expires_at_ms: approval.expires_at_ms,
                     preview,
+                    call: None,
                 })
             }
             _ => None,
+        };
+        // A call shows what the server says about the tool, as approved.
+        let pending_approval = match (&call, awaiting) {
+            (Some(c), Some(approval)) => Some(PendingApproval {
+                approval_id: approval.id,
+                manifest_sha256: approval.manifest_sha256.clone(),
+                expires_at_ms: approval.expires_at_ms,
+                preview: None,
+                call: with_preview.then(|| remote_call::call_preview(c)),
+            }),
+            _ => pending_approval,
         };
 
         RunView {
@@ -795,6 +854,14 @@ impl Runtime {
                 conversation_id: o.conversation_id,
                 conversation_title: o.conversation_title.clone(),
             }),
+            kind: if call.is_some() {
+                RunKind::McpCall
+            } else {
+                RunKind::Note
+            },
+            call: call
+                .as_ref()
+                .map(|c| remote_call::call_view(c, d.run.outcome_json.as_deref())),
             created_at_ms: d.run.created_at_ms,
             updated_at_ms: d.run.updated_at_ms,
         }

@@ -1353,6 +1353,11 @@ label.check {
   gap: 6px;
 }
 
+.approval-claim {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
 .approval-inspect {
   border-top: 1px solid var(--line);
   padding-top: 8px;

@@ -3,7 +3,7 @@
 //! that would hand, say, an OpenAI key to DeepSeek. When the format does not
 //! settle it, the user chooses; the chosen provider then verifies the key.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ProviderKind {
     Gemini,
     OpenAi,

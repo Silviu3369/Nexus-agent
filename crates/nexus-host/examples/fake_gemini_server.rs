@@ -35,12 +35,15 @@ async fn main() {
         "docs_search",
         "CreateNamedPipeW creates an instance of a named pipe.",
     );
+    mcp.answer("delete_page", "Page 7 deleted.");
     // Replies in the order the UI check sends its messages.
     fake.push(Reply::text(&["Hello! ", "I'm your Nexus assistant."]));
     fake.push(Reply::calls(&[(
         "propose_note",
         serde_json::json!({"title": "Chat plan", "body": "step 1 from chat"}),
     )]));
+    // After the user approves it, the task continues with the outcome.
+    fake.push(Reply::text(&["I saved the note Chat plan."]));
     fake.push(Reply::SseThenHang(vec![text_event(
         "Starting a long reply",
     )]));
@@ -79,6 +82,13 @@ async fn main() {
         serde_json::json!({"q": "named pipes"}),
     )]));
     fake.push(Reply::text(&["From the docs: use CreateNamedPipeW."]));
+    // A tool that can change things: the call waits for the user's
+    // approval; once approved and made, the task continues.
+    fake.push(Reply::calls(&[(
+        "mcp1_delete_page",
+        serde_json::json!({"q": "page 7"}),
+    )]));
+    fake.push(Reply::text(&["Page 7 is deleted."]));
     println!("{}", fake.base_url);
     println!("{}", mcp.url);
     std::io::stdout().flush().expect("stdout");

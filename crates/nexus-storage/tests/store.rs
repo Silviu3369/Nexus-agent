@@ -141,12 +141,12 @@ async fn state_columns_accept_exactly_the_domain_states() {
 
             for (i, state) in RunState::ALL.iter().enumerate() {
                 conn.execute(
-                    "INSERT INTO runs VALUES (?1, 't1', ?2, 1, NULL, NULL, 0, 0)",
+                    "INSERT INTO runs (id, task_id, state, revision, error_code, error_message, created_at_ms, updated_at_ms) VALUES (?1, 't1', ?2, 1, NULL, NULL, 0, 0)",
                     (format!("r{i}"), state.as_str()),
                 )?;
             }
             if conn
-                .execute("INSERT INTO runs VALUES ('rx', 't1', 'Bogus', 1, NULL, NULL, 0, 0)", [])
+                .execute("INSERT INTO runs (id, task_id, state, revision, error_code, error_message, created_at_ms, updated_at_ms) VALUES ('rx', 't1', 'Bogus', 1, NULL, NULL, 0, 0)", [])
                 .is_err()
             {
                 rejected.push("run");
@@ -239,7 +239,7 @@ async fn approval_cannot_be_consumed_without_an_approved_decision() {
     let result = store
         .call(|conn| {
             conn.execute_batch(
-                "INSERT INTO runs VALUES ('r1', 't1', 'AwaitingApproval', 1, NULL, NULL, 0, 0);
+                "INSERT INTO runs (id, task_id, state, revision, error_code, error_message, created_at_ms, updated_at_ms) VALUES ('r1', 't1', 'AwaitingApproval', 1, NULL, NULL, 0, 0);
                  INSERT INTO actions VALUES ('a1', 'r1', 'op1', 'tool', 1, 'AwaitingApproval', '{}', 'h', 1, 0, 0);",
             )?;
             conn.execute(

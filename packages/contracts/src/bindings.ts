@@ -48,7 +48,12 @@ export type RunStatus = "Queued" | "Running" | "AwaitingApproval" | "Verifying" 
  */
 export type NotePreview = { destination: string; content: string; size_bytes: number; sha256: string }
 
-export type PendingApproval = { approval_id: ApprovalId; manifest_sha256: string; expires_at_ms: number; preview: NotePreview | null }
+/**
+ * The tool as the user enabled it; the server's own words, untrusted.
+ */
+export type McpCallPreview = { description: string; destructive_hint: boolean | null; definition_sha256: string }
+
+export type PendingApproval = { approval_id: ApprovalId; manifest_sha256: string; expires_at_ms: number; preview: NotePreview | null; call: McpCallPreview | null }
 
 export type ArtifactSummary = { artifact_id: ArtifactId; path: string; sha256: string; size_bytes: number; created_at_ms: number }
 
@@ -56,7 +61,17 @@ export type RunFailure = { code: string; message: string }
 
 export type RunOrigin = { message_id: MessageId; conversation_id: ConversationId; conversation_title: string }
 
-export type RunView = { run_id: RunId; title: string; status: RunStatus; revision: number; failure: RunFailure | null; pending_approval: PendingApproval | null; artifact: ArtifactSummary | null; origin: RunOrigin | null; created_at_ms: number; updated_at_ms: number }
+/**
+ * What a run does.
+ */
+export type RunKind = "Note" | "McpCall"
+
+/**
+ * A call to an MCP tool, exactly as the user approves it.
+ */
+export type McpCallView = { server: string; url: string; tool: string; arguments_json: string; result_chars: number | null; truncated: boolean | null; duration_ms: number | null }
+
+export type RunView = { run_id: RunId; title: string; status: RunStatus; revision: number; failure: RunFailure | null; pending_approval: PendingApproval | null; artifact: ArtifactSummary | null; origin: RunOrigin | null; kind: RunKind; call: McpCallView | null; created_at_ms: number; updated_at_ms: number }
 
 export type Snapshot = { runs: RunView[]; watermark: number }
 
@@ -117,7 +132,7 @@ export type AgentStepStatus = "Running" | "Done" | "Failed"
  * One step's kind-specific facts. Metadata only: a web read shows its
  * address, status and size, never the page's text.
  */
-export type AgentStepDetail = { kind: "ModelCall"; model: string; first_byte_ms: number | null; duration_ms: number | null; error: string | null; attempt: number | null; backup: boolean | null; memory_items: number | null } | { kind: "Fetch"; url: string; final_url: string | null; http_status: number | null; text_bytes: number | null; truncated: boolean | null; error: string | null } | { kind: "MemoryProposed"; content: string; scope: MemoryScope | null; memory_id: MemoryId | null; error: string | null } | { kind: "McpCall"; server: string; tool: string; arguments: string; result_chars: number | null; truncated: boolean | null; is_error: boolean | null; duration_ms: number | null; error: string | null } | { kind: "NoteProposed"; title: string; run_id: RunId | null; error: string | null }
+export type AgentStepDetail = { kind: "ModelCall"; model: string; first_byte_ms: number | null; duration_ms: number | null; error: string | null; attempt: number | null; backup: boolean | null; memory_items: number | null } | { kind: "Fetch"; url: string; final_url: string | null; http_status: number | null; text_bytes: number | null; truncated: boolean | null; error: string | null } | { kind: "MemoryProposed"; content: string; scope: MemoryScope | null; memory_id: MemoryId | null; error: string | null } | { kind: "McpCall"; server: string; tool: string; arguments: string; result_chars: number | null; truncated: boolean | null; is_error: boolean | null; duration_ms: number | null; error: string | null; run_id: RunId | null } | { kind: "NoteProposed"; title: string; run_id: RunId | null; error: string | null }
 
 export type AgentStepView = { step_id: AgentStepId; message_id: MessageId; conversation_id: ConversationId; conversation_title: string; seq: number; status: AgentStepStatus; detail: AgentStepDetail; started_at_ms: number; finished_at_ms: number | null }
 

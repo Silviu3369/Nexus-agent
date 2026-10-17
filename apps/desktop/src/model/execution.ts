@@ -80,6 +80,8 @@ export interface TimelineItem {
   memoryItems?: number;
   /** MCP calls: which tool of which server. */
   mcp?: { server: string; tool: string };
+  /** Only proposed: it waits for the user before anything is done. */
+  proposal?: boolean;
 }
 
 export interface RunVM {
@@ -98,7 +100,9 @@ export interface RunVM {
   failure: { code: string; message: string } | null;
   promptTokens: number | null;
   outputTokens: number | null;
-  proposedRunId: RunId | null;
+  /** Notes the run proposed, in order (one per reply that stopped on one). */
+  proposedRunIds: RunId[];
+  /** The latest reply of the run: the one a Stop or a deletion names. */
   messageId: string;
   streaming: boolean;
 }
@@ -163,6 +167,12 @@ export function describeStep(step: AgentStepView): { title: string; detail: stri
       return { title, detail: running ? null : "remembered only if you approve it" };
     }
     case "McpCall": {
+      if (d.run_id) {
+        // A tool that can change things: the call waits for the user.
+        const title = `Proposed calling ${d.tool} on ${d.server}`;
+        if (d.error) return { title, detail: d.error };
+        return { title, detail: running ? null : "sent only if you approve it" };
+      }
       const title = `${running ? "Using" : "Used"} ${d.tool} on ${d.server}`;
       if (d.error) return { title, detail: d.error };
       if (d.result_chars === null) return { title, detail: null };
@@ -273,6 +283,23 @@ function stepItem(step: AgentStepView, agent: string, pendingMemory: ReadonlySet
       };
     }
     case "McpCall":
+      if (d.run_id)
+        return {
+          ...base,
+          kind: "mcp",
+          title: `Propose calling ${d.tool} · ${d.server}`,
+          model: null,
+          tool: "MCP",
+          outcome: "Proposal recorded; nothing sent yet",
+          mcp: { server: d.server, tool: d.tool },
+          proposal: true,
+          facts: compact([
+            ["Server", d.server],
+            ["Tool", d.tool],
+            ["Arguments proposed", d.arguments || null],
+            ["Run", d.run_id],
+          ]),
+        };
       return {
         ...base,
         kind: "mcp",
@@ -296,9 +323,93 @@ function stepItem(step: AgentStepView, agent: string, pendingMemory: ReadonlySet
   }
 }
 
+/** The approval and the call that follow a proposed call to an MCP tool
+ *  that can change things, read from the real run. */
+function callItems(run: RunView): TimelineItem[] {
+  const call = run.call;
+  const at = run.updated_at_ms;
+  const what = call ? `Call ${call.tool} on ${call.server}` : run.title;
+  const mcp = call ? { server: call.server, tool: call.tool } : undefined;
+  const approval = (status: ExecStatus, outcome: string): TimelineItem => ({
+    id: `${run.run_id}:approval`,
+    kind: "approval",
+    title: "Your approval",
+    status,
+    agent: "You",
+    model: null,
+    tool: null,
+    startedAt: run.created_at_ms,
+    finishedAt: status === "approval_required" ? null : at,
+    durationMs: null,
+    outcome,
+    facts: compact([
+      ["Action", what],
+      ["Expires", run.pending_approval ? new Date(run.pending_approval.expires_at_ms).toLocaleTimeString("en-US") : null],
+      ["Manifest", run.pending_approval?.manifest_sha256 ?? null],
+    ]),
+  });
+  const made = (status: ExecStatus, outcome: string): TimelineItem => ({
+    id: `${run.run_id}:call`,
+    kind: "mcp",
+    title: call ? `Call ${call.tool} · ${call.server}` : "Call",
+    status,
+    agent: "Host",
+    model: null,
+    tool: "MCP",
+    startedAt: at,
+    finishedAt: status === "completed" || status === "failed" || status === "cancelled" ? at : null,
+    durationMs: call?.duration_ms ?? null,
+    outcome,
+    mcp,
+    facts: compact([
+      ["Server", call?.url ?? null],
+      ["Arguments", call?.arguments_json ?? null],
+      ["Answer", call?.result_chars != null ? `${call.result_chars.toLocaleString("en-US")} characters, given to the model, not kept` : null],
+      ["Error", run.failure ? `${run.failure.code}: ${run.failure.message}` : null],
+    ]),
+  });
+  switch (run.status) {
+    case "AwaitingApproval":
+      return [
+        approval("approval_required", "Nothing is sent until you approve this exact call"),
+        made("queued", "Runs once after your approval"),
+      ];
+    case "Queued":
+      return [made("queued", "Preparing")];
+    case "Running":
+    case "Verifying":
+      return [approval("completed", "Approved"), made("running", "Calling the server")];
+    case "Succeeded":
+      return [
+        approval("completed", "Approved"),
+        made(
+          "completed",
+          call?.result_chars != null ? `Made once; ${call.result_chars.toLocaleString("en-US")} characters back` : "Made once",
+        ),
+      ];
+    case "Denied":
+      return [approval("cancelled", "Rejected by you"), made("cancelled", "Not sent")];
+    case "Failed":
+      if (run.failure?.code === "ApprovalExpired")
+        return [approval("failed", "Expired before a decision"), made("cancelled", "Not sent")];
+      return [approval("completed", "Approved"), made("failed", run.failure?.message ?? "Failed")];
+    case "Cancelled":
+      return [made("cancelled", "Cancelled; not sent")];
+    case "CancellationRequested":
+      return [made("waiting", "Cancelling")];
+    case "NeedsReconciliation":
+    case "NeedsReview":
+      return [
+        approval("completed", "Approved"),
+        made("waiting", "Needs your review: the call may have reached the server; it is not sent again"),
+      ];
+  }
+}
+
 /** The approval and the write that follow a note proposal, read from the
  *  real run. Only states the run proves are shown. */
 export function noteItems(run: RunView): TimelineItem[] {
+  if (run.kind === "McpCall") return callItems(run);
   const at = run.updated_at_ms;
   const approval = (status: ExecStatus, outcome: string): TimelineItem => ({
     id: `${run.run_id}:approval`,
@@ -397,9 +508,13 @@ export function buildRuns(
 ): RunVM[] {
   const out: RunVM[] = [];
   let request: string | null = null;
+  // The run a model message continues: after the user decided on what the
+  // previous reply proposed, the task goes on as more of the same run.
+  let current: RunVM | null = null;
   for (const m of conversation.messages) {
     if (m.role === "User") {
       request = m.text;
+      current = null;
       continue;
     }
     const note = m.proposed_run_id ? runsById.get(m.proposed_run_id) : proposedRun(m, runsById);
@@ -408,7 +523,23 @@ export function buildRuns(
     const lastStep = m.steps.length > 0 ? m.steps[m.steps.length - 1] : null;
     const status = replyStatus(m, note);
     const settledAt = lastStep?.finished_at_ms ?? null;
-    out.push({
+    const finishedAt = status === "running" || status === "approval_required" ? null : (note?.updated_at_ms ?? settledAt);
+    const proposed = m.proposed_run_id ?? note?.run_id ?? null;
+    if (current) {
+      current.items.push(...items);
+      current.text = [current.text, m.text].filter(Boolean).join("\n\n");
+      current.status = status;
+      current.finishedAt = finishedAt;
+      current.failure = m.failure;
+      current.model = m.model ?? current.model;
+      current.promptTokens = sum(current.promptTokens, m.prompt_tokens);
+      current.outputTokens = sum(current.outputTokens, m.output_tokens);
+      current.messageId = m.message_id;
+      current.streaming = m.status === "Streaming";
+      if (proposed) current.proposedRunIds.push(proposed);
+      continue;
+    }
+    current = {
       id: m.message_id,
       messageId: m.message_id,
       taskId: conversation.conversation_id,
@@ -418,18 +549,23 @@ export function buildRuns(
       model: m.model,
       personaVersion: m.persona_version,
       startedAt: m.created_at_ms,
-      finishedAt: status === "running" || status === "approval_required" ? null : (note?.updated_at_ms ?? settledAt),
+      finishedAt,
       items,
       text: m.text,
       failure: m.failure,
       promptTokens: m.prompt_tokens,
       outputTokens: m.output_tokens,
-      proposedRunId: m.proposed_run_id ?? note?.run_id ?? null,
+      proposedRunIds: proposed ? [proposed] : [],
       streaming: m.status === "Streaming",
-    });
+    };
+    out.push(current);
     request = null;
   }
   return out;
+}
+
+function sum(a: number | null, b: number | null): number | null {
+  return a === null && b === null ? null : (a ?? 0) + (b ?? 0);
 }
 
 /** A model call that failed and was followed by another model call was a
@@ -443,10 +579,11 @@ function markRetries(items: TimelineItem[]): TimelineItem[] {
   });
 }
 
-/** While a reply is still settling, only its NoteProposed step names the run. */
+/** While a reply is still settling, only its proposal step names the run. */
 function proposedRun(m: ChatMessageView, runsById: ReadonlyMap<string, RunView>): RunView | undefined {
   for (const s of m.steps) {
-    if (s.detail.kind === "NoteProposed" && s.detail.run_id) return runsById.get(s.detail.run_id);
+    if ((s.detail.kind === "NoteProposed" || s.detail.kind === "McpCall") && s.detail.run_id)
+      return runsById.get(s.detail.run_id);
   }
   return undefined;
 }
@@ -463,7 +600,7 @@ export function nextLine(run: RunVM | null): string {
     return "The tool's answer goes back to the model as data, which then continues the answer.";
   if (running?.kind === "write") return "The Host writes the note, then verifies the file against its SHA-256.";
   if (run.items.some((i) => i.status === "approval_required"))
-    return "Waiting for your approval. Nothing is written until you approve.";
+    return "Waiting for your approval. Nothing is written or sent until you approve; after your decision, Nexus continues the task.";
   if (run.items.some((i) => i.kind === "memory" && i.status === "waiting"))
     return "A proposed fact waits for your review. Nothing is remembered until you approve it.";
   if (run.status === "running") return "The reply is still streaming.";
@@ -571,6 +708,7 @@ export function deriveCore(input: {
     if (item.kind === "note") node.proposed = true;
     else if (item.kind === "write") node.proposed = item.status === "queued";
     else if (item.kind === "memory") node.proposed = item.status === "waiting";
+    else if (item.kind === "mcp") node.proposed = item.proposal === true || item.status === "queued";
     node.sublabel = nodeSublabel(id, item) ?? node.sublabel;
     // The model node names whichever model answered last (e.g. the backup),
     // the MCP node whichever server was used last.
@@ -825,6 +963,13 @@ const EVENT_TEXT: Record<string, { title: string; tool: ActivityTool; status?: E
   McpServerCheckFailed: { title: "MCP server could not be asked for its tools", tool: "MCP", status: "failed" },
   McpToolEnabled: { title: "MCP tool enabled", tool: "MCP" },
   McpToolDisabled: { title: "MCP tool turned off", tool: "MCP" },
+  RemoteCallCompleted: { title: "Approved MCP call made once", tool: "MCP", status: "completed" },
+};
+
+/** Run events read differently when the run is a call to an MCP tool. */
+const CALL_EVENT_TEXT: Record<string, string> = {
+  RunCreated: "MCP call requested",
+  OperationIntended: "Call intent recorded before calling",
 };
 
 /** Events whose facts the agent steps already show in more detail, or that
@@ -873,8 +1018,11 @@ export function buildActivity(input: {
   }
   for (const e of input.events) {
     if (SKIPPED_EVENTS.has(e.kind)) continue;
-    const known = EVENT_TEXT[e.kind];
     const run = runOf.get(e.entity_id);
+    const known =
+      run?.kind === "McpCall" && EVENT_TEXT[e.kind]
+        ? { ...EVENT_TEXT[e.kind], tool: "MCP" as ActivityTool, title: CALL_EVENT_TEXT[e.kind] ?? EVENT_TEXT[e.kind].title }
+        : EVENT_TEXT[e.kind];
     const conversationTitle = titles.get(e.entity_id) ?? null;
     const taskId = conversationTitle ? e.entity_id : (run?.origin?.conversation_id ?? null);
     entries.push({

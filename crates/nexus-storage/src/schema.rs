@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::StorageError;
 
-pub const SUPPORTED_VERSION: i64 = 7;
+pub const SUPPORTED_VERSION: i64 = 8;
 
 /// Version 1: everything M1 persists. State columns are closed lists that a
 /// test keeps identical to the `nexus-core` enums. Times are UTC unix ms.
@@ -373,6 +373,28 @@ CREATE TABLE mcp_tools (
 ) STRICT;
 "#;
 
+/// Version 8: a reply that stopped on a proposal waiting for the user keeps
+/// what the model needs to continue the task once the user decides (its
+/// own calls, their signatures and any signed thinking; external data such
+/// as page text is not kept). The row lives only until the task continues,
+/// or goes with its message. Runs gain the outcome of an effect that leaves
+/// no file (a call to an MCP tool): its size and duration, never content.
+const V8: &str = r#"
+ALTER TABLE runs ADD COLUMN outcome_json TEXT
+    CHECK (outcome_json IS NULL OR json_valid(outcome_json));
+
+CREATE TABLE paused_turns (
+    message_id      TEXT    PRIMARY KEY REFERENCES messages (id) ON DELETE CASCADE,
+    conversation_id TEXT    NOT NULL REFERENCES conversations (id) ON DELETE CASCADE,
+    run_id          TEXT    NOT NULL REFERENCES runs (id),
+    state_json      TEXT    NOT NULL CHECK (json_valid(state_json)),
+    created_at_ms   INTEGER NOT NULL
+) STRICT;
+
+CREATE INDEX paused_turns_by_run ON paused_turns (run_id);
+CREATE INDEX paused_turns_by_conversation ON paused_turns (conversation_id);
+"#;
+
 struct Migration {
     sql: &'static str,
     /// Rebuilds a table other tables refer to (see [`V5`]).
@@ -406,6 +428,10 @@ const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         sql: V7,
+        rebuilds_parent_table: false,
+    },
+    Migration {
+        sql: V8,
         rebuilds_parent_table: false,
     },
 ];

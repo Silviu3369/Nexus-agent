@@ -61,6 +61,40 @@ pub struct PendingApproval {
     /// Present from `get_run` only; snapshots omit it so their size stays
     /// bounded. The client must fetch the run and show this before deciding.
     pub preview: Option<NotePreview>,
+    /// For a call to an MCP tool: what the server says about the tool, as
+    /// approved (from `get_run` only, like `preview`).
+    pub call: Option<McpCallPreview>,
+}
+
+/// What a run does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub enum RunKind {
+    /// Create a Markdown note (`CreateMarkdownArtifact`).
+    Note,
+    /// Call a tool of an MCP server that can change things there.
+    McpCall,
+}
+
+/// A call to an MCP tool, exactly as the user approves it.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct McpCallView {
+    pub server: String,
+    pub url: String,
+    pub tool: String,
+    /// The exact arguments, pretty-printed.
+    pub arguments_json: String,
+    /// After the call: how much the server answered (never what).
+    pub result_chars: Option<u32>,
+    pub truncated: Option<bool>,
+    pub duration_ms: Option<u32>,
+}
+
+/// The tool as the user enabled it; the server's own words, untrusted.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct McpCallPreview {
+    pub description: String,
+    pub destructive_hint: Option<bool>,
+    pub definition_sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -90,6 +124,9 @@ pub struct RunView {
     /// The agent reply that proposed this run; `None` when the user
     /// submitted the note directly.
     pub origin: Option<RunOrigin>,
+    pub kind: RunKind,
+    /// For an MCP call: which, with what.
+    pub call: Option<McpCallView>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
 }

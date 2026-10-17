@@ -16,7 +16,9 @@
   fact the agent proposes that is sent only after you approve it, a fact
   you add, search and delete, an MCP server (the test fake's, reachable only
   because the debug host gets NEXUS_ALLOW_LOOPBACK_MCP=1) whose read-only
-  tool you enable and a task then calls, deleting a request with its reply
+  tool you enable and a task then calls, and whose tool that can change
+  things waits for your approval of the exact call, then the task continuing
+  after each decision (the note, the call), deleting a request with its reply
   and a whole task (gone from the database files too), and removing the
   connection with its vault entry. Build first:
     cargo build -p nexus-host --locked
@@ -291,6 +293,7 @@ try {
   Check ($null -ne (Wait-Contains $win 'Create note “Chat plan”')) "the card names the exact action"
   Check ($null -ne (Wait-Contains $win "Ada · task")) "the card says which agent and task asked"
   Check ($null -ne (Wait-Like $win 'Propose note "Chat plan"')) "the proposal is shown as a step"
+  Check ($null -ne (Wait-Contains $win "after your decision, Nexus continues the task")) "the live panel says the task continues after the decision"
   Check ($null -ne (Wait-Contains $win "1 new file")) "the card states what it affects"
   Click-Button $win "Inspect" 20
   Check (Wait-Text $win "Exact content of the note") "its exact preview can be inspected"
@@ -300,6 +303,7 @@ try {
   $content = [System.IO.File]::ReadAllText((Note-Files)[0].FullName, [System.Text.UTF8Encoding]::new($false))
   Check ($content -ceq "# Chat plan`n`nstep 1 from chat`n") "the note holds exactly the approved preview"
   Check ($null -ne (Wait-Contains $win "Written and verified")) "the write step reports the verified file"
+  Check (Wait-Text $win "I saved the note Chat plan." 20) "after the approval, the task continues with the outcome"
 
   # --- stopping a reply keeps what arrived ---
   Send-Chat $win "Write a long essay"
@@ -410,8 +414,7 @@ try {
   Check (-not (Get-Names $win | Where-Object { $_.Contains($mcpKey) })) "the server's key is not shown anywhere"
   Check ($null -ne (Wait-Contains $win "The server says")) "a tool's description is shown as the server's claim"
   Check ($null -ne (Wait-Contains $win "read-only (server's claim)")) "the read-only hint is shown as a claim"
-  $blocked = Find-Named $win "Enable delete_page" ([System.Windows.Automation.ControlType]::CheckBox)
-  Check ($blocked -and -not $blocked.Current.IsEnabled) "a tool that may change things cannot be enabled"
+  Check ($null -ne (Wait-Contains $win "asks you before each call")) "a tool that can change things is marked as asking before each call"
   Click-Button $win "Inspect schema"
   Check ($null -ne (Wait-Contains $win '"properties"')) "a tool's parameter schema can be inspected"
   $enable = Find-Named $win "Enable docs_search" ([System.Windows.Automation.ControlType]::CheckBox)
@@ -431,6 +434,26 @@ try {
   $mcpRow = Wait-Like $win "MCP servers"
   if ($mcpRow) { Invoke-Element $mcpRow }
   Check ($null -ne (Wait-Like $win "Used docs_search on Test docs")) "Tools lists the recent MCP call"
+
+  # --- a tool that can change things: approved call by call ---
+  $enableDelete = Find-Named $win "Enable delete_page" ([System.Windows.Automation.ControlType]::CheckBox)
+  Check ($enableDelete -and $enableDelete.Current.IsEnabled) "a tool that can change things can be enabled"
+  if ($enableDelete) { Invoke-Element $enableDelete }
+  Check ($null -ne (Wait-Contains $win "2 listed · 2 enabled")) "it is enabled in the form shown"
+  Click-Button $win "Overview"
+  Set-Field $win "Give Nexus a task" "Delete page 7 of the docs"
+  Click-Button $win "Run" 20
+  Check ($null -ne (Wait-Contains $win "Call delete_page on Test docs" 20)) "the approval card names the exact call"
+  Check ($null -ne (Wait-Contains $win "sent once, only if you approve")) "the card says nothing is sent before approval"
+  Check ($null -ne (Wait-Like $win "Propose calling delete_page")) "the proposal is a step of the run"
+  Click-Button $win "Inspect" 20
+  Check ($null -ne (Wait-Contains $win '"q": "page 7"')) "the exact arguments can be inspected"
+  Click-Button $win "Approve" 20
+  Check (Wait-Text $win "Page 7 is deleted." 20) "after the approval the call is made once and the task continues"
+  Check ($null -ne (Wait-Contains $win "Made once")) "the call step says it was made once"
+  Click-Button $win "Tools"
+  $mcpRow = Wait-Like $win "MCP servers"
+  if ($mcpRow) { Invoke-Element $mcpRow }
   Click-Button $win "Remove"
   Check ($null -ne (Wait-Contains $win "with its tools and its key")) "removing a server says what goes with it"
   Click-Button $win "Remove for good"

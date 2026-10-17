@@ -16,8 +16,8 @@ pub mod version;
 
 pub use runs::{
     ApprovalDecision, ArtifactSummary, BackupSummary, DecideApprovalRequest, EventView, EventsPage,
-    NotePreview, PendingApproval, RunFailure, RunOrigin, RunStatus, RunView, Snapshot,
-    SubmitNoteRequest, SubmitNoteResponse, SystemStatusView,
+    McpCallPreview, McpCallView, NotePreview, PendingApproval, RunFailure, RunKind, RunOrigin,
+    RunStatus, RunView, Snapshot, SubmitNoteRequest, SubmitNoteResponse, SystemStatusView,
 };
 
 pub use chat::{

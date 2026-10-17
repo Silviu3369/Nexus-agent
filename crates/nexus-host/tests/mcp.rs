@@ -123,7 +123,11 @@ async fn a_tool_reaches_the_model_only_once_enabled_and_its_result_comes_back_as
     assert_eq!(server.tools[0].read_only_hint, Some(true));
     assert!(server.tools[0].blocked_reason.is_none());
     assert_eq!(server.tools[0].parameters, ["q"]);
-    assert!(server.tools[1].blocked_reason.is_some());
+    assert_eq!(server.tools[1].read_only_hint, Some(false));
+    assert!(
+        server.tools[1].blocked_reason.is_none(),
+        "a tool that can change things can be enabled (each call then waits for approval)"
+    );
     assert_eq!(
         client.mcp_servers().await.unwrap().len(),
         1,
@@ -141,17 +145,6 @@ async fn a_tool_reaches_the_model_only_once_enabled_and_its_result_comes_back_as
         declared(&body)
     );
     assert!(!instruction(&body).contains("MCP"));
-
-    // A tool that may change things cannot be enabled yet.
-    let refused = client
-        .set_mcp_tool_enabled(
-            server.server_id,
-            "delete_page".to_string(),
-            Some(server.tools[1].definition_sha256.clone()),
-        )
-        .await
-        .unwrap_err();
-    assert_eq!(refused.code(), Some(ErrorCode::Forbidden));
 
     let server = enable(&client, &server, "docs_search").await;
     assert!(server.tools[0].enabled && !server.tools[0].changed);
@@ -177,6 +170,7 @@ async fn a_tool_reaches_the_model_only_once_enabled_and_its_result_comes_back_as
                 is_error,
                 duration_ms,
                 error,
+                run_id: None,
             } => Some((
                 server.clone(),
                 tool.clone(),
@@ -439,6 +433,91 @@ async fn unsafe_addresses_and_wrong_keys_are_refused_without_storing_a_secret() 
             .unwrap(),
         0,
         "no MCP key is left behind"
+    );
+    host.shutdown().await;
+}
+
+/// The real Microsoft Learn MCP server (public, read-only, no account)
+/// through the whole host: added, listed, one tool enabled, called by the
+/// (stand-in) model, its answer returned. Run with
+/// `cargo test -p nexus-host --test mcp -- --ignored`. Sends one fixed
+/// documentation query; no user data, no provider key.
+#[tokio::test]
+#[ignore = "contacts learn.microsoft.com"]
+async fn real_microsoft_learn_through_the_host() {
+    let fake = FakeGemini::start(KEY).await;
+    let host = TestHost::start_with(TOKEN, config(&fake, false)).await;
+    let client = host.client().await;
+    connect_gemini(&client).await;
+
+    let server = client
+        .save_mcp_server(SaveMcpServerRequest {
+            server_id: None,
+            name: "Microsoft Learn".to_string(),
+            url: "https://learn.microsoft.com/api/mcp".to_string(),
+            key: None,
+            clear_key: false,
+        })
+        .await
+        .unwrap();
+    assert!(server.last_error.is_none(), "{:?}", server.last_error);
+    let search = server
+        .tools
+        .iter()
+        .find(|t| t.name == "microsoft_docs_search")
+        .expect("the server lists its docs search");
+    assert!(search.blocked_reason.is_none(), "declared read-only");
+    println!(
+        "tools: {:?}",
+        server
+            .tools
+            .iter()
+            .map(|t| (t.name.as_str(), t.read_only_hint))
+            .collect::<Vec<_>>()
+    );
+    let parameter = search
+        .parameters
+        .first()
+        .expect("a query parameter")
+        .clone();
+    let server = enable(&client, &server, "microsoft_docs_search").await;
+    assert!(server.tools.iter().any(|t| t.enabled));
+
+    fake.push(Reply::calls(&[(
+        "mcp1_microsoft_docs_search",
+        json!({ parameter: "CreateNamedPipe Windows named pipe server" }),
+    )]));
+    fake.push(Reply::text(&["Use CreateNamedPipeW."]));
+    let sent = send(&client, None, "real", "How do I create a named pipe?").await;
+    let reply = settled(&client, &sent).await;
+    assert_eq!(reply.status, ChatStatus::Complete, "{:?}", reply.failure);
+    let call = reply
+        .steps
+        .iter()
+        .find_map(|s| match &s.detail {
+            AgentStepDetail::McpCall {
+                result_chars,
+                is_error,
+                duration_ms,
+                error,
+                ..
+            } => Some((*result_chars, *is_error, *duration_ms, error.clone())),
+            _ => None,
+        })
+        .expect("the call is a step");
+    println!("call: {call:?}");
+    assert!(call.3.is_none(), "{:?}", call.3);
+    assert_eq!(call.1, Some(false));
+    assert!(call.0.unwrap_or(0) > 100);
+    let answered = fake.generations().pop().unwrap().json();
+    let result = answered["contents"][2]["parts"][0]["functionResponse"]["response"]["result"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        result.contains("CreateNamedPipe"),
+        "{}",
+        &result[..result.len().min(300)]
     );
     host.shutdown().await;
 }

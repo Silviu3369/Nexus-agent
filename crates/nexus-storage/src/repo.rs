@@ -59,6 +59,9 @@ pub struct RunRow {
     pub error_message: Option<String>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+    /// How an effect that leaves no file ended (sizes, duration; never
+    /// content).
+    pub outcome_json: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -538,6 +541,45 @@ impl Store {
                 RunState::Verifying | RunState::NeedsReconciliation => {}
                 _ => transition_run(&tx, run_id, RunState::Verifying, None, now)?,
             }
+            transition_run(&tx, run_id, RunState::Succeeded, None, now)?;
+            let detail = load_detail(&tx, run_id)?;
+            tx.commit()?;
+            Ok(detail)
+        })
+        .await
+    }
+
+    /// A call to a remote tool returned: the effect happened as far as the
+    /// server says, and leaves no file to verify. Only its size and
+    /// duration are recorded (`outcome_json`), never what it answered.
+    pub async fn complete_remote_call(
+        &self,
+        run_id: RunId,
+        outcome_json: String,
+        now: i64,
+    ) -> Result<RunDetail, StorageError> {
+        self.call(move |conn| {
+            let tx = conn.transaction()?;
+            let detail = load_detail(&tx, run_id)?;
+            let action = detail.action.ok_or(StorageError::NotFound("action"))?;
+            let op = detail
+                .operation
+                .ok_or(StorageError::NotFound("operation"))?;
+            transition_operation(&tx, op.id, op.state, OperationState::Verified, now)?;
+            transition_action(&tx, action.id, ActionState::Verified, now)?;
+            tx.execute(
+                "UPDATE runs SET outcome_json = ?1 WHERE id = ?2",
+                params![outcome_json, run_id.to_string()],
+            )?;
+            insert_event(
+                &tx,
+                "RemoteCallCompleted",
+                &run_id.to_string(),
+                1,
+                json!({"run_id": run_id.to_string()}),
+                now,
+            )?;
+            transition_run(&tx, run_id, RunState::Verifying, None, now)?;
             transition_run(&tx, run_id, RunState::Succeeded, None, now)?;
             let detail = load_detail(&tx, run_id)?;
             tx.commit()?;
@@ -1083,7 +1125,8 @@ fn run_ids_in_states(tx: &Transaction, states: &[RunState]) -> Result<Vec<RunId>
 fn load_run(tx: &Transaction, run_id: RunId) -> Result<RunRow, StorageError> {
     let row = tx
         .query_row(
-            "SELECT id, task_id, state, revision, error_code, error_message, created_at_ms, updated_at_ms
+            "SELECT id, task_id, state, revision, error_code, error_message, created_at_ms, updated_at_ms,
+                    outcome_json
              FROM runs WHERE id = ?1",
             [run_id.to_string()],
             |r| {
@@ -1096,6 +1139,7 @@ fn load_run(tx: &Transaction, run_id: RunId) -> Result<RunRow, StorageError> {
                     r.get(5)?,
                     r.get(6)?,
                     r.get(7)?,
+                    r.get::<_, Option<String>>(8)?,
                 ))
             },
         )
@@ -1110,6 +1154,7 @@ fn load_run(tx: &Transaction, run_id: RunId) -> Result<RunRow, StorageError> {
         error_message: row.5,
         created_at_ms: row.6,
         updated_at_ms: row.7,
+        outcome_json: row.8,
     })
 }
 

@@ -1,7 +1,9 @@
-// Remote MCP servers: add one, see what its tools claim, enable read-only
-// tools one by one. Everything a server wrote (names, descriptions, hints,
-// schemas) is shown as the server's claim. Enabling names the exact
-// definition shown, so the Host refuses one the server changed meanwhile.
+// Remote MCP servers: add one, see what its tools claim, enable tools one by
+// one. A tool the server declares read-only runs when the model calls it;
+// any other asks you before each call. Everything a server wrote (names,
+// descriptions, hints, schemas) is shown as the server's claim. Enabling
+// names the exact definition shown, so the Host refuses one the server
+// changed meanwhile.
 
 import { useState } from "react";
 import type { McpServerView, McpToolView } from "@nexus/contracts";
@@ -215,7 +217,9 @@ function ToolRow({ server, tool }: { server: McpServerView; tool: McpToolView })
             read-only (server's claim)
           </span>
         ) : (
-          <span className="badge badge-attention">may change things</span>
+          <span className="badge badge-attention" title="Each call waits for your approval of the exact call">
+            asks you before each call
+          </span>
         )}
         {tool.destructive_hint === true && <span className="badge badge-bad">destructive</span>}
         {!tool.available && <span className="badge badge-neutral">no longer listed</span>}
@@ -248,6 +252,11 @@ function ToolRow({ server, tool }: { server: McpServerView; tool: McpToolView })
         </button>
       </p>
       {inspect && <pre className="mcp-schema">{tool.schema_json}</pre>}
+      {tool.read_only_hint !== true && tool.enabled && (
+        <p className="muted mcp-blocked">
+          It can change things on the server: each call waits for your approval of the exact call, and is made once.
+        </p>
+      )}
       {tool.blocked_reason && <p className="muted mcp-blocked">{tool.blocked_reason}</p>}
       <ErrorLine error={error} />
     </li>

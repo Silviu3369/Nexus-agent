@@ -100,6 +100,8 @@ function noteRun(status: RunView["status"], extra: Partial<RunView> = {}): RunVi
         : null,
     artifact: null,
     origin: { message_id: REPLY, conversation_id: CONV, conversation_title: "Check the site" },
+    kind: "Note",
+    call: null,
     created_at_ms: T0 + 3000,
     updated_at_ms: T0 + 3500,
     ...extra,
@@ -155,7 +157,7 @@ test("a proposed note waits on the approval, then the write, from the real run s
   assert.equal(core.outcome, null, "a run waiting on you has no outcome yet");
   assert.equal(core.visual.activityIntensity, 0, "nothing runs while it waits");
   assert.equal(core.nodes.find((n) => n.id === "approval")?.status, "waiting");
-  assert.match(nextLine(run), /Nothing is written until you approve/);
+  assert.match(nextLine(run), /Nothing is written or sent until you approve/);
 
   const writing = new Map([["r-1", noteRun("Verifying")]]);
   const [after] = buildRuns(conversation(reply), writing, "Nexus");
@@ -174,7 +176,7 @@ test("a proposed note waits on the approval, then the write, from the real run s
 test("the note run is found from the proposal step before the reply settles", () => {
   const proposal = step({ kind: "NoteProposed", title: "Plan", run_id: "r-1", error: null }, "Done", T0, T0 + 10);
   const [run] = buildRuns(conversation(message("Model", REPLY, [proposal])), new Map([["r-1", noteRun("AwaitingApproval")]]), "Nexus");
-  assert.equal(run.proposedRunId, "r-1");
+  assert.deepEqual(run.proposedRunIds, ["r-1"]);
   assert.ok(run.items.some((i) => i.kind === "approval"));
 });
 
@@ -426,4 +428,114 @@ test("MCP events refresh the servers only", () => {
   for (const kind of ["McpServerAdded", "McpToolsListed", "McpServerCheckFailed", "McpToolEnabled", "McpToolDisabled", "McpServerRemoved"]) {
     assert.deepEqual([...invalidatedBy([ev(kind)])], ["mcp"], kind);
   }
+});
+
+test("a task that continues after the user's decision stays one run", () => {
+  const proposal = step({ kind: "NoteProposed", title: "Plan", run_id: "r-1", error: null }, "Done", T0 + 900, T0 + 910);
+  const first = message("Model", REPLY, [model("Done", T0, T0 + 900), proposal], {
+    status: "Complete",
+    text: "Here is the plan.",
+    proposed_run_id: "r-1",
+    prompt_tokens: 10,
+    output_tokens: 5,
+  });
+  const continued = message("Model", "m-3", [model("Running", T0 + 5000, null)], { text: "Saved" });
+  const view: ConversationView = {
+    conversation_id: CONV,
+    title: "Check the site",
+    messages: [message("User", "m-1", []), first, continued],
+  };
+  const written = noteRun("Succeeded", { updated_at_ms: T0 + 4000 });
+  const runs = buildRuns(view, new Map([["r-1", written]]), "Nexus");
+  assert.equal(runs.length, 1, "the continuation is not a new run");
+  const [run] = runs;
+  assert.deepEqual(run.items.map((i) => [i.kind, i.status]), [
+    ["model", "completed"],
+    ["note", "completed"],
+    ["approval", "completed"],
+    ["write", "completed"],
+    ["model", "running"],
+  ]);
+  assert.equal(run.status, "running");
+  assert.equal(run.text, "Here is the plan.\n\nSaved");
+  assert.equal(run.messageId, "m-3", "Stop names the reply being written");
+  assert.equal(run.id, REPLY, "the run keeps its identity");
+  assert.equal(run.request, "Check example.com");
+  assert.deepEqual(run.proposedRunIds, ["r-1"]);
+  assert.equal(run.promptTokens, 10);
+  assert.equal(nextLine(run).startsWith("The model is answering"), true);
+
+  const waiting = buildRuns(
+    { ...view, messages: [message("User", "m-1", []), first] },
+    new Map([["r-1", noteRun("AwaitingApproval")]]),
+    "Nexus",
+  )[0];
+  assert.match(nextLine(waiting), /after your decision, Nexus continues the task/);
+});
+
+test("a call that can change things waits for approval, then is made once", () => {
+  const proposal = step(
+    {
+      kind: "McpCall",
+      server: "Docs",
+      tool: "delete_page",
+      arguments: '{"q":"page 7"}',
+      result_chars: null,
+      truncated: null,
+      is_error: null,
+      duration_ms: null,
+      error: null,
+      run_id: "r-1",
+    },
+    "Done",
+    T0 + 900,
+    T0 + 910,
+  );
+  const reply = message("Model", REPLY, [model("Done", T0, T0 + 900), proposal], { status: "Complete", proposed_run_id: "r-1" });
+  const call = {
+    server: "Docs",
+    url: "https://docs.example/mcp",
+    tool: "delete_page",
+    arguments_json: JSON.stringify({ q: "page 7" }, null, 2),
+    result_chars: null,
+    truncated: null,
+    duration_ms: null,
+  };
+  const waiting = noteRun("AwaitingApproval", { kind: "McpCall", call, title: "delete_page on Docs" });
+  const [run] = buildRuns(conversation(reply), new Map([["r-1", waiting]]), "Nexus");
+  assert.deepEqual(run.items.map((i) => [i.kind, i.status]), [
+    ["model", "completed"],
+    ["mcp", "completed"],
+    ["approval", "approval_required"],
+    ["mcp", "queued"],
+  ]);
+  assert.equal(run.items[1].title, "Propose calling delete_page · Docs");
+  assert.ok(run.items[2].facts.some(([k, v]) => k === "Action" && v === "Call delete_page on Docs"));
+  const core = deriveCore({ run, pendingApprovals: 1, composing: false, now: T0 + 1000 });
+  assert.equal(core.state, "WAITING_APPROVAL");
+  const node = core.nodes.find((n) => n.id === "mcp");
+  assert.equal(node?.proposed, true, "nothing was sent yet");
+  assert.equal(node?.label, "Docs");
+
+  const made = noteRun("Succeeded", { kind: "McpCall", call: { ...call, result_chars: 15, truncated: false, duration_ms: 40 } });
+  const [done] = buildRuns(conversation(reply), new Map([["r-1", made]]), "Nexus");
+  assert.deepEqual(done.items.slice(2).map((i) => [i.kind, i.status, i.outcome]), [
+    ["approval", "completed", "Approved"],
+    ["mcp", "completed", "Made once; 15 characters back"],
+  ]);
+  const after = deriveCore({ run: done, pendingApprovals: 0, composing: false, now: T0 + 5000 });
+  assert.equal(after.nodes.find((n) => n.id === "mcp")?.proposed, false, "made after approval");
+
+  const review = noteRun("NeedsReview", { kind: "McpCall", call, failure: { code: "OutcomeUnknown", message: "x" } });
+  const [uncertain] = buildRuns(conversation(reply), new Map([["r-1", review]]), "Nexus");
+  assert.match(uncertain.items[3].outcome ?? "", /may have reached the server/);
+
+  const activity = buildActivity({
+    steps: [],
+    events: [{ seq: 4, kind: "RunCreated", entity_id: "r-1", created_at_ms: T0 }],
+    runs: [made],
+    conversations: [],
+    agent: "Nexus",
+  });
+  assert.deepEqual(activity.map((e) => [e.tool, e.title]), [["MCP", "MCP call requested"]]);
 });

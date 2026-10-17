@@ -51,8 +51,23 @@ export function time(ms: number): string {
   return new Date(ms).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
 }
 
-export function StatusBadge({ status }: { status: RunStatus }) {
-  return <span className={`badge badge-${statusTone(status)}`}>{STATUS_LABEL[status]}</span>;
+/** How a call to an MCP tool ended, where it differs from a note. */
+const CALL_STATUS_LABEL: Partial<Record<RunStatus, string>> = {
+  Running: "Calling",
+  Succeeded: "Called",
+};
+
+const CALL_FAILURE_TEXT: Record<string, string> = {
+  Denied: "You rejected the call; nothing was sent.",
+  EffectFailed: "The call failed; the server did nothing.",
+  ToolReportedError: "The tool reported an error; check on the server whether anything changed.",
+  OutcomeUnknown: "Uncertain: the call may have reached the server. Check there; Nexus does not send it again.",
+  ApprovalInvalidated: "The server or the tool changed after you approved, so the call was not sent.",
+};
+
+export function StatusBadge({ status, call = false }: { status: RunStatus; call?: boolean }) {
+  const label = (call ? CALL_STATUS_LABEL[status] : undefined) ?? STATUS_LABEL[status];
+  return <span className={`badge badge-${statusTone(status)}`}>{label}</span>;
 }
 
 export function NotesPanel({ initialRunId }: { initialRunId?: RunId | null }) {
@@ -66,7 +81,8 @@ export function NotesPanel({ initialRunId }: { initialRunId?: RunId | null }) {
     inFlight.current = true;
     try {
       const snapshot = await api.listRuns();
-      setRuns(snapshot.runs);
+      // Calls to MCP tools are runs too; this panel lists notes.
+      setRuns(snapshot.runs.filter((r) => r.kind === "Note"));
       setListError(null);
     } catch (err) {
       setListError(describeError(err));
@@ -223,7 +239,8 @@ export function RunDetail({ summary, onChanged }: { summary: RunView; onChanged:
   }, [summary.run_id, summary.revision]);
 
   const view = detail ?? summary;
-  const pending = view.pending_approval;
+  const call = view.kind === "McpCall" ? view.call : null;
+  const pending = call ? null : view.pending_approval;
   const preview = pending?.preview ?? null;
 
   async function act(action: () => Promise<unknown>) {
@@ -243,13 +260,38 @@ export function RunDetail({ summary, onChanged }: { summary: RunView; onChanged:
     <section className="card" aria-labelledby={headingId}>
       <h2 id={headingId}>{view.title}</h2>
       <div role="status" aria-live="polite">
-        <StatusBadge status={view.status} />
+        <StatusBadge status={view.status} call={call !== null} />
       </div>
 
       {view.failure && (
         <p className={view.status === "Cancelled" ? "muted" : "error"}>
-          {FAILURE_TEXT[view.failure.code] ?? view.failure.code} ({view.failure.message})
+          {(call ? CALL_FAILURE_TEXT[view.failure.code] : undefined) ?? FAILURE_TEXT[view.failure.code] ?? view.failure.code} (
+          {view.failure.message})
         </p>
+      )}
+
+      {call && (
+        <dl className="facts">
+          <dt>Server</dt>
+          <dd className="path">{call.url}</dd>
+          <dt>Tool</dt>
+          <dd className="mono">{call.tool}</dd>
+          <dt>Arguments</dt>
+          <dd>
+            <pre className="content" aria-label="Arguments of the call">
+              {call.arguments_json}
+            </pre>
+          </dd>
+          {call.result_chars !== null && (
+            <>
+              <dt>Answer</dt>
+              <dd>
+                {call.result_chars.toLocaleString("en-US")} characters{call.truncated ? " (shortened for the model)" : ""}
+                {call.duration_ms !== null ? ` · ${call.duration_ms} ms` : ""} · given to the model, not kept
+              </dd>
+            </>
+          )}
+        </dl>
       )}
 
       {pending && (
@@ -339,7 +381,8 @@ export function RunDetail({ summary, onChanged }: { summary: RunView; onChanged:
       )}
       {view.status === "Succeeded" && !view.failure && (
         <p className="muted result-footer">
-          <CheckCircleIcon size={14} /> Verified against its SHA-256 hash.
+          <CheckCircleIcon size={14} />{" "}
+          {call ? "Made once, after your approval." : "Verified against its SHA-256 hash."}
         </p>
       )}
     </section>

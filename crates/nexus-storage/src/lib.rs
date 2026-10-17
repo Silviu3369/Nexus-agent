@@ -10,8 +10,8 @@ mod schema;
 mod steps;
 
 pub use chat::{
-    ConnectionRow, ConversationRow, DEFAULT_PERSONA_NAME, Deleted, Exchange, MessageRow,
-    NewExchange, PersonaRow, Settlement,
+    ConnectionRow, Continuation, ConversationRow, DEFAULT_PERSONA_NAME, Deleted, Exchange,
+    MessageRow, NewExchange, Pause, PersonaRow, Settlement,
 };
 pub use mcp::{McpServerRow, McpToolRow, NewMcpTool};
 pub use memory::{MemoryFilter, MemoryRow, NewMemory, ProjectRow};

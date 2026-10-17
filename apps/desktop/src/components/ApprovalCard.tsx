@@ -70,6 +70,10 @@ export function ApprovalCard({ run, agentName, compact = false }: { run: RunView
 
   const pending = detail?.pending_approval ?? null;
   const preview = pending?.preview ?? null;
+  // A call to an MCP tool that can change things, shown as the Host will make it.
+  const call = run.kind === "McpCall" ? (detail?.call ?? run.call) : null;
+  const callPreview = pending?.call ?? null;
+  const ready = call ? callPreview !== null : preview !== null;
   const left = (pending?.expires_at_ms ?? run.pending_approval?.expires_at_ms ?? now) - now;
 
   async function decide(approve: boolean) {
@@ -99,7 +103,7 @@ export function ApprovalCard({ run, agentName, compact = false }: { run: RunView
       <dl className="kv approval-facts">
         <div className="kv-row">
           <dt>Action</dt>
-          <dd>{`Create note “${run.title}”`}</dd>
+          <dd>{call ? `Call ${call.tool} on ${call.server}` : `Create note “${run.title}”`}</dd>
         </div>
         <div className="kv-row">
           <dt>Requested by</dt>
@@ -108,20 +112,51 @@ export function ApprovalCard({ run, agentName, compact = false }: { run: RunView
         <div className="kv-row">
           <dt>Reason</dt>
           <dd className="clamp-2">
-            {origin ? (request ? `Proposed while answering: “${request}”` : "Proposed by the agent while answering this task") : "You asked for this note"}
+            {origin
+              ? request
+                ? `Proposed while answering: “${request}”`
+                : "Proposed by the agent while answering this task"
+              : "You asked for this note"}
           </dd>
         </div>
         <div className="kv-row">
           <dt>Affected</dt>
-          <dd>{preview ? `1 new file · ${kib(preview.size_bytes)} · nothing overwritten` : "Loading the exact preview…"}</dd>
+          <dd>
+            {call
+              ? callPreview
+                ? `Whatever this tool does on ${call.server}${callPreview.destructive_hint ? " · the server marks it destructive" : ""} · sent once, only if you approve`
+                : "Loading the exact call…"
+              : preview
+                ? `1 new file · ${kib(preview.size_bytes)} · nothing overwritten`
+                : "Loading the exact preview…"}
+          </dd>
         </div>
-        {preview && !compact && (
+        {!compact && (call ? (
           <div className="kv-row">
-            <dt>Destination</dt>
-            <dd className="mono path">{preview.destination}</dd>
+            <dt>Server</dt>
+            <dd className="mono path">{call.url}</dd>
           </div>
-        )}
+        ) : (
+          preview && (
+            <div className="kv-row">
+              <dt>Destination</dt>
+              <dd className="mono path">{preview.destination}</dd>
+            </div>
+          )
+        ))}
       </dl>
+      {inspect && call && callPreview && (
+        <div className="approval-inspect">
+          <p className="muted">
+            The server says: <span className="approval-claim">{callPreview.description || "no description"}</span>
+          </p>
+          {compact && <p className="mono path">{call.url}</p>}
+          <pre className="content" aria-label="Exact arguments of the call">
+            {call.arguments_json}
+          </pre>
+          <p className="mono hash">Tool definition SHA-256 {callPreview.definition_sha256}</p>
+        </div>
+      )}
       {inspect && preview && (
         <div className="approval-inspect">
           <p className="mono hash">SHA-256 {preview.sha256}</p>
@@ -132,14 +167,14 @@ export function ApprovalCard({ run, agentName, compact = false }: { run: RunView
         </div>
       )}
       <div className="approval-actions">
-        <button type="button" className="ghost" aria-expanded={inspect} disabled={!preview} onClick={() => setInspect(!inspect)}>
+        <button type="button" className="ghost" aria-expanded={inspect} disabled={!ready} onClick={() => setInspect(!inspect)}>
           <EyeIcon size={14} /> {inspect ? "Hide" : "Inspect"}
         </button>
         <span className="spacer" />
         <button type="button" className="secondary" disabled={busy || !pending} onClick={() => decide(false)}>
           <XIcon size={14} /> Reject
         </button>
-        <button type="button" className="approve" disabled={busy || !preview || left <= 0} onClick={() => decide(true)}>
+        <button type="button" className="approve" disabled={busy || !ready || left <= 0} onClick={() => decide(true)}>
           <CheckIcon size={14} /> Approve
         </button>
       </div>

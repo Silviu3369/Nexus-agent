@@ -58,7 +58,7 @@ pub struct ModelInfo {
     pub output_token_limit: Option<u32>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Role {
     User,
     Model,
@@ -70,7 +70,9 @@ pub enum Role {
 /// [`Part::FunctionResponse`] turn carrying what the host ran. `id` is the
 /// provider's call id (OpenAI, Anthropic and newer Gemini models pair the
 /// result with the call through it); `None` where the provider gave none.
-#[derive(Debug, Clone, PartialEq)]
+/// Serialisable so the host can keep a turn that waits for the user's
+/// decision and continue it later (never sent anywhere in that form).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Part {
     Text(String),
     FunctionCall {
@@ -88,15 +90,16 @@ pub enum Part {
     },
     /// A block a provider requires back verbatim later in the same turn
     /// (Anthropic's and DeepSeek's signed thinking before a tool call).
-    /// Only the provider that produced it receives it; it is never shown,
-    /// stored or sent anywhere else.
+    /// Only the provider that produced it receives it; it is never shown or
+    /// sent anywhere else, and stored only while its turn waits for the
+    /// user's decision.
     Replay {
         provider: ProviderKind,
         block: serde_json::Value,
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Message {
     pub role: Role,
     pub parts: Vec<Part>,

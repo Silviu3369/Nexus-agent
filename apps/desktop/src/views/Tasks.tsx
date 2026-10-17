@@ -279,7 +279,10 @@ function RunBlock({
   const [confirm, setConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const note = run.proposedRunId ? runsById.get(run.proposedRunId) : undefined;
+  const notes = run.proposedRunIds.flatMap((id) => {
+    const note = runsById.get(id);
+    return note ? [note] : [];
+  });
   const elapsed = (run.finishedAt ?? now) - run.startedAt;
 
   async function remove() {
@@ -361,12 +364,13 @@ function RunBlock({
         </div>
       )}
       {run.failure && <p className={run.status === "cancelled" ? "muted" : "error"}>{replyFailure(run.failure)}</p>}
-      {note &&
-        (note.status === "AwaitingApproval" ? (
-          <ApprovalCard run={note} agentName={agentName} />
+      {notes.map((note) =>
+        note.status === "AwaitingApproval" ? (
+          <ApprovalCard key={note.run_id} run={note} agentName={agentName} />
         ) : (
-          <RunDetail summary={note} onChanged={() => void refresh(["runs"])} />
-        ))}
+          <RunDetail key={note.run_id} summary={note} onChanged={() => void refresh(["runs"])} />
+        ),
+      )}
       <ErrorLine error={error} />
     </article>
   );

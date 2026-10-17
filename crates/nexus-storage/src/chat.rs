@@ -2,7 +2,7 @@
 //! persona and conversations. One transaction per operation, with events,
 //! like the M1 repository.
 
-use nexus_core::{MessageRole, MessageStatus, ThinkingLevel};
+use nexus_core::{MessageRole, MessageStatus, RunState, ThinkingLevel};
 use nexus_protocol::{ConnectionId, ConversationId, MessageId, ProjectId, RunId};
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::json;
@@ -94,6 +94,31 @@ pub struct Settlement {
     pub prompt_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
     pub proposed_run_id: Option<RunId>,
+    /// The reply stopped on a proposal waiting for the user: what the model
+    /// needs to continue once the user decides (kept only until then).
+    pub pause: Option<Pause>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Pause {
+    pub run_id: RunId,
+    /// Opaque to the store; the host's own versioned format.
+    pub state_json: String,
+}
+
+/// A task continuing after the user decided on what its reply proposed: a
+/// new model message in the same conversation, after the reply that paused.
+#[derive(Debug, Clone)]
+pub struct Continuation {
+    pub conversation_id: ConversationId,
+    /// The user's request the task is answering.
+    pub request: MessageRow,
+    /// The reply that stopped on the proposal.
+    pub paused_reply: MessageRow,
+    /// The new Streaming message the continuation is written into.
+    pub model_message: MessageRow,
+    pub run_id: RunId,
+    pub state_json: String,
 }
 
 pub const DEFAULT_PERSONA_NAME: &str = "Nexus";
@@ -474,6 +499,9 @@ impl Store {
                         .optional()?;
                     found.ok_or(StorageError::NotFound("conversation"))?;
                     tx.execute("UPDATE conversations SET updated_at_ms = ?1 WHERE id = ?2", params![now, id.to_string()])?;
+                    // The user moved on: a reply still waiting on a decision
+                    // in this task no longer continues after it.
+                    tx.execute("DELETE FROM paused_turns WHERE conversation_id = ?1", [id.to_string()])?;
                     id
                 }
                 None => {
@@ -555,7 +583,7 @@ impl Store {
                     to: status.as_str(),
                 }));
             }
-            tx.execute(
+            let settled = tx.execute(
                 "UPDATE messages SET text = ?1, status = ?2, error_code = ?3, error_message = ?4, prompt_tokens = ?5,
                  output_tokens = ?6, proposed_run_id = ?7, updated_at_ms = ?8 WHERE id = ?9 AND status = 'Streaming'",
                 params![
@@ -570,6 +598,22 @@ impl Store {
                     id.to_string()
                 ],
             )?;
+            if settled == 1
+                && status == MessageStatus::Complete
+                && let Some(pause) = &settlement.pause
+            {
+                tx.execute(
+                    "INSERT INTO paused_turns (message_id, conversation_id, run_id, state_json, created_at_ms)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        id.to_string(),
+                        current.conversation_id.to_string(),
+                        pause.run_id.to_string(),
+                        pause.state_json,
+                        now
+                    ],
+                )?;
+            }
             insert_event(
                 &tx,
                 "MessageSettled",
@@ -581,6 +625,129 @@ impl Store {
             let row = load_message(&tx, id)?;
             tx.commit()?;
             Ok(row)
+        })
+        .await
+    }
+
+    /// Replies waiting on a decision the user has now made (or that ended
+    /// without one: expired, failed, cancelled, or left for review).
+    pub async fn paused_ready(&self) -> Result<Vec<MessageId>, StorageError> {
+        self.call(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT p.message_id FROM paused_turns p JOIN runs r ON r.id = p.run_id
+                 WHERE r.state IN ('Succeeded', 'Failed', 'Cancelled', 'Denied', 'NeedsReview')
+                 ORDER BY p.created_at_ms, p.message_id",
+            )?;
+            let ids: Vec<String> = stmt
+                .query_map([], |r| r.get(0))?
+                .collect::<Result<_, _>>()?;
+            ids.iter()
+                .map(|id| Ok(MessageId(parse_uuid(id)?)))
+                .collect()
+        })
+        .await
+    }
+
+    /// Starts the continuation of a reply that waited on the user: once,
+    /// in one transaction (the waiting state is consumed with the new
+    /// message, so a crash or a second caller cannot continue it twice).
+    /// `None` when there is nothing to continue now: the decision is still
+    /// pending, another reply is being written (tried again later), or the
+    /// user has sent a new request since (then it is dropped).
+    pub async fn begin_continuation(
+        &self,
+        reply: MessageId,
+        now: i64,
+    ) -> Result<Option<Continuation>, StorageError> {
+        self.call(move |conn| {
+            let tx = conn.transaction()?;
+            let paused: Option<(String, String, String)> = tx
+                .query_row(
+                    "SELECT p.run_id, p.state_json, r.state FROM paused_turns p JOIN runs r ON r.id = p.run_id
+                     WHERE p.message_id = ?1",
+                    [reply.to_string()],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .optional()?;
+            let Some((run_id, state_json, run_state)) = paused else {
+                return Ok(None);
+            };
+            let run_state: RunState = parse_state(&run_state)?;
+            if !(run_state.is_terminal() || run_state == RunState::NeedsReview) {
+                return Ok(None);
+            }
+            let paused_reply = load_message(&tx, reply)?;
+            let conversation = paused_reply.conversation_id;
+            let later_request: i64 = tx.query_row(
+                "SELECT count(*) FROM messages WHERE conversation_id = ?1 AND seq > ?2 AND role = 'User'",
+                params![conversation.to_string(), paused_reply.seq],
+                |r| r.get(0),
+            )?;
+            let request_id: Option<String> = tx
+                .query_row(
+                    "SELECT id FROM messages WHERE conversation_id = ?1 AND seq < ?2 AND role = 'User'
+                     ORDER BY seq DESC LIMIT 1",
+                    params![conversation.to_string(), paused_reply.seq],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let Some(request_id) = request_id.filter(|_| later_request == 0) else {
+                tx.execute("DELETE FROM paused_turns WHERE message_id = ?1", [reply.to_string()])?;
+                tx.commit()?;
+                return Ok(None);
+            };
+            let writing: i64 = tx.query_row(
+                "SELECT count(*) FROM messages WHERE conversation_id = ?1 AND status = 'Streaming'",
+                [conversation.to_string()],
+                |r| r.get(0),
+            )?;
+            if writing > 0 {
+                return Ok(None);
+            }
+            let seq: i64 = tx.query_row(
+                "SELECT coalesce(max(seq), 0) + 1 FROM messages WHERE conversation_id = ?1",
+                [conversation.to_string()],
+                |r| r.get(0),
+            )?;
+            let id = MessageId::new();
+            tx.execute(
+                "INSERT INTO messages (id, conversation_id, seq, role, text, status, idempotency_key, connection_id, model,
+                 persona_version, created_at_ms, updated_at_ms)
+                 VALUES (?1, ?2, ?3, 'Model', '', 'Streaming', ?4, ?5, ?6, ?7, ?8, ?8)",
+                params![
+                    id.to_string(),
+                    conversation.to_string(),
+                    seq,
+                    format!("continue:{reply}"),
+                    paused_reply.connection_id.map(|c| c.to_string()),
+                    paused_reply.model,
+                    paused_reply.persona_version,
+                    now
+                ],
+            )?;
+            tx.execute("DELETE FROM paused_turns WHERE message_id = ?1", [reply.to_string()])?;
+            tx.execute(
+                "UPDATE conversations SET updated_at_ms = ?1 WHERE id = ?2",
+                params![now, conversation.to_string()],
+            )?;
+            insert_event(
+                &tx,
+                "MessageContinued",
+                &conversation.to_string(),
+                seq,
+                json!({"after": reply.to_string(), "model_message": id.to_string(), "run": run_id}),
+                now,
+            )?;
+            let continuation = Continuation {
+                conversation_id: conversation,
+                request: load_message(&tx, MessageId(parse_uuid(&request_id)?))?,
+                paused_reply,
+                model_message: load_message(&tx, id)?,
+                run_id: RunId(parse_uuid(&run_id)?),
+                state_json,
+            };
+            tx.commit()?;
+            Ok(Some(continuation))
         })
         .await
     }
@@ -715,17 +882,37 @@ impl Store {
             let tx = conn.transaction()?;
             let picked = load_message(&tx, message)?;
             let conversation = picked.conversation_id;
-            let partner_seq = match picked.role {
-                MessageRole::User => picked.seq + 1,
-                MessageRole::Model => picked.seq - 1,
+            // The request and every reply to it: the reply, and the
+            // continuations after the user's decisions (up to the next request).
+            let start: i64 = match picked.role {
+                MessageRole::User => picked.seq,
+                MessageRole::Model => tx
+                    .query_row(
+                        "SELECT max(seq) FROM messages WHERE conversation_id = ?1 AND seq < ?2 AND role = 'User'",
+                        params![conversation.to_string(), picked.seq],
+                        |r| r.get::<_, Option<i64>>(0),
+                    )?
+                    .unwrap_or(picked.seq),
             };
-            let partner = load_message_at(&tx, conversation, partner_seq)?;
-            let mut pair = vec![picked];
-            // Every request is recorded with its reply; anything else is
-            // deleted alone rather than taking an unrelated message with it.
-            if let Some(partner) = partner.filter(|p| p.role != pair[0].role) {
-                pair.push(partner);
-            }
+            let end: Option<i64> = tx.query_row(
+                "SELECT min(seq) FROM messages WHERE conversation_id = ?1 AND seq > ?2 AND role = 'User'",
+                params![conversation.to_string(), start],
+                |r| r.get(0),
+            )?;
+            let pair: Vec<MessageRow> = {
+                let mut stmt = tx.prepare(
+                    "SELECT id FROM messages WHERE conversation_id = ?1 AND seq >= ?2 AND seq < ?3 ORDER BY seq",
+                )?;
+                let ids: Vec<String> = stmt
+                    .query_map(
+                        params![conversation.to_string(), start, end.unwrap_or(i64::MAX)],
+                        |r| r.get(0),
+                    )?
+                    .collect::<Result<_, _>>()?;
+                ids.iter()
+                    .map(|id| load_message(&tx, MessageId(parse_uuid(id)?)))
+                    .collect::<Result<_, _>>()?
+            };
             if pair.iter().any(|m| m.status == MessageStatus::Streaming) {
                 return Err(StorageError::ReplyInProgress);
             }

@@ -46,10 +46,11 @@ async fn connection(env: &Env) -> ConnectionId {
         .id
 }
 
-/// Puts a file back as it was before schema v6 (no MCP tables from v7, no
-/// memory, no project on conversations, no project description), keeping
-/// every row.
+/// Puts a file back as it was before schema v6 (no paused turns from v8, no
+/// MCP tables from v7, no memory, no project on conversations, no project
+/// description), keeping every row.
 const UNDO_V6: &str = "PRAGMA foreign_keys = OFF;
+    DROP TABLE paused_turns; ALTER TABLE runs DROP COLUMN outcome_json;
     DROP TABLE mcp_tools; DROP TABLE mcp_servers;
     DROP TRIGGER memory_items_ai; DROP TRIGGER memory_items_ad; DROP TRIGGER memory_items_au;
     DROP TABLE memory_fts; DROP TABLE memory_items;
