@@ -79,6 +79,9 @@ mod tests {
             ts::export::<nexus_protocol::McpServerId>(&conf),
             ts::export::<nexus_protocol::McpToolView>(&conf),
             ts::export::<nexus_protocol::McpServerView>(&conf),
+            ts::export::<nexus_protocol::ModelPrice>(&conf),
+            ts::export::<nexus_protocol::ModelUsageView>(&conf),
+            ts::export::<nexus_protocol::UsageView>(&conf),
         ];
         let mut out = String::from(HEADER);
         for exported in types {

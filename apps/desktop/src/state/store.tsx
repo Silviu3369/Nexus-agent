@@ -21,6 +21,7 @@ import type {
   ProjectView,
   RunView,
   SystemStatusView,
+  UsageView,
 } from "@nexus/contracts";
 import { api, describeError, errorCode } from "../api";
 import { buildRuns, followedTask, invalidatedBy } from "../model/execution.ts";
@@ -51,6 +52,8 @@ export interface NexusData {
   memoryRev: number;
   /** Remote MCP servers the user added, with their tools. */
   mcp: McpServerView[] | null;
+  /** Today's tokens, the daily budget and cost estimates. */
+  usage: UsageView | null;
   events: EventView[];
   /** The task the live panel follows. */
   focusId: ConversationId | null;
@@ -72,6 +75,7 @@ const EMPTY: NexusData = {
   proposals: null,
   memoryRev: 0,
   mcp: null,
+  usage: null,
   events: [],
   focusId: null,
   focus: null,
@@ -134,7 +138,7 @@ export function NexusProvider({ children }: { children: ReactNode }) {
 
   const fetchCollections = useCallback(
     async (what: Set<Collection>) => {
-      const [runs, steps, conversations, connections, persona, projects, proposals, mcp] = await Promise.all([
+      const [runs, steps, conversations, connections, persona, projects, proposals, mcp, usage] = await Promise.all([
         what.has("runs") ? api.listRuns().then((s) => s.runs) : Promise.resolve(undefined),
         what.has("steps") ? api.getActivity() : Promise.resolve(undefined),
         what.has("conversations") ? api.listConversations() : Promise.resolve(undefined),
@@ -143,6 +147,7 @@ export function NexusProvider({ children }: { children: ReactNode }) {
         what.has("projects") ? api.listProjects() : Promise.resolve(undefined),
         what.has("memory") ? listProposals() : Promise.resolve(undefined),
         what.has("mcp") ? api.listMcpServers() : Promise.resolve(undefined),
+        what.has("usage") ? api.getUsage() : Promise.resolve(undefined),
       ]);
       const current = latest.current;
       const nextSteps = steps ?? current.steps ?? [];
@@ -159,6 +164,7 @@ export function NexusProvider({ children }: { children: ReactNode }) {
         proposals: proposals ?? d.proposals,
         memoryRev: proposals ? d.memoryRev + 1 : d.memoryRev,
         mcp: mcp ?? d.mcp,
+        usage: usage ?? d.usage,
         focusId,
         focus: focusId === d.focusId ? d.focus : null,
         syncError: null,
@@ -169,7 +175,7 @@ export function NexusProvider({ children }: { children: ReactNode }) {
   );
 
   const bootstrap = useCallback(async () => {
-    const [snapshot, steps, conversations, connections, persona, projects, proposals, mcp] = await Promise.all([
+    const [snapshot, steps, conversations, connections, persona, projects, proposals, mcp, usage] = await Promise.all([
       api.listRuns(),
       api.getActivity(),
       api.listConversations(),
@@ -178,6 +184,7 @@ export function NexusProvider({ children }: { children: ReactNode }) {
       api.listProjects(),
       listProposals(),
       api.listMcpServers(),
+      api.getUsage(),
     ]);
     // Everything after the snapshot's watermark arrives through the events.
     const history = await api.getEvents(Math.max(0, snapshot.watermark - 200));
@@ -194,6 +201,7 @@ export function NexusProvider({ children }: { children: ReactNode }) {
       proposals,
       memoryRev: d.memoryRev + 1,
       mcp,
+      usage,
       events: history.events.filter((e) => e.seq <= snapshot.watermark),
       focusId,
       focus: focusId === d.focusId ? d.focus : null,
@@ -298,7 +306,7 @@ export function NexusProvider({ children }: { children: ReactNode }) {
       refresh: async (what) => {
         try {
           await fetchCollections(
-            new Set(what ?? ["runs", "steps", "conversations", "connections", "projects", "memory", "mcp", "focus"]),
+            new Set(what ?? ["runs", "steps", "conversations", "connections", "projects", "memory", "mcp", "usage", "focus"]),
           );
         } catch (err) {
           patch({ syncError: describeError(err) });

@@ -474,6 +474,32 @@ impl NexusClient {
             .await??)
     }
 
+    pub async fn usage(&self) -> Result<nexus_protocol::UsageView, CallError> {
+        Ok(self.client.get_usage(context::current()).await??)
+    }
+
+    pub async fn set_daily_token_budget(
+        &self,
+        tokens: Option<u64>,
+    ) -> Result<nexus_protocol::UsageView, CallError> {
+        Ok(self
+            .client
+            .set_daily_token_budget(context::current(), tokens)
+            .await??)
+    }
+
+    pub async fn set_model_price(
+        &self,
+        provider: String,
+        model: String,
+        price: Option<nexus_protocol::ModelPrice>,
+    ) -> Result<nexus_protocol::UsageView, CallError> {
+        Ok(self
+            .client
+            .set_model_price(context::current(), provider, model, price)
+            .await??)
+    }
+
     pub async fn system_status(&self) -> Result<nexus_protocol::SystemStatusView, CallError> {
         Ok(self.client.get_system_status(context::current()).await??)
     }

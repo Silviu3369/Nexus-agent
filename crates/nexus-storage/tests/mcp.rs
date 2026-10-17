@@ -103,7 +103,7 @@ async fn migrating_to_v7_keeps_the_steps_and_accepts_mcp_calls() {
             .call(|c| {
                 c.execute_batch(
                     "PRAGMA foreign_keys = OFF;
-                     DROP TABLE paused_turns; ALTER TABLE runs DROP COLUMN outcome_json;
+                     DROP TABLE model_usage; DROP TABLE model_prices; DROP TABLE paused_turns; ALTER TABLE runs DROP COLUMN outcome_json;
                      DROP TABLE mcp_tools; DROP TABLE mcp_servers;
                      CREATE TABLE agent_steps_v6 (
                         id TEXT PRIMARY KEY, message_id TEXT NOT NULL REFERENCES messages (id),

@@ -224,6 +224,12 @@ function stepItem(step: AgentStepView, agent: string, pendingMemory: ReadonlySet
           ["Model", d.model],
           ["Approved memory sent", d.memory_items ? `${d.memory_items} ${d.memory_items === 1 ? "fact" : "facts"}` : null],
           [
+            "Tokens",
+            d.prompt_tokens !== null || d.output_tokens !== null
+              ? `${(d.prompt_tokens ?? 0).toLocaleString("en-US")} sent · ${(d.output_tokens ?? 0).toLocaleString("en-US")} received`
+              : null,
+          ],
+          [
             "MCP tools available",
             d.mcp_servers?.length
               ? `${d.mcp_servers.join(", ")} (${d.mcp_tools ?? 0} ${d.mcp_tools === 1 ? "tool" : "tools"})`
@@ -976,6 +982,8 @@ const EVENT_TEXT: Record<string, { title: string; tool: ActivityTool; status?: E
   MemoryEdited: { title: "Fact corrected", tool: "Memory" },
   MemoryDecided: { title: "Proposed fact decided", tool: "Memory" },
   MemoryDeleted: { title: "Fact deleted", tool: "Memory" },
+  DailyTokenBudgetSet: { title: "Daily token budget changed", tool: "System" },
+  ModelPriceSet: { title: "Model price changed", tool: "System" },
   McpServerAdded: { title: "MCP server added", tool: "MCP" },
   McpServerUpdated: { title: "MCP server changed", tool: "MCP" },
   McpServerRemoved: { title: "MCP server removed with its tools and key", tool: "MCP" },
@@ -1086,6 +1094,7 @@ export type Collection =
   | "projects"
   | "memory"
   | "mcp"
+  | "usage"
   | "focus";
 
 /** What each durable event invalidates. Events are notifications only;
@@ -1100,6 +1109,8 @@ export function invalidatedBy(events: EventView[]): Set<Collection> {
     } else if (k.startsWith("AgentStep")) {
       out.add("steps");
       out.add("focus");
+      // A finished model call adds to today's tokens.
+      out.add("usage");
     } else if (k.startsWith("Message")) {
       out.add("conversations");
       out.add("steps");
@@ -1123,10 +1134,14 @@ export function invalidatedBy(events: EventView[]): Set<Collection> {
       out.add("projects");
     } else if (k.startsWith("Connection") || k === "ActiveConnectionChanged") {
       out.add("connections");
+      // The chosen models are listed with their usage.
+      out.add("usage");
     } else if (k === "PersonaSaved") {
       out.add("persona");
     } else if (k.startsWith("Mcp")) {
       out.add("mcp");
+    } else if (k === "DailyTokenBudgetSet" || k === "ModelPriceSet") {
+      out.add("usage");
     }
   }
   return out;

@@ -481,6 +481,25 @@ try {
   Check (-not (Profile-Bytes).Contains("Check the private page")) "its text is gone from the profile's database files"
   Check ((Profile-Bytes).Contains("Answer briefly")) "other tasks are untouched on disk"
 
+  # --- usage today: tokens, a price you enter, the daily budget ---
+  Click-Button $win "Models"
+  Check (Wait-Text $win "Usage today") "Models shows today's usage"
+  Check ($null -ne (Wait-Match $win "^[1-9][\d,]* · no daily limit$")) "today's tokens are counted, with no limit set"
+  Set-Field $win "Input price of gemini-fake-flash" "1"
+  Set-Field $win "Output price of gemini-fake-flash" "4"
+  Click-Button $win "Save price of gemini-fake-flash"
+  Check ($null -ne (Wait-Contains $win "free tier, not charged")) "with a price entered, a free-tier model is estimated at no charge"
+  Set-Field $win "Daily token budget" "1"
+  Click-Button $win "Set budget"
+  Check ($null -ne (Wait-Match $win "^[1-9][\d,]* of 1 \(100%\)$")) "the budget is shown as used up"
+  Click-Button $win "Overview"
+  Set-Field $win "Give Nexus a task" "One more question"
+  Click-Button $win "Run" 20
+  Check ($null -ne (Wait-Contains $win "daily token budget is used up" 20)) "a request past the daily budget is refused, nothing sent"
+  Click-Button $win "Models"
+  Click-Button $win "Remove limit" 20
+  Check ($null -ne (Wait-Match $win "^[1-9][\d,]* · no daily limit$")) "the limit can be removed"
+
   # --- removing the connection removes its key ---
   Click-Button $win "Models"
   Check (Wait-Text $win "No backup model.") "there is no backup model unless one is chosen"

@@ -30,6 +30,7 @@ mod chat;
 mod mcp;
 mod memory;
 mod remote_call;
+mod usage;
 
 pub const DEFAULT_APPROVAL_TTL: Duration = Duration::from_secs(10 * 60);
 const IDLE_TICK: Duration = Duration::from_secs(1);

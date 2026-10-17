@@ -16,7 +16,7 @@ export type ArtifactId = string
  * Stable error codes from `CONTRACTE_NEXUS_RO.md` §9. The code is what
  * callers branch on; `message` is user-facing text, never a stack trace.
  */
-export type ErrorCode = "InvalidRequest" | "UnsupportedVersion" | "Unauthenticated" | "Forbidden" | "ApprovalRequired" | "ApprovalExpired" | "ApprovalInvalidated" | "RevisionConflict" | "ResourceChanged" | "NotFound" | "Busy" | "QuotaExceeded" | "DeadlineExceeded" | "ProviderUnavailable" | "Cancelled" | "OutcomeUnknown" | "InternalFailure"
+export type ErrorCode = "InvalidRequest" | "UnsupportedVersion" | "Unauthenticated" | "Forbidden" | "ApprovalRequired" | "ApprovalExpired" | "ApprovalInvalidated" | "RevisionConflict" | "ResourceChanged" | "NotFound" | "Busy" | "QuotaExceeded" | "BudgetExceeded" | "DeadlineExceeded" | "ProviderUnavailable" | "Cancelled" | "OutcomeUnknown" | "InternalFailure"
 
 /**
  * Wire-level error envelope. `retryable` is a declared characteristic, not
@@ -132,7 +132,7 @@ export type AgentStepStatus = "Running" | "Done" | "Failed"
  * One step's kind-specific facts. Metadata only: a web read shows its
  * address, status and size, never the page's text.
  */
-export type AgentStepDetail = { kind: "ModelCall"; model: string; first_byte_ms: number | null; duration_ms: number | null; error: string | null; attempt: number | null; backup: boolean | null; memory_items: number | null; mcp_servers: string[] | null; mcp_tools: number | null } | { kind: "Fetch"; url: string; final_url: string | null; http_status: number | null; text_bytes: number | null; truncated: boolean | null; error: string | null } | { kind: "MemoryProposed"; content: string; scope: MemoryScope | null; memory_id: MemoryId | null; error: string | null } | { kind: "McpCall"; server: string; tool: string; arguments: string; result_chars: number | null; truncated: boolean | null; is_error: boolean | null; duration_ms: number | null; error: string | null; run_id: RunId | null } | { kind: "NoteProposed"; title: string; run_id: RunId | null; error: string | null }
+export type AgentStepDetail = { kind: "ModelCall"; model: string; first_byte_ms: number | null; duration_ms: number | null; error: string | null; attempt: number | null; backup: boolean | null; memory_items: number | null; mcp_servers: string[] | null; mcp_tools: number | null; prompt_tokens: number | null; output_tokens: number | null } | { kind: "Fetch"; url: string; final_url: string | null; http_status: number | null; text_bytes: number | null; truncated: boolean | null; error: string | null } | { kind: "MemoryProposed"; content: string; scope: MemoryScope | null; memory_id: MemoryId | null; error: string | null } | { kind: "McpCall"; server: string; tool: string; arguments: string; result_chars: number | null; truncated: boolean | null; is_error: boolean | null; duration_ms: number | null; error: string | null; run_id: RunId | null } | { kind: "NoteProposed"; title: string; run_id: RunId | null; error: string | null }
 
 export type AgentStepView = { step_id: AgentStepId; message_id: MessageId; conversation_id: ConversationId; conversation_title: string; seq: number; status: AgentStepStatus; detail: AgentStepDetail; started_at_ms: number; finished_at_ms: number | null }
 
@@ -173,4 +173,13 @@ export type McpServerId = string
 export type McpToolView = { name: string; title: string | null; description: string; parameters: string[]; schema_json: string; read_only_hint: boolean | null; destructive_hint: boolean | null; definition_sha256: string; enabled: boolean; changed: boolean; available: boolean; blocked_reason: string | null }
 
 export type McpServerView = { server_id: McpServerId; name: string; url: string; has_key: boolean; checked_at_ms: number | null; last_error: string | null; tools: McpToolView[] }
+
+/**
+ * What the user says a model costs, in US dollars per million tokens.
+ */
+export type ModelPrice = { input_per_million: number; output_per_million: number }
+
+export type ModelUsageView = { provider: string; model: string; calls_today: number; prompt_tokens_today: number; output_tokens_today: number; free_tier: boolean; price: ModelPrice | null; estimated_cost_today: number | null }
+
+export type UsageView = { day_start_ms: number; daily_token_budget: number | null; tokens_today: number; models: ModelUsageView[]; estimated_cost_today: number | null }
 

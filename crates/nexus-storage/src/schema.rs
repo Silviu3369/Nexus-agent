@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::StorageError;
 
-pub const SUPPORTED_VERSION: i64 = 8;
+pub const SUPPORTED_VERSION: i64 = 9;
 
 /// Version 1: everything M1 persists. State columns are closed lists that a
 /// test keeps identical to the `nexus-core` enums. Times are UTC unix ms.
@@ -395,6 +395,33 @@ CREATE INDEX paused_turns_by_run ON paused_turns (run_id);
 CREATE INDEX paused_turns_by_conversation ON paused_turns (conversation_id);
 "#;
 
+/// Version 9: what each model call cost in tokens, and the prices the user
+/// enters per model. The ledger holds numbers only (no text), so it outlives
+/// the tasks whose calls it counts: the daily budget is not reset by
+/// deleting a task.
+const V9: &str = r#"
+CREATE TABLE model_usage (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    at_ms         INTEGER NOT NULL,
+    provider      TEXT    NOT NULL,
+    model         TEXT    NOT NULL,
+    free_tier     INTEGER NOT NULL CHECK (free_tier IN (0, 1)),
+    prompt_tokens INTEGER NOT NULL CHECK (prompt_tokens >= 0),
+    output_tokens INTEGER NOT NULL CHECK (output_tokens >= 0)
+) STRICT;
+
+CREATE INDEX model_usage_by_time ON model_usage (at_ms);
+
+CREATE TABLE model_prices (
+    provider           TEXT    NOT NULL,
+    model              TEXT    NOT NULL,
+    input_per_million  REAL    NOT NULL CHECK (input_per_million >= 0),
+    output_per_million REAL    NOT NULL CHECK (output_per_million >= 0),
+    updated_at_ms      INTEGER NOT NULL,
+    PRIMARY KEY (provider, model)
+) STRICT;
+"#;
+
 struct Migration {
     sql: &'static str,
     /// Rebuilds a table other tables refer to (see [`V5`]).
@@ -432,6 +459,10 @@ const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         sql: V8,
+        rebuilds_parent_table: false,
+    },
+    Migration {
+        sql: V9,
         rebuilds_parent_table: false,
     },
 ];

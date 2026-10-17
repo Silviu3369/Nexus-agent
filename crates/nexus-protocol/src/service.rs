@@ -21,6 +21,7 @@ use crate::runs::{
     BackupSummary, DecideApprovalRequest, EventsPage, RunView, Snapshot, SubmitNoteRequest,
     SubmitNoteResponse, SystemStatusView,
 };
+use crate::usage::{ModelPrice, UsageView};
 
 #[tarpc::service]
 pub trait NexusService {
@@ -179,6 +180,19 @@ pub trait NexusService {
 
     /// Host version plus CPU and memory of the machine, read when asked.
     async fn get_system_status() -> Result<SystemStatusView, NexusError>;
+
+    /// Today's tokens per model, the daily budget and cost estimates.
+    async fn get_usage() -> Result<UsageView, NexusError>;
+
+    /// `None` removes the limit.
+    async fn set_daily_token_budget(tokens: Option<u64>) -> Result<UsageView, NexusError>;
+
+    /// What a model costs, as the user says; `None` forgets the price.
+    async fn set_model_price(
+        provider: String,
+        model: String,
+        price: Option<ModelPrice>,
+    ) -> Result<UsageView, NexusError>;
 
     /// Explicit stop: no new work is taken, the current step finishes,
     /// uncertain effects stay recorded for reconciliation on next start.

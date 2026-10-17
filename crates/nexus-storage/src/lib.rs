@@ -8,6 +8,7 @@ mod memory;
 mod repo;
 mod schema;
 mod steps;
+mod usage;
 
 pub use chat::{
     ConnectionRow, Continuation, ConversationRow, DEFAULT_PERSONA_NAME, Deleted, Exchange,
@@ -20,6 +21,7 @@ pub use repo::{
     RunDetail, RunError, RunOrigin, RunRow, SubmitOutcome, TaskRow,
 };
 pub use steps::AgentStepRow;
+pub use usage::{PriceRow, UsageRow};
 
 use std::path::Path;
 use std::thread::JoinHandle;

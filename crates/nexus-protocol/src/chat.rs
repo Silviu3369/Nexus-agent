@@ -162,6 +162,9 @@ pub enum AgentStepDetail {
         mcp_servers: Option<Vec<String>>,
         /// How many of their tools were offered.
         mcp_tools: Option<u32>,
+        /// Tokens the provider reported for this call.
+        prompt_tokens: Option<u32>,
+        output_tokens: Option<u32>,
     },
     Fetch {
         url: String,

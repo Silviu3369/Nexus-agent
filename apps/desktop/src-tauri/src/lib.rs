@@ -4,6 +4,7 @@ mod host;
 mod mcp;
 mod memory;
 mod runs;
+mod usage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -54,6 +55,9 @@ pub fn run() {
             mcp::refresh_mcp_tools,
             mcp::remove_mcp_server,
             mcp::set_mcp_tool_enabled,
+            usage::get_usage,
+            usage::set_daily_token_budget,
+            usage::set_model_price,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

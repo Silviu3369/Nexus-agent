@@ -7,6 +7,7 @@ import { PROVIDERS } from "../model/catalog.ts";
 import { modelStats } from "../model/execution.ts";
 import { ago, seconds } from "../model/format.ts";
 import { BackupModelCard, ConnectionsCard } from "../Settings";
+import { UsagePanel } from "../components/UsagePanel";
 import { useDerived, useNexus, useNow } from "../state/store";
 import { Empty, Panel, StatusPill } from "../ui";
 import { PlugIcon, PulseIcon, RouteIcon } from "../icons";
@@ -96,6 +97,8 @@ export function ModelsView() {
           </p>
         </Panel>
       </div>
+
+      <UsagePanel />
 
       <Panel title="Measured latency" icon={<PulseIcon size={15} />} id="latency">
         {stats.length === 0 ? (

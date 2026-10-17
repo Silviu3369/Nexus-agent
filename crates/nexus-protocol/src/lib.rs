@@ -12,6 +12,7 @@ pub mod memory;
 pub mod pairing;
 pub mod runs;
 pub mod service;
+pub mod usage;
 pub mod version;
 
 pub use runs::{
@@ -38,4 +39,5 @@ pub use memory::{
     MemoryStatus, ProjectView, SaveProjectRequest,
 };
 pub use service::{NexusService, NexusServiceClient};
+pub use usage::{ModelPrice, ModelUsageView, UsageView};
 pub use version::PROTOCOL_VERSION;

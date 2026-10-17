@@ -291,8 +291,10 @@ test("the activity log names tasks and runs, and skips events the steps already 
 test("events invalidate only what they describe", () => {
   const ev = (kind: string) => ({ seq: 1, kind, entity_id: "x", created_at_ms: T0 });
   assert.deepEqual([...invalidatedBy([ev("ApprovalRequested")])].sort(), ["focus", "runs"]);
-  assert.deepEqual([...invalidatedBy([ev("AgentStepFinished")])].sort(), ["focus", "steps"]);
-  assert.deepEqual([...invalidatedBy([ev("ConnectionModelSelected")])], ["connections"]);
+  assert.deepEqual([...invalidatedBy([ev("AgentStepFinished")])].sort(), ["focus", "steps", "usage"]);
+  assert.deepEqual([...invalidatedBy([ev("ConnectionModelSelected")])].sort(), ["connections", "usage"]);
+  assert.deepEqual([...invalidatedBy([ev("DailyTokenBudgetSet")])], ["usage"]);
+  assert.deepEqual([...invalidatedBy([ev("ModelPriceSet")])], ["usage"]);
   assert.deepEqual([...invalidatedBy([ev("PersonaSaved")])], ["persona"]);
   assert.deepEqual([...invalidatedBy([ev("ProjectCreated")])], ["projects"]);
   assert.deepEqual([...invalidatedBy([ev("ActiveProjectChanged")])], ["projects"]);
@@ -569,4 +571,28 @@ test("a model call says which MCP servers it could use, and a run that did not u
     "Nexus",
   );
   assert.doesNotMatch(used.items[0].outcome ?? "", /answered without it/);
+});
+
+test("a model call shows the tokens the provider reported", () => {
+  const call = step(
+    {
+      kind: "ModelCall",
+      model: "gemini-3.8-flash",
+      first_byte_ms: 100,
+      duration_ms: 900,
+      error: null,
+      attempt: null,
+      backup: null,
+      memory_items: 0,
+      mcp_servers: null,
+      mcp_tools: null,
+      prompt_tokens: 1234,
+      output_tokens: 56,
+    },
+    "Done",
+    T0,
+    T0 + 900,
+  );
+  const [run] = buildRuns(conversation(message("Model", REPLY, [call], { status: "Complete" })), new Map(), "Nexus");
+  assert.ok(run.items[0].facts.some(([k, v]) => k === "Tokens" && v === "1,234 sent · 56 received"));
 });

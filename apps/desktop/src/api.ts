@@ -23,6 +23,7 @@ import type {
   McpServerId,
   McpServerView,
   MessageId,
+  ModelPrice,
   ModelView,
   PersonaView,
   ProjectId,
@@ -35,6 +36,7 @@ import type {
   SubmitNoteResponse,
   SystemStatusView,
   ThinkingLevel,
+  UsageView,
 } from "@nexus/contracts";
 
 export const api = {
@@ -124,6 +126,14 @@ export const api = {
   /** Exactly the approved facts the Host sends with a request in this project. */
   memoryContext: (projectId: ProjectId) => invoke<MemoryContextView>("memory_context", { projectId }),
 
+  /** Today's tokens per model, the daily budget and cost estimates. */
+  getUsage: () => invoke<UsageView>("get_usage"),
+  /** `null` removes the limit. */
+  setDailyTokenBudget: (tokens: number | null) => invoke<UsageView>("set_daily_token_budget", { tokens }),
+  /** What a model costs, as you say ($ per million tokens); `null` forgets it. */
+  setModelPrice: (provider: string, model: string, price: ModelPrice | null) =>
+    invoke<UsageView>("set_model_price", { provider, model, price }),
+
   listMcpServers: () => invoke<McpServerView[]>("list_mcp_servers"),
   /** Adds (`serverId: null`) or changes a server, then lists its tools. The
    *  key goes to the Host's Windows vault; `null` keeps the stored one, and
@@ -148,6 +158,7 @@ const CODE_TEXT: Partial<Record<ErrorCode, string>> = {
   Unauthenticated: "Authentication was refused.",
   Forbidden: "This operation is not allowed here.",
   QuotaExceeded: "The AI provider's quota has been reached.",
+  BudgetExceeded: "Your daily token budget is used up.",
   DeadlineExceeded: "The AI provider did not respond in time.",
   ProviderUnavailable: "The AI provider is unavailable right now.",
 };

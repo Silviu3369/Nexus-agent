@@ -10,10 +10,10 @@ use nexus_protocol::{
     ConnectionView, ConversationId, ConversationSummary, ConversationView, DecideApprovalRequest,
     DeletedView, ErrorCode, EventsPage, GetHealthResponse, HandshakeRequest, HandshakeResponse,
     HealthStatus, McpServerId, McpServerView, MemoryContextView, MemoryId, MemoryItemView,
-    MemoryQuery, MessageId, ModelView, NexusError, PROTOCOL_VERSION, PersonaView, ProjectId,
-    ProjectView, RunId, RunView, SaveConnectionRequest, SaveMcpServerRequest, SavePersonaRequest,
-    SaveProjectRequest, SendMessageRequest, SendMessageResponse, Snapshot, SubmitNoteRequest,
-    SubmitNoteResponse, SystemStatusView, ThinkingLevel,
+    MemoryQuery, MessageId, ModelPrice, ModelView, NexusError, PROTOCOL_VERSION, PersonaView,
+    ProjectId, ProjectView, RunId, RunView, SaveConnectionRequest, SaveMcpServerRequest,
+    SavePersonaRequest, SaveProjectRequest, SendMessageRequest, SendMessageResponse, Snapshot,
+    SubmitNoteRequest, SubmitNoteResponse, SystemStatusView, ThinkingLevel, UsageView,
 };
 use tarpc::context::Context;
 use tarpc::server::{BaseChannel, Channel};
@@ -405,6 +405,31 @@ impl NexusService for HostServer {
     ) -> Result<MemoryContextView, NexusError> {
         self.require_session()?;
         self.runtime.memory_context(project_id).await
+    }
+
+    async fn get_usage(self, _ctx: Context) -> Result<UsageView, NexusError> {
+        self.require_session()?;
+        self.runtime.usage().await
+    }
+
+    async fn set_daily_token_budget(
+        self,
+        _ctx: Context,
+        tokens: Option<u64>,
+    ) -> Result<UsageView, NexusError> {
+        self.require_session()?;
+        self.runtime.set_daily_token_budget(tokens).await
+    }
+
+    async fn set_model_price(
+        self,
+        _ctx: Context,
+        provider: String,
+        model: String,
+        price: Option<ModelPrice>,
+    ) -> Result<UsageView, NexusError> {
+        self.require_session()?;
+        self.runtime.set_model_price(provider, model, price).await
     }
 
     async fn list_mcp_servers(self, _ctx: Context) -> Result<Vec<McpServerView>, NexusError> {

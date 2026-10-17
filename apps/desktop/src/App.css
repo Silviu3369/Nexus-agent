@@ -2218,6 +2218,41 @@ button.approve:hover:not(:disabled) {
   width: 100%;
 }
 
+/* ---------- Usage today (Models) ---------- */
+
+.usage-budget {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  align-items: flex-end;
+  margin: 12px 0;
+}
+
+.usage-budget label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.usage-budget input {
+  width: 160px;
+}
+
+.usage-price {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.usage-price input {
+  width: 70px;
+}
+
+.usage-table td {
+  vertical-align: top;
+}
+
 /* ---------- MCP servers (Tools → MCP) ---------- */
 
 .mcp-server .confirm-bar {

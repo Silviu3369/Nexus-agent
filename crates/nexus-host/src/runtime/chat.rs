@@ -576,6 +576,7 @@ impl Runtime {
                 "no API key is stored for this connection",
             ));
         }
+        self.check_daily_budget().await?;
         let persona = self.store.persona(now_ms()).await.map_err(to_nexus_error)?;
         // A new task joins the project named, else the active one; a
         // follow-up always stays in its own conversation's project.
@@ -647,6 +648,8 @@ impl Runtime {
             history_until: exchange.model_message.seq,
             route: Route {
                 client: self.client(connection)?,
+                provider: connection.provider.clone(),
+                free_tier: connection.free_tier,
                 model: exchange.model_message.model.clone().unwrap_or_default(),
                 thinking_level: connection.thinking_level,
                 backup: false,
@@ -758,6 +761,8 @@ impl Runtime {
             history_until: c.request.seq + 1,
             route: Route {
                 client: self.client(&connection)?,
+                provider: connection.provider.clone(),
+                free_tier: connection.free_tier,
                 model,
                 thinking_level: connection.thinking_level,
                 backup,
@@ -885,6 +890,8 @@ impl Runtime {
                     "deadline exceeded",
                 ));
             }
+            // The user's daily token budget holds between the steps too.
+            self.check_daily_budget().await?;
             let mut offered = Offered {
                 memory_items: memory.len(),
                 ..Offered::default()
@@ -1209,6 +1216,8 @@ impl Runtime {
         match self.client(&row) {
             Ok(client) => Some(Route {
                 client,
+                provider: row.provider.clone(),
+                free_tier: row.free_tier,
                 model,
                 thinking_level: row.thinking_level,
                 backup: true,
@@ -1275,7 +1284,11 @@ impl Runtime {
         attempt: u32,
         offered: &Offered,
     ) -> Result<CallResult, (ProviderError, bool)> {
-        let mut start = json!({ "model": route.model, "memory_items": offered.memory_items });
+        let mut start = json!({
+            "model": route.model,
+            "provider": route.provider,
+            "memory_items": offered.memory_items,
+        });
         if offered.mcp_tools > 0 {
             start["mcp_servers"] = json!(offered.mcp_servers);
             start["mcp_tools"] = json!(offered.mcp_tools);
@@ -1315,7 +1328,7 @@ impl Runtime {
                         arguments,
                         signature,
                     }),
-                    // Kept for this turn only, never shown or stored.
+                    // Never shown; kept while the turn waits for the user.
                     ProviderEvent::Replay { provider, block } => {
                         result.replay.push(Part::Replay { provider, block })
                     }
@@ -1331,6 +1344,27 @@ impl Runtime {
             "first_byte_ms": first_byte.map(millis),
             "duration_ms": millis(step_started.elapsed()),
         });
+        // What the provider reported, for the step and the daily ledger
+        // (numbers only; a failed call can still have been charged).
+        let usage = result.usage;
+        if usage.prompt_tokens > 0 || usage.output_tokens > 0 {
+            timing["prompt_tokens"] = json!(usage.prompt_tokens);
+            timing["output_tokens"] = json!(usage.output_tokens);
+            if let Err(err) = self
+                .store
+                .record_model_usage(
+                    route.provider.clone(),
+                    route.model.clone(),
+                    route.free_tier,
+                    usage.prompt_tokens,
+                    usage.output_tokens,
+                    now_ms(),
+                )
+                .await
+            {
+                tracing::warn!(error = %err, "could not record the call's tokens");
+            }
+        }
         tracing::info!(
             step,
             attempt,
@@ -1816,6 +1850,8 @@ fn step_view(row: &AgentStepRow) -> AgentStepView {
                         .collect()
                 }),
             mcp_tools: number("mcp_tools").and_then(|n| u32::try_from(n).ok()),
+            prompt_tokens: number("prompt_tokens").and_then(|n| u32::try_from(n).ok()),
+            output_tokens: number("output_tokens").and_then(|n| u32::try_from(n).ok()),
         },
         AgentStepKind::MemoryProposed => AgentStepDetail::MemoryProposed {
             content: text("content").unwrap_or_default(),
@@ -2195,6 +2231,9 @@ struct Offered {
 /// The model and client one reply is currently using.
 struct Route {
     client: Client,
+    /// The connection's provider and tier, for the usage ledger.
+    provider: String,
+    free_tier: bool,
     model: String,
     thinking_level: nexus_core::ThinkingLevel,
     /// The user's backup model, taking over from the active one.

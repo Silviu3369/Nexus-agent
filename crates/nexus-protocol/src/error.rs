@@ -32,6 +32,9 @@ pub enum ErrorCode {
     Busy,
     #[error("quota exceeded")]
     QuotaExceeded,
+    /// The user's own daily token budget is used up (not a provider limit).
+    #[error("budget exceeded")]
+    BudgetExceeded,
     #[error("deadline exceeded")]
     DeadlineExceeded,
     #[error("provider unavailable")]

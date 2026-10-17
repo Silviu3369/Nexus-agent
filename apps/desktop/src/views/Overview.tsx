@@ -164,6 +164,7 @@ export function SystemPanel() {
   const d = useNexus();
   const { runningStep } = useDerived();
   const sys = d.system;
+  const usage = d.usage;
   const host = d.host?.state === "Connected" ? d.host : null;
   const writing = (d.runs ?? []).filter((r) => r.status === "Running" || r.status === "Verifying").length;
   const runningTasks = new Set((d.steps ?? []).filter((s) => s.status === "Running").map((s) => s.conversation_id)).size + writing;
@@ -196,6 +197,19 @@ export function SystemPanel() {
         <li>
           <span>Running tasks</span>
           <b>{runningTasks}</b>
+        </li>
+        <li>
+          <span>Tokens today</span>
+          <b
+            className={usage?.daily_token_budget && usage.tokens_today >= usage.daily_token_budget ? "bad" : undefined}
+            title="As the providers reported them; set a daily budget in Models"
+          >
+            {usage
+              ? `${usage.tokens_today.toLocaleString("en-US")}${
+                  usage.daily_token_budget ? ` / ${usage.daily_token_budget.toLocaleString("en-US")}` : ""
+                }`
+              : "—"}
+          </b>
         </li>
       </ul>
     </Panel>
