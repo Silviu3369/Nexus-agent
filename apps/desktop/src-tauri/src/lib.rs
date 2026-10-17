@@ -1,3 +1,4 @@
+mod autostart;
 mod bindings;
 mod chat;
 mod host;
@@ -14,6 +15,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             host::host_status,
             host::start_host,
+            autostart::get_autostart,
+            autostart::set_autostart,
             runs::submit_note,
             runs::list_runs,
             runs::get_run,

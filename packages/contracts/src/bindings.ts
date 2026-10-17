@@ -38,6 +38,12 @@ export type HostStatus = { state: "Connected"; host_identity: string; protocol_v
 export type BridgeError = { code: ErrorCode | null; message: string }
 
 /**
+ * What Settings shows: whether the Host starts at sign-in, and with which
+ * program (another copy of Nexus may have set it).
+ */
+export type AutostartView = { enabled: boolean; command: string | null; points_here: boolean }
+
+/**
  * Mirrors `nexus_core::RunState`; the host converts with an exhaustive match.
  */
 export type RunStatus = "Queued" | "Running" | "AwaitingApproval" | "Verifying" | "CancellationRequested" | "NeedsReconciliation" | "NeedsReview" | "Succeeded" | "Failed" | "Cancelled" | "Denied"

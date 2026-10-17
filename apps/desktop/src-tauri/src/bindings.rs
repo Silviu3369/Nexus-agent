@@ -32,6 +32,7 @@ mod tests {
             ts::export::<nexus_protocol::NexusError>(&conf),
             ts::export::<crate::host::HostStatus>(&conf),
             ts::export::<crate::host::BridgeError>(&conf),
+            ts::export::<crate::autostart::AutostartView>(&conf),
             ts::export::<nexus_protocol::RunStatus>(&conf),
             ts::export::<nexus_protocol::NotePreview>(&conf),
             ts::export::<nexus_protocol::McpCallPreview>(&conf),

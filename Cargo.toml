@@ -7,7 +7,6 @@ members = [
     "crates/nexus-client",
     "crates/nexus-host",
     "crates/nexus-providers",
-    "crates/nexus-worker",
     "apps/desktop/src-tauri",
 ]
 
@@ -15,6 +14,14 @@ members = [
 version = "0.1.0"
 edition = "2024"
 publish = false
+
+# Development builds keep line tables for readable backtraces, and no debug
+# info for dependencies: the build folder stays a fraction of the size.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
 
 # Tauri scaffold requires release profile tuning to be declared at the
 # workspace root once this crate joins the workspace.

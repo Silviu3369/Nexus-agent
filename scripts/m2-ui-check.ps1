@@ -279,6 +279,7 @@ try {
   Set-Field $win "Assistant name" "Ada"
   Click-Button $win "Save persona"
   Check ($null -ne (Wait-Contains $win "Saved as version 2")) "saving the persona creates version 2"
+  Check ($null -ne (Find-Named $win "Start Nexus.Host when I sign in to Windows" ([System.Windows.Automation.ControlType]::CheckBox))) "Settings offers starting the Host at sign-in (the check never changes it)"
 
   # --- AI-01: streamed reply from the chosen model, in a new task ---
   Click-Button $win "Tasks"

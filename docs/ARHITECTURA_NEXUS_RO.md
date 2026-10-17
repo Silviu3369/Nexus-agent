@@ -184,7 +184,7 @@ Job Objects pot gestiona procese și resurse, dar nu înlocuiesc un model de izo
 
 ### ADR-ISO-001 — Izolarea pentru cod și unelte neîncrezătoare
 
-**Stare:** închis prin probă, 2026-10-17. Decizia utilizatorului pentru M3: munca de cod o face un agent de cod extern (Codex CLI, deja instalat și autentificat), dar acesta rulează doar în izolarea Nexus, pe o copie de lucru separată, niciodată pe proiectul original.
+**Stare:** închis prin probă, 2026-10-17; apoi **codul a fost scos**, la decizia utilizatorului (Nexus nu scrie cod pe PC). Implementarea și probele rămân în istoricul Git, commit `88ebc89` (`crates/nexus-worker`); concluziile de mai jos sunt punctul de plecare dacă o unealtă locală va avea nevoie de izolare. Decizia inițială pentru M3: munca de cod o face un agent de cod extern (Codex CLI, deja instalat și autentificat), dar acesta rulează doar în izolarea Nexus, pe o copie de lucru separată, niciodată pe proiectul original.
 
 **Decizie:** AppContainer strict (LPAC), cu capabilitatea `registryRead`, într-un Job Object. Implementarea e în `crates/nexus-worker`, cu funcții Windows documentate (`CreateAppContainerProfile`, atributele de proces `SECURITY_CAPABILITIES` și `ALL_APPLICATION_PACKAGES_POLICY`, Job Objects), fără dependențe noi.
 - **Acces la fișiere:** doar prin intrări ACL adăugate pentru identitatea containerului, pe căile date explicit, la citire sau la citire și scriere.

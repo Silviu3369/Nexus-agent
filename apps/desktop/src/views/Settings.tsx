@@ -1,11 +1,62 @@
+import { useEffect, useState } from "react";
+import type { AutostartView } from "@nexus/contracts";
+import { api, describeError } from "../api";
 import { uptime } from "../model/format.ts";
 import { BackupCard, PersonaCard } from "../Settings";
 import { useGoTo } from "../shell/nav";
 import { usePref } from "../state/prefs";
 import type { CoreMode, Theme } from "../state/prefs";
 import { useNexus } from "../state/store";
-import { Facts, Panel } from "../ui";
+import { ErrorLine, Facts, Panel } from "../ui";
 import { CoreIcon, PlugIcon, SettingsIcon } from "../icons";
+
+/** Off unless you turn it on: one entry in your own Windows sign-in list. */
+function StartWithWindows() {
+  const [state, setState] = useState<AutostartView | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .getAutostart()
+      .then(setState)
+      .catch((err) => setError(describeError(err)));
+  }, []);
+
+  async function toggle(enabled: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      setState(await api.setAutostart(enabled));
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="startup">
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={state?.enabled ?? false}
+          disabled={busy || state === null}
+          onChange={(e) => void toggle(e.currentTarget.checked)}
+        />
+        Start Nexus.Host when I sign in to Windows
+      </label>
+      <p className="muted small">
+        Off unless you turn it on. When on, Windows starts the Host in the background after you sign in, so this window
+        connects at once; the window itself does not open. Turning it off removes the entry.
+      </p>
+      {state?.enabled && !state.points_here && (
+        <p className="warning small">It is set to start another copy of Nexus: {state.command}</p>
+      )}
+      <ErrorLine error={error} />
+    </div>
+  );
+}
 
 export function SettingsView() {
   const d = useNexus();
@@ -29,6 +80,7 @@ export function SettingsView() {
           />
         )}
         <p className="muted small">Closing this window does not stop the Host or any accepted task.</p>
+        <StartWithWindows />
       </Panel>
 
       <Panel title="Appearance" icon={<SettingsIcon size={15} />} id="appearance">

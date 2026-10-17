@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AgentStepView,
+  AutostartView,
   ApprovalId,
   ArtifactId,
   BackupModelView,
@@ -42,6 +43,9 @@ import type {
 export const api = {
   hostStatus: () => invoke<HostStatus>("host_status"),
   startHost: () => invoke<null>("start_host"),
+  /** Whether the Host starts when you sign in to Windows (off unless you turn it on). */
+  getAutostart: () => invoke<AutostartView>("get_autostart"),
+  setAutostart: (enabled: boolean) => invoke<AutostartView>("set_autostart", { enabled }),
   submitNote: (idempotencyKey: string, title: string, body: string) =>
     invoke<SubmitNoteResponse>("submit_note", { idempotencyKey, title, body }),
   listRuns: () => invoke<Snapshot>("list_runs"),
