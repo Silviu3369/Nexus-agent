@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::ids::{
-    AgentStepId, ConnectionId, ConversationId, MemoryId, MessageId, ProjectId, RunId,
+    AgentStepId, ConnectionId, ConversationId, MemoryId, MessageId, ProjectId, RecordId, RunId,
 };
 use crate::memory::MemoryScope;
 use crate::runs::RunFailure;
@@ -204,6 +204,29 @@ pub enum AgentStepDetail {
         /// The run waiting for the user's approval, when the proposal was
         /// accepted as a run at all.
         run_id: Option<RunId>,
+        error: Option<String>,
+    },
+    /// The agent looked up records in one of the user's registers.
+    RecordsFound {
+        register: String,
+        /// What it asked for, in short.
+        query: String,
+        count: Option<u32>,
+        error: Option<String>,
+    },
+    /// The agent added or changed a record; the user can undo it.
+    RecordChanged {
+        register: String,
+        /// "added" or "updated".
+        action: String,
+        /// What names the record, e.g. "Acme · Service Desk Analyst".
+        title: String,
+        /// The fields it set.
+        fields: Vec<String>,
+        record_id: Option<RecordId>,
+        change_id: Option<i64>,
+        /// The user has undone it since.
+        undone: bool,
         error: Option<String>,
     },
 }

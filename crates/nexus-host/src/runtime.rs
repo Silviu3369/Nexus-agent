@@ -30,6 +30,7 @@ mod automation;
 mod chat;
 mod mcp;
 mod memory;
+mod records;
 mod remote_call;
 mod usage;
 
@@ -176,6 +177,7 @@ impl Runtime {
             mcp_clients: mcp::McpClients::default(),
             answers: remote_call::Answers::default(),
         });
+        runtime.ensure_registers().await?;
         if paused {
             tracing::warn!(
                 profile = %profile.display(),
@@ -937,6 +939,7 @@ fn to_nexus_error(err: StorageError) -> NexusError {
         StorageError::IllegalTransition(_) => (ErrorCode::InvalidRequest, err.to_string()),
         StorageError::RevisionConflict(_) => (ErrorCode::RevisionConflict, err.to_string()),
         StorageError::ReplyInProgress => (ErrorCode::InvalidRequest, err.to_string()),
+        StorageError::NotUndoable(_) => (ErrorCode::InvalidRequest, err.to_string()),
         _ => {
             tracing::error!(error = %err, "storage failure");
             (

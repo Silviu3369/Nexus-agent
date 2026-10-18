@@ -24,10 +24,10 @@ const MCP_KEY: &str = "SENTINEL-mcp-server-key-c05e";
 const ANSWER: &str = "CreateNamedPipeW creates an instance of a named pipe.";
 const SEARCH: &str = "mcp1_docs_search";
 
-// Must match MAX_FETCH_CALLS / MAX_MCP_CALLS / MAX_AGENT_STEPS in
+// Must match MAX_FETCH_CALLS / MAX_MCP_CALLS / RECORD_STEPS / MAX_AGENT_STEPS in
 // nexus-host/src/runtime/chat.rs.
 const MAX_MCP_CALLS: usize = 4;
-const MAX_AGENT_STEPS: usize = 4 + MAX_MCP_CALLS + 2;
+const MAX_AGENT_STEPS: usize = 4 + MAX_MCP_CALLS + 4 + 2;
 
 fn config(fake: &FakeGemini, allow_loopback_mcp: bool) -> RuntimeConfig {
     RuntimeConfig {

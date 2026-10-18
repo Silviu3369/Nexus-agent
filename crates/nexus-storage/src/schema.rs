@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::StorageError;
 
-pub const SUPPORTED_VERSION: i64 = 10;
+pub const SUPPORTED_VERSION: i64 = 11;
 
 /// Version 1: everything M1 persists. State columns are closed lists that a
 /// test keeps identical to the `nexus-core` enums. Times are UTC unix ms.
@@ -462,6 +462,84 @@ CREATE INDEX automation_runs_by_automation ON automation_runs (automation_id, id
 CREATE INDEX automation_runs_by_conversation ON automation_runs (conversation_id);
 "#;
 
+/// Version 11: registers (`PLAN_NEXUS_RO.md` §3a): tables Nexus keeps for
+/// the user (job applications first), their records and the history of
+/// every change, which names who made it and, for the agent, the task and
+/// the web hosts read before. A register's fields live in its schema; the
+/// store only knows which field is the status and which the follow-up date.
+/// Agent steps gain RecordsFound and RecordChanged (a closed CHECK list,
+/// so that table is rebuilt; no other table refers to it).
+const V11: &str = r#"
+CREATE TABLE registers (
+    id              TEXT    PRIMARY KEY,
+    key             TEXT    NOT NULL UNIQUE CHECK (length(key) BETWEEN 1 AND 64),
+    name            TEXT    NOT NULL CHECK (length(name) BETWEEN 1 AND 100),
+    schema_json     TEXT    NOT NULL CHECK (json_valid(schema_json)),
+    status_field    TEXT    NOT NULL,
+    follow_up_field TEXT,
+    created_at_ms   INTEGER NOT NULL,
+    updated_at_ms   INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE records (
+    id            TEXT    PRIMARY KEY,
+    register_id   TEXT    NOT NULL REFERENCES registers (id) ON DELETE CASCADE,
+    values_json   TEXT    NOT NULL CHECK (json_valid(values_json) AND json_type(values_json) = 'object'),
+    -- Copies of the status and follow-up date (YYYY-MM-DD), for filtering.
+    status        TEXT,
+    follow_up_on  TEXT,
+    revision      INTEGER NOT NULL CHECK (revision >= 1),
+    created_by    TEXT    NOT NULL CHECK (created_by IN ('User', 'Agent')),
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL
+) STRICT;
+
+CREATE INDEX records_by_register ON records (register_id, updated_at_ms);
+CREATE INDEX records_by_follow_up ON records (register_id, follow_up_on);
+
+CREATE TABLE record_changes (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    record_id       TEXT    NOT NULL REFERENCES records (id) ON DELETE CASCADE,
+    kind            TEXT    NOT NULL CHECK (kind IN ('Created', 'Updated', 'Undo')),
+    actor           TEXT    NOT NULL CHECK (actor IN ('User', 'Agent')),
+    before_json     TEXT    CHECK (before_json IS NULL OR json_valid(before_json)),
+    after_json      TEXT    NOT NULL CHECK (json_valid(after_json)),
+    revision_after  INTEGER NOT NULL CHECK (revision_after >= 1),
+    conversation_id TEXT    REFERENCES conversations (id) ON DELETE SET NULL,
+    message_id      TEXT    REFERENCES messages (id) ON DELETE SET NULL,
+    read_hosts_json TEXT    NOT NULL DEFAULT '[]' CHECK (json_valid(read_hosts_json)),
+    undone_at_ms    INTEGER,
+    at_ms           INTEGER NOT NULL,
+    CHECK ((kind = 'Created') = (before_json IS NULL)),
+    CHECK (actor = 'Agent' OR (conversation_id IS NULL AND message_id IS NULL))
+) STRICT;
+
+CREATE INDEX record_changes_by_record ON record_changes (record_id, id);
+CREATE INDEX record_changes_by_message ON record_changes (message_id);
+
+CREATE TABLE agent_steps_v11 (
+    id             TEXT    PRIMARY KEY,
+    message_id     TEXT    NOT NULL REFERENCES messages (id),
+    seq            INTEGER NOT NULL CHECK (seq >= 1),
+    kind           TEXT    NOT NULL CHECK (kind IN ('ModelCall', 'Fetch', 'NoteProposed', 'MemoryProposed', 'McpCall',
+                                                    'RecordsFound', 'RecordChanged')),
+    status         TEXT    NOT NULL CHECK (status IN ('Running', 'Done', 'Failed')),
+    detail_json    TEXT    NOT NULL CHECK (json_valid(detail_json)),
+    started_at_ms  INTEGER NOT NULL,
+    finished_at_ms INTEGER,
+    CHECK ((status = 'Running') = (finished_at_ms IS NULL)),
+    UNIQUE (message_id, seq)
+) STRICT;
+INSERT INTO agent_steps_v11
+    (id, message_id, seq, kind, status, detail_json, started_at_ms, finished_at_ms)
+SELECT id, message_id, seq, kind, status, detail_json, started_at_ms, finished_at_ms
+FROM agent_steps;
+DROP TABLE agent_steps;
+ALTER TABLE agent_steps_v11 RENAME TO agent_steps;
+CREATE INDEX agent_steps_by_start ON agent_steps (started_at_ms);
+CREATE INDEX agent_steps_by_status ON agent_steps (status);
+"#;
+
 struct Migration {
     sql: &'static str,
     /// Rebuilds a table other tables refer to (see [`V5`]).
@@ -507,6 +585,10 @@ const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         sql: V10,
+        rebuilds_parent_table: false,
+    },
+    Migration {
+        sql: V11,
         rebuilds_parent_table: false,
     },
 ];

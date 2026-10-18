@@ -1,8 +1,22 @@
 import { useState } from "react";
+import { api, describeError } from "../api";
+import { useGoTo } from "../shell/nav";
+import { useNexusActions } from "../state/store";
 import type { TimelineItem } from "../model/execution.ts";
 import { clock, seconds } from "../model/format.ts";
 import { StatusPill } from "../ui";
-import { AlertIcon, CheckIcon, ChevronDownIcon, GlobeIcon, LockIcon, MemoryIcon, NotesIcon, PlugIcon, SparkleIcon } from "../icons";
+import {
+  AlertIcon,
+  BriefcaseIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  GlobeIcon,
+  LockIcon,
+  MemoryIcon,
+  NotesIcon,
+  PlugIcon,
+  SparkleIcon,
+} from "../icons";
 
 function KindIcon({ item }: { item: TimelineItem }) {
   switch (item.kind) {
@@ -17,6 +31,8 @@ function KindIcon({ item }: { item: TimelineItem }) {
       return <MemoryIcon size={14} />;
     case "mcp":
       return <PlugIcon size={14} />;
+    case "record":
+      return <BriefcaseIcon size={14} />;
     case "approval":
       return <LockIcon size={14} />;
   }
@@ -43,6 +59,7 @@ export function TimelineEntry({ item, index, now }: { item: TimelineItem; index:
         <ChevronDownIcon size={14} className="tl-chevron" />
       </button>
       {item.outcome && !open && <p className={`tl-outcome${item.status === "failed" ? " bad" : ""}`}>{item.outcome}</p>}
+      {item.record && <RecordActions item={item} />}
       {open && (
         <div className="tl-detail">
           {item.outcome && <p className={`tl-outcome${item.status === "failed" ? " bad" : ""}`}>{item.outcome}</p>}
@@ -67,6 +84,54 @@ export function TimelineEntry({ item, index, now }: { item: TimelineItem; index:
         </div>
       )}
     </li>
+  );
+}
+
+/** A change the agent made to one of the user's registers: undo it, or
+ *  open the record. The Host refuses an undo once the record changed again. */
+function RecordActions({ item }: { item: TimelineItem }) {
+  const { refresh } = useNexusActions();
+  const goTo = useGoTo();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const record = item.record;
+  if (!record || record.undone || record.changeId === null || item.status !== "completed") return null;
+  const changeId = record.changeId;
+
+  async function undo() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.undoRecordChange(changeId);
+      await refresh(["registers", "steps", "focus"]);
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="tl-actions">
+      <button type="button" className="ghost" disabled={busy} aria-label={`Undo ${item.title}`} onClick={() => void undo()}>
+        Undo
+      </button>
+      {record.recordId && (
+        <button
+          type="button"
+          className="ghost"
+          aria-label={`Open ${item.title} in Jobs`}
+          onClick={() => goTo({ section: "jobs", recordId: record.recordId ?? undefined })}
+        >
+          Open in Jobs
+        </button>
+      )}
+      {error && (
+        <span className="error" role="alert">
+          {error}
+        </span>
+      )}
+    </div>
   );
 }
 

@@ -34,7 +34,12 @@ import type {
   ProjectView,
   ProviderChoice,
   RunId,
+  RecordDetailView,
+  RecordQuery,
+  RecordView,
+  RegisterView,
   RunView,
+  SaveRecordRequest,
   Schedule,
   SendMessageResponse,
   Snapshot,
@@ -142,6 +147,14 @@ export const api = {
   setModelPrice: (provider: string, model: string, price: ModelPrice | null) =>
     invoke<UsageView>("set_model_price", { provider, model, price }),
 
+  /** The user's registers (job applications first), with their fields and counts. */
+  listRegisters: () => invoke<RegisterView[]>("list_registers"),
+  listRecords: (query: RecordQuery) => invoke<RecordView[]>("list_records", { query }),
+  recordDetail: (recordId: string) => invoke<RecordDetailView>("record_detail", { recordId }),
+  /** Values are checked against the register's fields by the Host. */
+  saveRecord: (request: SaveRecordRequest) => invoke<RecordView>("save_record", { request }),
+  deleteRecord: (recordId: string) => invoke<null>("delete_record", { recordId }),
+  undoRecordChange: (changeId: number) => invoke<null>("undo_record_change", { changeId }),
   listAutomations: () => invoke<AutomationView[]>("list_automations"),
   /** `automationId: null` creates one; the Host checks the schedule and computes the next time. */
   saveAutomation: (

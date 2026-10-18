@@ -29,6 +29,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use zeroize::Zeroizing;
 
+use super::records::{self, ADD_TOOL, FIND_TOOL, MAX_RECORD_READS, MAX_RECORD_WRITES, UPDATE_TOOL};
 use super::{Runtime, to_nexus_error};
 
 pub(super) const MAX_MESSAGE_BYTES: usize = 16 * 1024;
@@ -40,7 +41,10 @@ const NOTE_TOOL: &str = "propose_note";
 const FETCH_TOOL: &str = "fetch_url";
 /// Model calls within one reply. A write (`propose_note`) always ends the
 /// turn, so this only bounds how long a read-only fetch chain can run.
-const MAX_AGENT_STEPS: u32 = MAX_FETCH_CALLS + MAX_MCP_CALLS + 2;
+const MAX_AGENT_STEPS: u32 = MAX_FETCH_CALLS + MAX_MCP_CALLS + RECORD_STEPS + 2;
+/// Model calls a reply may spend on the user's registers (lookups and the
+/// changes that follow them).
+const RECORD_STEPS: u32 = 4;
 /// `fetch_url` has no effect (`PLAN_NEXUS_RO.md`, agent-loop slice: a read
 /// needs no approval), so it runs automatically — bounded here, not by the
 /// user approving each call, which is the trade a write tool never gets.
@@ -875,10 +879,23 @@ impl Runtime {
             .map_err(to_nexus_error)?;
         // The user's enabled MCP tools, read once per reply.
         let mcp_offer = self.mcp_offer().await;
+        // The user's registers (job applications first), with their fields.
+        let registers = match self.registers().await {
+            Ok(registers) => registers,
+            Err(err) => {
+                tracing::warn!(error = %err.message, "registers not offered");
+                Vec::new()
+            }
+        };
         let system_instruction = format!(
-            "{}{}{}",
+            "{}{}{}{}",
             system_instruction(persona),
             if mcp_offer.is_empty() { "" } else { MCP_NOTE },
+            if registers.is_empty() {
+                String::new()
+            } else {
+                records::records_note(&registers, &records::today())
+            },
             memory_block(&memory)
         );
         let mut turn_messages = context(&history, history_until);
@@ -914,6 +931,11 @@ impl Runtime {
             if budget.memory_proposals < MAX_MEMORY_PROPOSALS {
                 tools.push(memory_tool());
             }
+            tools.extend(records::record_tools(
+                &registers,
+                budget.record_reads < MAX_RECORD_READS,
+                budget.record_writes < MAX_RECORD_WRITES,
+            ));
             if budget.mcp_calls_used < MAX_MCP_CALLS {
                 tools.extend(mcp_offer.iter().map(|o| o.declaration.clone()));
                 for o in &mcp_offer {
@@ -972,6 +994,7 @@ impl Runtime {
             let fetch_call = call.calls.iter().find(|c| c.name == FETCH_TOOL);
             for c in &call.calls {
                 if ![NOTE_TOOL, FETCH_TOOL, MEMORY_TOOL].contains(&c.name.as_str())
+                    && !(is_record_tool(&c.name) && !registers.is_empty())
                     && !mcp_offer.iter().any(|o| o.function == c.name)
                 {
                     tracing::warn!(tool = %c.name, "ignored a tool proposal the host does not offer");
@@ -999,6 +1022,44 @@ impl Runtime {
                     .await;
                 budget.memory_proposals += 1;
                 handled.push((proposal, response));
+            }
+
+            // The user's registers: lookups, then the changes the user told
+            // the agent about, in the order the model asked. They stay in
+            // Nexus, so they run now, within the reply's budgets, even when
+            // the same step also proposes something.
+            if !registers.is_empty() {
+                let mut record_calls: Vec<&ToolCall> = call
+                    .calls
+                    .iter()
+                    .filter(|c| is_record_tool(&c.name))
+                    .collect();
+                record_calls.sort_by_key(|c| c.order);
+                for c in record_calls {
+                    let response = if c.name == FIND_TOOL {
+                        if budget.record_reads >= MAX_RECORD_READS {
+                            json!({ "error": BUDGET_SPENT })
+                        } else {
+                            budget.record_reads += 1;
+                            self.agent_find_records(reply, &registers, &c.arguments)
+                                .await
+                        }
+                    } else if budget.record_writes >= MAX_RECORD_WRITES {
+                        json!({ "error": BUDGET_SPENT })
+                    } else {
+                        budget.record_writes += 1;
+                        self.agent_write_record(
+                            reply,
+                            conversation_id,
+                            &registers,
+                            &c.name,
+                            &c.arguments,
+                            &budget.read_hosts,
+                        )
+                        .await
+                    };
+                    handled.push((c, response));
+                }
             }
 
             if let Some(proposed) = proposal {
@@ -1638,7 +1699,7 @@ impl Runtime {
 
     /// Records a step as Running. Best effort: the step is for the user to
     /// watch, so a failure to record it is logged and the reply goes on.
-    async fn begin_step(
+    pub(super) async fn begin_step(
         &self,
         message: MessageId,
         kind: AgentStepKind,
@@ -1653,7 +1714,12 @@ impl Runtime {
         }
     }
 
-    async fn finish_step(&self, step: Option<AgentStepId>, status: AgentStepStatus, detail: Value) {
+    pub(super) async fn finish_step(
+        &self,
+        step: Option<AgentStepId>,
+        status: AgentStepStatus,
+        detail: Value,
+    ) {
         let Some(step) = step else { return };
         if let Err(err) = self.store.finish_step(step, status, detail, now_ms()).await {
             tracing::warn!(step = %step, error = %err, "could not settle an agent step");
@@ -1891,6 +1957,33 @@ fn step_view(row: &AgentStepRow) -> AgentStepView {
                 .map(RunId),
             error: text("error"),
         },
+        AgentStepKind::RecordsFound => AgentStepDetail::RecordsFound {
+            register: text("register").unwrap_or_default(),
+            query: text("query").unwrap_or_default(),
+            count: number("count").and_then(|n| u32::try_from(n).ok()),
+            error: text("error"),
+        },
+        AgentStepKind::RecordChanged => AgentStepDetail::RecordChanged {
+            register: text("register").unwrap_or_default(),
+            action: text("action").unwrap_or_default(),
+            title: text("title").unwrap_or_default(),
+            fields: d
+                .get("fields")
+                .and_then(Value::as_array)
+                .map(|f| {
+                    f.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            record_id: text("record_id")
+                .and_then(|s| uuid::Uuid::parse_str(&s).ok())
+                .map(nexus_protocol::RecordId),
+            change_id: d.get("change_id").and_then(Value::as_i64),
+            undone: d.get("undone").and_then(Value::as_bool).unwrap_or(false),
+            error: text("error"),
+        },
         AgentStepKind::McpCall => AgentStepDetail::McpCall {
             server: text("server").unwrap_or_default(),
             tool: text("tool").unwrap_or_default(),
@@ -2048,6 +2141,10 @@ struct TurnBudget {
     /// Hosts read in this turn (for facts proposed after reading them).
     read_hosts: Vec<String>,
     continuations: u32,
+    #[serde(default)]
+    record_reads: u32,
+    #[serde(default)]
+    record_writes: u32,
 }
 
 struct ReplyOutcome {
@@ -2111,6 +2208,7 @@ fn paused_turn(
 ) -> Option<Pause> {
     let known = |c: &ToolCall| {
         [NOTE_TOOL, FETCH_TOOL, MEMORY_TOOL].contains(&c.name.as_str())
+            || is_record_tool(&c.name)
             || mcp_offer.iter().any(|o| o.function == c.name)
     };
     let mut calls: Vec<&ToolCall> = step.calls.iter().filter(|c| known(c)).collect();
@@ -2133,7 +2231,7 @@ fn paused_turn(
             let response = answered
                 .iter()
                 .find(|(c, _)| std::ptr::eq(*c, call))
-                .map(|(_, r)| r.clone())
+                .map(|(_, r)| kept_response(&call.name, r))
                 .unwrap_or_else(|| json!({ "error": NOT_RUN }));
             Some(Part::FunctionResponse {
                 id: call.id.clone(),
@@ -2167,8 +2265,27 @@ fn paused_turn(
     }
 }
 
-/// The turn with every web page's and MCP tool's result replaced by a stub
-/// (an error stays: it is the host's own message).
+fn is_record_tool(name: &str) -> bool {
+    [FIND_TOOL, ADD_TOOL, UPDATE_TOOL].contains(&name)
+}
+
+/// What a waiting turn keeps of a tool's result: a web page's, an MCP
+/// tool's and a register lookup's are replaced by a stub (an error stays:
+/// it is the host's own message); the model looks again if it still needs
+/// them.
+fn kept_response(name: &str, response: &Value) -> Value {
+    if name == FETCH_TOOL || name == FIND_TOOL || name.starts_with("mcp") {
+        match response.get("error") {
+            Some(error) => json!({ "error": error }),
+            None => json!({ "note": NOT_KEPT }),
+        }
+    } else {
+        response.clone()
+    }
+}
+
+/// The turn with every web page's, MCP tool's and register lookup's result
+/// replaced by a stub (see [`kept_response`]).
 fn without_external_data(turn: &[Message]) -> Vec<Message> {
     turn.iter()
         .map(|m| Message {
@@ -2177,18 +2294,11 @@ fn without_external_data(turn: &[Message]) -> Vec<Message> {
                 .parts
                 .iter()
                 .map(|p| match p {
-                    Part::FunctionResponse { id, name, response }
-                        if name == FETCH_TOOL || name.starts_with("mcp") =>
-                    {
-                        Part::FunctionResponse {
-                            id: id.clone(),
-                            name: name.clone(),
-                            response: match response.get("error") {
-                                Some(error) => json!({ "error": error }),
-                                None => json!({ "note": NOT_KEPT }),
-                            },
-                        }
-                    }
+                    Part::FunctionResponse { id, name, response } => Part::FunctionResponse {
+                        id: id.clone(),
+                        name: name.clone(),
+                        response: kept_response(name, response),
+                    },
                     other => other.clone(),
                 })
                 .collect(),

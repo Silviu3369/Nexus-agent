@@ -6,6 +6,7 @@ mod automation;
 mod chat;
 mod mcp;
 mod memory;
+mod records;
 mod repo;
 mod schema;
 mod steps;
@@ -18,6 +19,9 @@ pub use chat::{
 };
 pub use mcp::{McpServerRow, McpToolRow, NewMcpTool};
 pub use memory::{MemoryFilter, MemoryRow, NewMemory, ProjectRow};
+pub use records::{
+    AgentOrigin, RecordChangeRow, RecordFilter, RecordRow, RecordWrite, RegisterRow, Values,
+};
 pub use repo::{
     ActionRow, ApprovalRow, ArtifactRow, Decision, EventRow, NewAction, NewOperation, OperationRow,
     RunDetail, RunError, RunOrigin, RunRow, SubmitOutcome, TaskRow,
@@ -73,6 +77,8 @@ pub enum StorageError {
     CancellationRequested,
     #[error("a reply is still being written; stop it first")]
     ReplyInProgress,
+    #[error("{0}")]
+    NotUndoable(String),
 }
 
 type Job = Box<dyn FnOnce(&mut Connection) + Send>;

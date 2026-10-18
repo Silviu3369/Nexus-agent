@@ -91,6 +91,23 @@ async fn main() {
     fake.push(Reply::text(&["Page 7 is deleted."]));
     // An automation the user runs now: a task like any other.
     fake.push(Reply::text(&["Your morning summary is ready."]));
+    // Jobs: the user says they applied; the agent looks the company up,
+    // finds nothing, and saves the application with today's local date.
+    let today = nexus_host::schedule::local_date(nexus_storage::now_ms(), None);
+    fake.push(Reply::calls(&[(
+        "find_records",
+        serde_json::json!({"register": "job_applications", "text": "Acme"}),
+    )]));
+    fake.push(Reply::calls(&[(
+        "add_record",
+        serde_json::json!({"register": "job_applications", "values": {
+            "company": "Acme", "role": "Service Desk Analyst", "status": "Applied",
+            "applied_on": today, "follow_up_on": today, "source": "company site"
+        }}),
+    )]));
+    fake.push(Reply::text(&[
+        "Saved: Acme, Service Desk Analyst, applied today.",
+    ]));
     println!("{}", fake.base_url);
     println!("{}", mcp.url);
     std::io::stdout().flush().expect("stdout");

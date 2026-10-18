@@ -7,6 +7,7 @@ import { useDerived, useNexus } from "../state/store";
 import {
   AgentIcon,
   AutomationIcon,
+  BriefcaseIcon,
   CoreIcon,
   FolderIcon,
   HexIcon,
@@ -29,6 +30,7 @@ import { ModelsView } from "../views/Models";
 import { MemoryView } from "../views/Memory";
 import { ToolsView } from "../views/Tools";
 import { AutomationsView } from "../views/Automations";
+import { JobsView } from "../views/Jobs";
 import { ProjectsView } from "../views/Projects";
 import { ActivityView } from "../views/Activity";
 import { SettingsView } from "../views/Settings";
@@ -37,6 +39,7 @@ const SECTIONS: { id: Section; label: string; icon: (p: { size?: number }) => Re
   { id: "overview", label: "Overview", icon: CoreIcon, hint: "What Nexus is doing now" },
   { id: "agents", label: "Agents", icon: AgentIcon, hint: "Who does the work, with which rights" },
   { id: "tasks", label: "Tasks", icon: TasksIcon, hint: "Requests, their runs, steps and actions" },
+  { id: "jobs", label: "Jobs", icon: BriefcaseIcon, hint: "Applications you saved or sent, and what comes next" },
   { id: "projects", label: "Projects", icon: FolderIcon, hint: "Workspaces" },
   { id: "memory", label: "Memory", icon: MemoryIcon, hint: "What Nexus knows and sends" },
   { id: "automations", label: "Automations", icon: AutomationIcon, hint: "Scheduled and conditional work" },
@@ -120,6 +123,8 @@ function SectionView({ target }: { target: NavTarget }) {
       return <MemoryView key={target.projectId ?? "all"} initialProjectId={target.projectId} />;
     case "tools":
       return <ToolsView key={target.tool ?? "web"} initialTool={target.tool ?? "web"} />;
+    case "jobs":
+      return <JobsView key={target.recordId ?? "all"} initialRecordId={target.recordId ?? null} />;
     case "automations":
       return <AutomationsView />;
     case "projects":

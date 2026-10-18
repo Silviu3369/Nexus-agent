@@ -195,6 +195,8 @@ closed_enum!(AgentStepKind {
     NoteProposed,
     MemoryProposed,
     McpCall,
+    RecordsFound,
+    RecordChanged,
 });
 
 closed_enum!(AgentStepStatus {
@@ -224,6 +226,18 @@ closed_enum!(MemoryStatus {
 });
 
 closed_enum!(MemorySource { User, Agent });
+
+// Who changed a record in one of Nexus's registers (`PLAN_NEXUS_RO.md` §3a):
+// the agent writes directly, and the user can undo each of its changes.
+closed_enum!(RecordActor { User, Agent });
+
+// One entry of a record's history. An undo is itself an entry; the entry it
+// reverses is marked undone.
+closed_enum!(RecordChangeKind {
+    Created,
+    Updated,
+    Undo,
+});
 
 impl MemoryStatus {
     /// A proposal is decided once; a decided fact is edited or deleted,

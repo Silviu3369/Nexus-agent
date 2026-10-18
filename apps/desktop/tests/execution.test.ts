@@ -598,3 +598,73 @@ test("a model call shows the tokens the provider reported", () => {
   const [run] = buildRuns(conversation(message("Model", REPLY, [call], { status: "Complete" })), new Map(), "Nexus");
   assert.ok(run.items[0].facts.some(([k, v]) => k === "Tokens" && v === "1,234 sent · 56 received"));
 });
+
+test("register steps say what was looked up and saved, and an undone change says so", () => {
+  const found = step(
+    { kind: "RecordsFound", register: "Job applications", query: "“Acme”", count: 0, error: null },
+    "Done",
+    T0 + 900,
+    T0 + 905,
+  );
+  const added = step(
+    {
+      kind: "RecordChanged",
+      register: "Job applications",
+      action: "added",
+      title: "Acme · Service Desk Analyst",
+      fields: ["company", "role", "status"],
+      record_id: "rec-1",
+      change_id: 7,
+      undone: false,
+      error: null,
+    },
+    "Done",
+    T0 + 1900,
+    T0 + 1910,
+  );
+  const [run] = buildRuns(conversation(message("Model", REPLY, [model("Done", T0, T0 + 900), found, added])), new Map(), "Nexus");
+  const records = run.items.filter((i) => i.kind === "record");
+  assert.deepEqual(
+    records.map((i) => [i.title, i.outcome, i.tool]),
+    [
+      ["Looked up Job applications", "0 found · “Acme”", "Records"],
+      ["Added Acme · Service Desk Analyst in Job applications", "company, role, status · saved; you can undo it", "Records"],
+    ],
+  );
+  assert.deepEqual(records[1].record, { changeId: 7, recordId: "rec-1", undone: false });
+  const core = deriveCore({ run, pendingApprovals: 0, composing: false, now: T0 + 2000 });
+  assert.ok(core.nodes.some((n) => n.id === "records" && n.label === "Records" && n.sublabel === "saved"));
+
+  const undone = { ...added, detail: { ...added.detail, undone: true } } as AgentStepView;
+  const [after] = buildRuns(conversation(message("Model", REPLY, [model("Done", T0, T0 + 900), undone])), new Map(), "Nexus");
+  const item = after.items.find((i) => i.kind === "record");
+  assert.equal(item?.status, "cancelled");
+  assert.equal(item?.outcome, "undone by you");
+
+  const failed = step(
+    {
+      kind: "RecordChanged",
+      register: "Job applications",
+      action: "added",
+      title: "",
+      fields: [],
+      record_id: null,
+      change_id: null,
+      undone: false,
+      error: "Applied on must be a date as YYYY-MM-DD",
+    },
+    "Failed",
+    T0,
+    T0 + 1,
+  );
+  const [bad] = buildRuns(conversation(message("Model", REPLY, [failed])), new Map(), "Nexus");
+  assert.equal(bad.items[0].title, "Could not save to Job applications");
+});
+
+test("record events refresh the registers, and an undo the task's steps", () => {
+  const ev = (kind: string) => ({ seq: 1, kind, entity_id: "x", created_at_ms: T0 });
+  for (const kind of ["RecordAdded", "RecordUpdated", "RecordDeleted"]) {
+    assert.deepEqual([...invalidatedBy([ev(kind)])], ["registers"], kind);
+  }
+  assert.deepEqual([...invalidatedBy([ev("RecordChangeUndone")])].sort(), ["focus", "registers", "steps"]);
+});

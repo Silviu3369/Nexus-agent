@@ -58,7 +58,7 @@ export type CoreState =
   | "SUCCESS"
   | "ERROR";
 
-export type ItemKind = "model" | "web" | "note" | "memory" | "mcp" | "approval" | "write";
+export type ItemKind = "model" | "web" | "note" | "memory" | "mcp" | "record" | "approval" | "write";
 
 export interface TimelineItem {
   id: string;
@@ -84,6 +84,9 @@ export interface TimelineItem {
   proposal?: boolean;
   /** Model calls: MCP servers whose tools the model could call. */
   mcpAvailable?: string[];
+  /** A change the agent made to one of the user's registers, which the
+   *  user can undo. */
+  record?: { changeId: number | null; recordId: string | null; undone: boolean };
 }
 
 export interface RunVM {
@@ -167,6 +170,20 @@ export function describeStep(step: AgentStepView): { title: string; detail: stri
       const title = `Proposed to remember "${clip(d.content, 60)}"`;
       if (d.error) return { title, detail: d.error };
       return { title, detail: running ? null : "remembered only if you approve it" };
+    }
+    case "RecordsFound": {
+      const title = `${running ? "Looking up" : "Looked up"} ${d.register}`;
+      if (d.error) return { title, detail: d.error };
+      if (d.count === null) return { title, detail: null };
+      return { title, detail: `${d.count} found · ${d.query}` };
+    }
+    case "RecordChanged": {
+      const what = d.title || "a record";
+      const title = `${d.action === "added" ? "Added" : "Updated"} ${what} in ${d.register}`;
+      if (d.error) return { title: `Could not save to ${d.register}`, detail: d.error };
+      if (running) return { title, detail: null };
+      if (d.undone) return { title, detail: "undone by you" };
+      return { title, detail: d.fields.length > 0 ? `${d.fields.join(", ")} · saved; you can undo it` : "nothing changed" };
     }
     case "McpCall": {
       if (d.run_id) {
@@ -297,6 +314,39 @@ function stepItem(step: AgentStepView, agent: string, pendingMemory: ReadonlySet
         ]),
       };
     }
+    case "RecordsFound":
+      return {
+        ...base,
+        kind: "record",
+        title: `${status === "running" ? "Looking up" : "Looked up"} ${d.register}`,
+        model: null,
+        tool: "Records",
+        outcome: detail,
+        facts: compact([
+          ["Register", d.register],
+          ["Asked for", d.query],
+          ["Found", d.count === null ? null : String(d.count)],
+          ["Error", d.error],
+        ]),
+      };
+    case "RecordChanged":
+      return {
+        ...base,
+        kind: "record",
+        status: d.undone ? "cancelled" : status,
+        title: describeStep(step).title,
+        model: null,
+        tool: "Records",
+        outcome: detail,
+        record: { changeId: d.change_id, recordId: d.record_id, undone: d.undone },
+        facts: compact([
+          ["Register", d.register],
+          ["Record", d.title || null],
+          ["Fields", d.fields.length > 0 ? d.fields.join(", ") : null],
+          ["Undone", d.undone ? "yes, by you" : null],
+          ["Error", d.error],
+        ]),
+      };
     case "McpCall":
       if (d.run_id)
         return {
@@ -635,7 +685,7 @@ export function nextLine(run: RunVM | null): string {
 
 // ---------- Core state and the context nodes around it ----------
 
-export type NodeKind = "model" | "web" | "files" | "memory" | "mcp" | "approval";
+export type NodeKind = "model" | "web" | "files" | "memory" | "mcp" | "records" | "approval";
 
 export interface ContextNode {
   id: NodeKind;
@@ -688,6 +738,7 @@ const NODE_OF: Record<ItemKind, NodeKind> = {
   note: "files",
   memory: "memory",
   mcp: "mcp",
+  record: "records",
   write: "files",
   approval: "approval",
 };
@@ -758,6 +809,9 @@ export function deriveCore(input: {
     } else if (running.kind === "memory") {
       state = "USING_TOOL";
       label = "Proposing a fact to remember";
+    } else if (running.kind === "record") {
+      state = "USING_TOOL";
+      label = running.title;
     } else if (running.kind === "mcp") {
       state = "USING_TOOL";
       label = running.mcp ? `Using ${running.mcp.tool} on ${running.mcp.server}` : running.title;
@@ -819,6 +873,8 @@ function nodeLabel(id: NodeKind, item: TimelineItem): string {
       return "Memory";
     case "mcp":
       return item.mcp?.server ?? "MCP";
+    case "records":
+      return "Records";
     case "approval":
       return "You";
   }
@@ -836,6 +892,8 @@ function nodeSublabel(id: NodeKind, item: TimelineItem): string | null {
       return item.status === "waiting" ? "proposal · your review" : "proposal";
     case "mcp":
       return item.mcp?.tool ?? "MCP tool";
+    case "records":
+      return item.record ? (item.record.undone ? "change undone" : "saved") : "lookup";
     case "approval":
       return "approval";
   }
@@ -937,7 +995,7 @@ export function modelStats(steps: AgentStepView[]): ModelStats[] {
 
 // ---------- Activity log ----------
 
-export type ActivityTool = "Model" | "Web read" | "Notes" | "Memory" | "MCP" | "Automations" | "System";
+export type ActivityTool = "Model" | "Web read" | "Notes" | "Memory" | "Records" | "MCP" | "Automations" | "System";
 
 export interface ActivityEntry {
   id: string;
@@ -992,6 +1050,10 @@ const EVENT_TEXT: Record<string, { title: string; tool: ActivityTool; status?: E
   McpToolEnabled: { title: "MCP tool enabled", tool: "MCP" },
   McpToolDisabled: { title: "MCP tool turned off", tool: "MCP" },
   RemoteCallCompleted: { title: "Approved MCP call made once", tool: "MCP", status: "completed" },
+  RecordAdded: { title: "Record added", tool: "Records" },
+  RecordUpdated: { title: "Record changed", tool: "Records" },
+  RecordDeleted: { title: "Record deleted with its history", tool: "Records" },
+  RecordChangeUndone: { title: "A record change undone", tool: "Records" },
   AutomationCreated: { title: "Automation created", tool: "Automations" },
   AutomationUpdated: { title: "Automation changed", tool: "Automations" },
   AutomationDeleted: { title: "Automation deleted (its tasks stay)", tool: "Automations" },
@@ -1080,6 +1142,8 @@ const TOOL_OF_STEP: Record<AgentStepView["detail"]["kind"], ActivityTool> = {
   NoteProposed: "Notes",
   MemoryProposed: "Memory",
   McpCall: "MCP",
+  RecordsFound: "Records",
+  RecordChanged: "Records",
 };
 
 function splitWords(kind: string): string {
@@ -1100,6 +1164,7 @@ export type Collection =
   | "mcp"
   | "usage"
   | "automations"
+  | "registers"
   | "focus";
 
 /** What each durable event invalidates. Events are notifications only;
@@ -1151,6 +1216,13 @@ export function invalidatedBy(events: EventView[]): Set<Collection> {
       out.add("usage");
     } else if (k.startsWith("Automation")) {
       out.add("automations");
+    } else if (k.startsWith("Record")) {
+      out.add("registers");
+      // An undone change shows on the agent's step in its task.
+      if (k === "RecordChangeUndone") {
+        out.add("steps");
+        out.add("focus");
+      }
     }
   }
   return out;

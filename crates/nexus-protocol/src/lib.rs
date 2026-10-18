@@ -11,6 +11,7 @@ pub mod ids;
 pub mod mcp;
 pub mod memory;
 pub mod pairing;
+pub mod records;
 pub mod runs;
 pub mod service;
 pub mod usage;
@@ -35,13 +36,17 @@ pub use error::{ErrorCode, NexusError};
 pub use handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse, HealthStatus};
 pub use ids::{
     ActionId, AgentStepId, ApprovalId, ArtifactId, AutomationId, ConnectionId, ConversationId,
-    EventId, McpServerId, MemoryId, MessageId, OperationId, ProjectId, RequestId, RunId, StepId,
-    TaskId,
+    EventId, McpServerId, MemoryId, MessageId, OperationId, ProjectId, RecordId, RegisterId,
+    RequestId, RunId, StepId, TaskId,
 };
 pub use mcp::{McpServerView, McpToolView, SaveMcpServerRequest};
 pub use memory::{
     AddMemoryRequest, MemoryContextView, MemoryItemView, MemoryQuery, MemoryScope, MemorySource,
     MemoryStatus, ProjectView, SaveProjectRequest,
+};
+pub use records::{
+    FieldChange, FieldDef, FieldKind, RecordActor, RecordChangeKind, RecordChangeView,
+    RecordDetailView, RecordQuery, RecordView, RegisterView, SaveRecordRequest,
 };
 pub use service::{NexusService, NexusServiceClient};
 pub use usage::{ModelPrice, ModelUsageView, UsageView};

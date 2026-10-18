@@ -11,9 +11,10 @@ use nexus_protocol::{
     ConversationSummary, ConversationView, DecideApprovalRequest, DeletedView, ErrorCode,
     EventsPage, GetHealthResponse, HandshakeRequest, HandshakeResponse, HealthStatus, McpServerId,
     McpServerView, MemoryContextView, MemoryId, MemoryItemView, MemoryQuery, MessageId, ModelPrice,
-    ModelView, NexusError, PROTOCOL_VERSION, PersonaView, ProjectId, ProjectView, RunId, RunView,
-    SaveAutomationRequest, SaveConnectionRequest, SaveMcpServerRequest, SavePersonaRequest,
-    SaveProjectRequest, SendMessageRequest, SendMessageResponse, Snapshot, SubmitNoteRequest,
+    ModelView, NexusError, PROTOCOL_VERSION, PersonaView, ProjectId, ProjectView, RecordDetailView,
+    RecordId, RecordQuery, RecordView, RegisterView, RunId, RunView, SaveAutomationRequest,
+    SaveConnectionRequest, SaveMcpServerRequest, SavePersonaRequest, SaveProjectRequest,
+    SaveRecordRequest, SendMessageRequest, SendMessageResponse, Snapshot, SubmitNoteRequest,
     SubmitNoteResponse, SystemStatusView, ThinkingLevel, UsageView,
 };
 use tarpc::context::Context;
@@ -431,6 +432,48 @@ impl NexusService for HostServer {
     ) -> Result<UsageView, NexusError> {
         self.require_session()?;
         self.runtime.set_model_price(provider, model, price).await
+    }
+
+    async fn list_registers(self, _ctx: Context) -> Result<Vec<RegisterView>, NexusError> {
+        self.require_session()?;
+        self.runtime.list_registers().await
+    }
+
+    async fn list_records(
+        self,
+        _ctx: Context,
+        query: RecordQuery,
+    ) -> Result<Vec<RecordView>, NexusError> {
+        self.require_session()?;
+        self.runtime.list_records(query).await
+    }
+
+    async fn record_detail(
+        self,
+        _ctx: Context,
+        record_id: RecordId,
+    ) -> Result<RecordDetailView, NexusError> {
+        self.require_session()?;
+        self.runtime.record_detail(record_id).await
+    }
+
+    async fn save_record(
+        self,
+        _ctx: Context,
+        request: SaveRecordRequest,
+    ) -> Result<RecordView, NexusError> {
+        self.require_session()?;
+        self.runtime.save_record(request).await
+    }
+
+    async fn delete_record(self, _ctx: Context, record_id: RecordId) -> Result<(), NexusError> {
+        self.require_session()?;
+        self.runtime.delete_record(record_id).await
+    }
+
+    async fn undo_record_change(self, _ctx: Context, change_id: i64) -> Result<(), NexusError> {
+        self.require_session()?;
+        self.runtime.undo_record_change(change_id).await
     }
 
     async fn list_automations(self, _ctx: Context) -> Result<Vec<AutomationView>, NexusError> {

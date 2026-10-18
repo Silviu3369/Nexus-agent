@@ -425,6 +425,48 @@ impl NexusClient {
             .await??)
     }
 
+    pub async fn registers(&self) -> Result<Vec<nexus_protocol::RegisterView>, CallError> {
+        Ok(self.client.list_registers(context::current()).await??)
+    }
+
+    pub async fn records(
+        &self,
+        query: nexus_protocol::RecordQuery,
+    ) -> Result<Vec<nexus_protocol::RecordView>, CallError> {
+        Ok(self
+            .client
+            .list_records(context::current(), query)
+            .await??)
+    }
+
+    pub async fn record_detail(
+        &self,
+        id: nexus_protocol::RecordId,
+    ) -> Result<nexus_protocol::RecordDetailView, CallError> {
+        Ok(self.client.record_detail(context::current(), id).await??)
+    }
+
+    pub async fn save_record(
+        &self,
+        request: nexus_protocol::SaveRecordRequest,
+    ) -> Result<nexus_protocol::RecordView, CallError> {
+        Ok(self
+            .client
+            .save_record(context::current(), request)
+            .await??)
+    }
+
+    pub async fn delete_record(&self, id: nexus_protocol::RecordId) -> Result<(), CallError> {
+        Ok(self.client.delete_record(context::current(), id).await??)
+    }
+
+    pub async fn undo_record_change(&self, change_id: i64) -> Result<(), CallError> {
+        Ok(self
+            .client
+            .undo_record_change(context::current(), change_id)
+            .await??)
+    }
+
     pub async fn automations(&self) -> Result<Vec<nexus_protocol::AutomationView>, CallError> {
         Ok(self.client.list_automations(context::current()).await??)
     }

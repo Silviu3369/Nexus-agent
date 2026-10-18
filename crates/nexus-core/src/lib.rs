@@ -5,6 +5,6 @@ pub mod state;
 
 pub use state::{
     ActionState, AgentStepKind, AgentStepStatus, IllegalTransition, MemoryScope, MemorySource,
-    MemoryStatus, MessageRole, MessageStatus, OperationState, RunState, ThinkingLevel,
-    UnknownState,
+    MemoryStatus, MessageRole, MessageStatus, OperationState, RecordActor, RecordChangeKind,
+    RunState, ThinkingLevel, UnknownState,
 };

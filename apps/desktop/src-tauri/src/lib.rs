@@ -5,6 +5,7 @@ mod chat;
 mod host;
 mod mcp;
 mod memory;
+mod records;
 mod runs;
 mod usage;
 
@@ -54,6 +55,12 @@ pub fn run() {
             memory::decide_memory,
             memory::delete_memory,
             memory::memory_context,
+            records::list_registers,
+            records::list_records,
+            records::record_detail,
+            records::save_record,
+            records::delete_record,
+            records::undo_record_change,
             automation::list_automations,
             automation::save_automation,
             automation::delete_automation,

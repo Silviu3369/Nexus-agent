@@ -136,6 +136,14 @@ pub fn next_run(
     }
 }
 
+/// "2026-10-18": the local day at a moment (`None` zone: this PC's).
+pub fn local_date(ms: i64, tz: Option<&TIME_ZONE_INFORMATION>) -> String {
+    match to_local(ms, tz) {
+        Some(t) => format!("{:04}-{:02}-{:02}", t.wYear, t.wMonth, t.wDay),
+        None => String::new(),
+    }
+}
+
 /// "2026-10-18 09:00" in local time, for a run's task title.
 pub fn local_label(ms: i64, tz: Option<&TIME_ZONE_INFORMATION>) -> String {
     match to_local(ms, tz) {

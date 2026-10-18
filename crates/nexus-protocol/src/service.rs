@@ -12,13 +12,14 @@ use crate::error::NexusError;
 use crate::handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse};
 use crate::ids::{
     ArtifactId, AutomationId, ConnectionId, ConversationId, McpServerId, MemoryId, MessageId,
-    ProjectId, RunId,
+    ProjectId, RecordId, RunId,
 };
 use crate::mcp::{McpServerView, SaveMcpServerRequest};
 use crate::memory::{
     AddMemoryRequest, MemoryContextView, MemoryItemView, MemoryQuery, ProjectView,
     SaveProjectRequest,
 };
+use crate::records::{RecordDetailView, RecordQuery, RecordView, RegisterView, SaveRecordRequest};
 use crate::runs::{
     BackupSummary, DecideApprovalRequest, EventsPage, RunView, Snapshot, SubmitNoteRequest,
     SubmitNoteResponse, SystemStatusView,
@@ -158,6 +159,24 @@ pub trait NexusService {
 
     /// Exactly the facts a request in this project sends to the model.
     async fn memory_context(project_id: ProjectId) -> Result<MemoryContextView, NexusError>;
+
+    /// The user's registers (job applications first) with their fields.
+    async fn list_registers() -> Result<Vec<RegisterView>, NexusError>;
+
+    async fn list_records(query: RecordQuery) -> Result<Vec<RecordView>, NexusError>;
+
+    /// One record with its history, newest first.
+    async fn record_detail(record_id: RecordId) -> Result<RecordDetailView, NexusError>;
+
+    /// Adds or edits a record as the user.
+    async fn save_record(request: SaveRecordRequest) -> Result<RecordView, NexusError>;
+
+    /// For good, with its history.
+    async fn delete_record(record_id: RecordId) -> Result<(), NexusError>;
+
+    /// Reverses one change (the latest of its record); undoing an addition
+    /// removes the record.
+    async fn undo_record_change(change_id: i64) -> Result<(), NexusError>;
 
     /// Automations with their next run and last outcome.
     async fn list_automations() -> Result<Vec<AutomationView>, NexusError>;

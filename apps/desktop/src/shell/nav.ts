@@ -5,6 +5,7 @@ export type Section =
   | "overview"
   | "agents"
   | "tasks"
+  | "jobs"
   | "projects"
   | "memory"
   | "automations"
@@ -20,6 +21,8 @@ export interface NavTarget {
   /** Tasks and Memory: start filtered to this project. */
   projectId?: string;
   tool?: ToolId;
+  /** Jobs: the record to open. */
+  recordId?: string;
 }
 
 export const NavContext = createContext<(target: NavTarget) => void>(() => undefined);

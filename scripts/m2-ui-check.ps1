@@ -21,7 +21,9 @@
   after each decision (the note, the call), deleting a request with its reply
   and a whole task (gone from the database files too), and removing the
   connection with its vault entry; an automation you create and run now, with
-  its history, its task, turning it off and deleting it. Build first:
+  its history, its task, turning it off and deleting it; a job application
+  the agent records from what you tell it, undone from the task, and one you
+  add, edit, undo and delete in Jobs. Build first:
     cargo build -p nexus-host --locked
     cargo build -p nexus-host --example fake_gemini_server --locked
     pnpm --filter @nexus/desktop tauri build --no-bundle
@@ -529,6 +531,42 @@ try {
   Check ($null -ne (Wait-Contains $win "No automations yet")) "the automation is deleted"
   Click-Button $win "Tasks"
   Check ($null -ne (Wait-Like $win "Morning summary · ")) "the task it started stays"
+
+  # --- jobs: the agent records an application, you undo it, keep your own ---
+  Click-Button $win "Overview"
+  Set-Field $win "Give Nexus a task" "I applied today at Acme for Service Desk Analyst on their site"
+  Click-Button $win "Run" 20
+  Check (Wait-Text $win "Saved: Acme, Service Desk Analyst, applied today." 20) "the agent answers after saving the application"
+  Check ($null -ne (Wait-Like $win "Looked up Job applications")) "it looked the company up first"
+  Check ($null -ne (Wait-Like $win "Added Acme · Service Desk Analyst in Job applications")) "the addition is a step of the task"
+  Click-Button $win "Jobs"
+  Check ($null -ne (Wait-Like $win "Acme · Service Desk Analyst")) "Jobs lists the application"
+  Check ($null -ne (Wait-Like $win "Follow-up due 1")) "its follow-up for today is counted as due"
+  Click-Button $win "Tasks"
+  $row = Wait-Like $win "I applied today at Acme"
+  if ($row) { Invoke-Element $row }
+  $undo = Wait-Like $win "Undo Added Acme"
+  Check ($null -ne $undo) "the task offers to undo the agent's change"
+  if ($undo) { Invoke-Element $undo }
+  Click-Button $win "Jobs"
+  Check ($null -ne (Wait-Contains $win "No applications yet")) "undone, the application is gone"
+  Click-Button $win "New application"
+  Set-Field $win "Company" "Beta"
+  Set-Field $win "Role" "IT Support"
+  Click-Button $win "Add application"
+  Check ($null -ne (Wait-Contains $win "Added by you")) "an application you add opens with its details"
+  Click-Button $win "Edit"
+  Set-Field $win "Notes (optional)" "Referral from Ana"
+  Click-Button $win "Save"
+  Check (Wait-Text $win "Referral from Ana") "an edit is saved"
+  Check ($null -ne (Wait-Contains $win "You changed notes")) "the history names the change"
+  $undoNote = Wait-Like $win "Undo: You changed notes"
+  if ($undoNote) { Invoke-Element $undoNote }
+  Check ($null -ne (Wait-Contains $win "You undid a change")) "your own change can be undone too"
+  Click-Button $win "Delete"
+  Check ($null -ne (Wait-Contains $win "with its history? This cannot be undone.")) "deleting asks first"
+  Click-Button $win "Delete for good"
+  Check ($null -ne (Wait-Contains $win "No applications yet")) "the application is deleted"
 
   # --- removing the connection removes its key ---
   Click-Button $win "Models"

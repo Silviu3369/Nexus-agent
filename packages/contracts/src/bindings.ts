@@ -138,7 +138,7 @@ export type AgentStepStatus = "Running" | "Done" | "Failed"
  * One step's kind-specific facts. Metadata only: a web read shows its
  * address, status and size, never the page's text.
  */
-export type AgentStepDetail = { kind: "ModelCall"; model: string; first_byte_ms: number | null; duration_ms: number | null; error: string | null; attempt: number | null; backup: boolean | null; memory_items: number | null; mcp_servers: string[] | null; mcp_tools: number | null; prompt_tokens: number | null; output_tokens: number | null } | { kind: "Fetch"; url: string; final_url: string | null; http_status: number | null; text_bytes: number | null; truncated: boolean | null; error: string | null } | { kind: "MemoryProposed"; content: string; scope: MemoryScope | null; memory_id: MemoryId | null; error: string | null } | { kind: "McpCall"; server: string; tool: string; arguments: string; result_chars: number | null; truncated: boolean | null; is_error: boolean | null; duration_ms: number | null; error: string | null; run_id: RunId | null } | { kind: "NoteProposed"; title: string; run_id: RunId | null; error: string | null }
+export type AgentStepDetail = { kind: "ModelCall"; model: string; first_byte_ms: number | null; duration_ms: number | null; error: string | null; attempt: number | null; backup: boolean | null; memory_items: number | null; mcp_servers: string[] | null; mcp_tools: number | null; prompt_tokens: number | null; output_tokens: number | null } | { kind: "Fetch"; url: string; final_url: string | null; http_status: number | null; text_bytes: number | null; truncated: boolean | null; error: string | null } | { kind: "MemoryProposed"; content: string; scope: MemoryScope | null; memory_id: MemoryId | null; error: string | null } | { kind: "McpCall"; server: string; tool: string; arguments: string; result_chars: number | null; truncated: boolean | null; is_error: boolean | null; duration_ms: number | null; error: string | null; run_id: RunId | null } | { kind: "NoteProposed"; title: string; run_id: RunId | null; error: string | null } | { kind: "RecordsFound"; register: string; query: string; count: number | null; error: string | null } | { kind: "RecordChanged"; register: string; action: string; title: string; fields: string[]; record_id: RecordId | null; change_id: number | null; undone: boolean; error: string | null }
 
 export type AgentStepView = { step_id: AgentStepId; message_id: MessageId; conversation_id: ConversationId; conversation_title: string; seq: number; status: AgentStepStatus; detail: AgentStepDetail; started_at_ms: number; finished_at_ms: number | null }
 
@@ -190,6 +190,32 @@ export type ModelUsageView = { provider: string; model: string; calls_today: num
 export type UsageView = { day_start_ms: number; daily_token_budget: number | null; tokens_today: number; models: ModelUsageView[]; estimated_cost_today: number | null }
 
 export type AutomationId = string
+
+export type RegisterId = string
+
+export type RecordId = string
+
+export type FieldKind = "Text" | "LongText" | "Url" | "Date" | "Choice"
+
+export type FieldDef = { key: string; label: string; kind: FieldKind; required: boolean; choices: string[]; max_chars: number; help: string }
+
+export type RegisterView = { register_id: RegisterId; key: string; name: string; item_name: string; fields: FieldDef[]; status_field: string; closed_statuses: string[]; follow_up_field: string | null; title_fields: string[]; record_count: number; follow_ups_due: number }
+
+export type RecordActor = "User" | "Agent"
+
+export type RecordChangeKind = "Created" | "Updated" | "Undo"
+
+export type RecordView = { record_id: RecordId; register_id: RegisterId; values: { [key: string]: string }; revision: number; created_by: RecordActor; created_at_ms: number; updated_at_ms: number; follow_up_due: boolean }
+
+export type FieldChange = { key: string; before: string | null; after: string | null }
+
+export type RecordChangeView = { change_id: number; kind: RecordChangeKind; actor: RecordActor; at_ms: number; fields: FieldChange[]; conversation_id: ConversationId | null; read_hosts: string[]; undone: boolean; can_undo: boolean }
+
+export type RecordDetailView = { record: RecordView; history: RecordChangeView[] }
+
+export type RecordQuery = { register_id: RegisterId; statuses: string[]; text: string | null; follow_up_due: boolean; limit: number }
+
+export type SaveRecordRequest = { register_id: RegisterId; record_id: RecordId | null; revision: number; values: { [key: string]: string } }
 
 /**
  * When an automation runs, in this PC's local time.

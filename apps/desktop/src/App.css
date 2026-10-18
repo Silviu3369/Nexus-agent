@@ -2651,6 +2651,208 @@ button.ghost.danger-ghost {
   font-size: 1.2rem;
 }
 
+/* ---------- Registers (Jobs) ---------- */
+
+.records {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.records-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  position: sticky;
+  top: 0;
+}
+
+.record-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.record-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex-basis: 100%;
+}
+
+.chip-empty {
+  opacity: 0.6;
+}
+
+.record-search {
+  flex: 1 1 180px;
+  min-width: 160px;
+}
+
+.chip {
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: transparent;
+  padding: 3px 10px;
+  color: var(--text-2);
+  font-size: 0.86rem;
+}
+
+.chip-attention {
+  border-color: var(--warn-line);
+  color: var(--warn);
+}
+
+.chip-on {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent-line);
+}
+
+.record-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.record-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 8px 10px;
+  color: var(--text);
+}
+
+.record-row:hover {
+  border-color: var(--line-2);
+}
+
+.record-row-on {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.record-row-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.record-row-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.record-row-meta {
+  color: var(--text-3);
+  font-size: 0.84rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.record-follow {
+  color: var(--text-3);
+  font-size: 0.84rem;
+  white-space: nowrap;
+}
+
+.record-follow-due {
+  color: var(--warn);
+}
+
+.record-hint {
+  margin: 10px 0 0;
+  font-size: 0.86rem;
+}
+
+.record-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.record-long {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.record-url {
+  overflow-wrap: anywhere;
+}
+
+.record-history-head {
+  margin: 14px 0 6px;
+  font-size: 0.9rem;
+  color: var(--text-2);
+}
+
+.record-history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 0.88rem;
+}
+
+.record-history > li {
+  border-left: 2px solid var(--line-2);
+  padding-left: 10px;
+}
+
+.record-change-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+}
+
+.record-change-what {
+  font-weight: 600;
+}
+
+.record-change-line {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.record-change-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.stack .record-date input:not([type="checkbox"]) {
+  width: auto;
+  min-width: 160px;
+}
+
+.tl-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 2px 0 6px 52px;
+}
+
 /* ---------- Automations ---------- */
 
 .automations {
@@ -2757,6 +2959,9 @@ button.ghost.danger-ghost {
 /* ---------- Narrow windows ---------- */
 
 @media (max-width: 1100px) {
+  .records-side {
+    position: static;
+  }
   .split {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -2769,6 +2974,7 @@ button.ghost.danger-ghost {
   .memory-grid,
   .projects,
   .automations,
+  .records,
   .inspector-grid {
     grid-template-columns: minmax(0, 1fr);
   }
