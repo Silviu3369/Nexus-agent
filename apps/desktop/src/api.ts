@@ -18,6 +18,12 @@ import type {
   DeletedView,
   ErrorCode,
   EventsPage,
+  ExportView,
+  FolderEntryView,
+  FolderView,
+  ImportPreviewView,
+  ImportRequest,
+  ImportResultView,
   HostStatus,
   MemoryContextView,
   MemoryId,
@@ -39,6 +45,7 @@ import type {
   RecordView,
   RegisterView,
   RunView,
+  SaveFolderRequest,
   SaveRecordRequest,
   Schedule,
   SendMessageResponse,
@@ -148,6 +155,16 @@ export const api = {
     invoke<UsageView>("set_model_price", { provider, model, price }),
 
   /** The user's registers (job applications first), with their fields and counts. */
+  /** Folders you share with Nexus; documents are read only inside them. */
+  listFolders: () => invoke<FolderView[]>("list_folders"),
+  saveFolder: (request: SaveFolderRequest) => invoke<FolderView>("save_folder", { request }),
+  removeFolder: (folderId: string) => invoke<null>("remove_folder", { folderId }),
+  folderEntries: (folderId: string) => invoke<FolderEntryView[]>("folder_entries", { folderId }),
+  exportRegister: (registerId: string, folderId: string) =>
+    invoke<ExportView>("export_register", { registerId, folderId }),
+  importPreview: (registerId: string, folderId: string, path: string) =>
+    invoke<ImportPreviewView>("import_preview", { registerId, folderId, path }),
+  importRecords: (request: ImportRequest) => invoke<ImportResultView>("import_records", { request }),
   listRegisters: () => invoke<RegisterView[]>("list_registers"),
   listRecords: (query: RecordQuery) => invoke<RecordView[]>("list_records", { query }),
   recordDetail: (recordId: string) => invoke<RecordDetailView>("record_detail", { recordId }),

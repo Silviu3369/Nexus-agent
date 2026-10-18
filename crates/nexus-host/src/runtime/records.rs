@@ -44,16 +44,16 @@ pub const JOB_APPLICATIONS: &str = "job_applications";
 /// Host's own format; the store only reads the status and follow-up keys).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct RegisterSchema {
-    version: u32,
-    item_name: String,
+    pub(super) version: u32,
+    pub(super) item_name: String,
     /// What it is for, told to the model.
-    purpose: String,
-    fields: Vec<FieldDef>,
-    status_field: String,
-    default_status: String,
-    closed_statuses: Vec<String>,
-    follow_up_field: Option<String>,
-    title_fields: Vec<String>,
+    pub(super) purpose: String,
+    pub(super) fields: Vec<FieldDef>,
+    pub(super) status_field: String,
+    pub(super) default_status: String,
+    pub(super) closed_statuses: Vec<String>,
+    pub(super) follow_up_field: Option<String>,
+    pub(super) title_fields: Vec<String>,
 }
 
 pub(super) struct Register {
@@ -307,7 +307,7 @@ fn normalize(field: &FieldDef, value: &str) -> Result<String, String> {
 }
 
 impl RegisterSchema {
-    fn field(&self, key: &str) -> Option<&FieldDef> {
+    pub(super) fn field(&self, key: &str) -> Option<&FieldDef> {
         self.fields.iter().find(|f| f.key == key)
     }
 
@@ -321,7 +321,7 @@ impl RegisterSchema {
 
     /// `base` with `changes` applied (`None` or empty clears a field), each
     /// value checked; the default status fills a missing one.
-    fn apply(
+    pub(super) fn apply(
         &self,
         mut values: Values,
         changes: impl IntoIterator<Item = (String, Option<String>)>,
@@ -355,7 +355,7 @@ impl RegisterSchema {
         Ok(values)
     }
 
-    fn title(&self, values: &Values) -> String {
+    pub(super) fn title(&self, values: &Values) -> String {
         self.title_fields
             .iter()
             .filter_map(|k| values.get(k))
@@ -497,7 +497,7 @@ impl Runtime {
             .collect()
     }
 
-    async fn register_by_id(&self, id: RegisterId) -> Result<Register, NexusError> {
+    pub(super) async fn register_by_id(&self, id: RegisterId) -> Result<Register, NexusError> {
         Self::with_schema(self.store.register(id).await.map_err(to_nexus_error)?)
     }
 

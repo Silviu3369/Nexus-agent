@@ -4,6 +4,7 @@
 
 mod automation;
 mod chat;
+mod folders;
 mod mcp;
 mod memory;
 mod records;
@@ -17,6 +18,7 @@ pub use chat::{
     ConnectionRow, Continuation, ConversationRow, DEFAULT_PERSONA_NAME, Deleted, Exchange,
     MessageRow, NewExchange, Pause, PersonaRow, Settlement,
 };
+pub use folders::FolderRow;
 pub use mcp::{McpServerRow, McpToolRow, NewMcpTool};
 pub use memory::{MemoryFilter, MemoryRow, NewMemory, ProjectRow};
 pub use records::{
@@ -79,6 +81,8 @@ pub enum StorageError {
     ReplyInProgress,
     #[error("{0}")]
     NotUndoable(String),
+    #[error("a shared folder already has that name or path")]
+    AlreadyShared,
 }
 
 type Job = Box<dyn FnOnce(&mut Connection) + Send>;

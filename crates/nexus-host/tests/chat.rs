@@ -475,13 +475,15 @@ async fn cancelling_a_reply_keeps_what_arrived_and_stops_the_call() {
     host.shutdown().await;
 }
 
-// Must match MAX_FETCH_CALLS / MAX_MCP_CALLS / RECORD_STEPS / MAX_AGENT_STEPS in
+// Must match MAX_FETCH_CALLS / MAX_MCP_CALLS / RECORD_STEPS / FILE_STEPS / MAX_AGENT_STEPS in
 // nexus-host/src/runtime/chat.rs.
 const MAX_FETCH_CALLS: usize = 4;
 const MAX_MCP_CALLS: usize = 4;
 /// Plus the model calls a reply may spend on the user's registers.
 const RECORD_STEPS: usize = 4;
-const MAX_AGENT_STEPS: usize = MAX_FETCH_CALLS + MAX_MCP_CALLS + RECORD_STEPS + 2;
+/// Plus the model calls a reply may spend on shared folders.
+const FILE_STEPS: usize = 4;
+const MAX_AGENT_STEPS: usize = MAX_FETCH_CALLS + MAX_MCP_CALLS + RECORD_STEPS + FILE_STEPS + 2;
 
 #[tokio::test]
 async fn a_refused_fetch_is_reported_back_to_the_model_which_then_answers() {
@@ -663,6 +665,9 @@ async fn every_agent_step_is_recorded_and_shown_in_the_reply_and_the_activity() 
             AgentStepDetail::RecordsFound { .. } | AgentStepDetail::RecordChanged { .. } => {
                 "record"
             }
+            AgentStepDetail::FilesListed { .. }
+            | AgentStepDetail::DocumentRead { .. }
+            | AgentStepDetail::DocumentProposed { .. } => "document",
         })
         .collect();
     assert_eq!(kinds, ["model", "fetch", "model", "note"]);

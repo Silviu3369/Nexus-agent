@@ -52,6 +52,7 @@ typed_id!(McpServerId);
 typed_id!(AutomationId);
 typed_id!(RegisterId);
 typed_id!(RecordId);
+typed_id!(FolderId);
 
 #[cfg(test)]
 mod tests {

@@ -9,14 +9,29 @@ import { describeStep, stepStatus } from "../model/execution.ts";
 import { ago, clock } from "../model/format.ts";
 import { NotesPanel } from "../Notes";
 import { McpServers } from "../components/McpServers";
+import { SharedFolders } from "../components/SharedFolders";
 import { useGoTo } from "../shell/nav";
 import { useDerived, useNexus, useNow } from "../state/store";
 import { Empty, Facts, Panel, StatusPill, Unavailable } from "../ui";
-import { ApiIcon, BrowserIcon, FolderIcon, GitIcon, GlobeIcon, MemoryIcon, MonitorIcon, PlugIcon, TerminalIcon } from "../icons";
+import {
+  ApiIcon,
+  BriefcaseIcon,
+  BrowserIcon,
+  FolderIcon,
+  GitIcon,
+  GlobeIcon,
+  MemoryIcon,
+  MonitorIcon,
+  NotesIcon,
+  PlugIcon,
+  TerminalIcon,
+} from "../icons";
 
 const ICON: Record<ToolId, (p: { size?: number }) => ReactElement> = {
   web: GlobeIcon,
-  files: FolderIcon,
+  files: NotesIcon,
+  documents: FolderIcon,
+  records: BriefcaseIcon,
   memory: MemoryIcon,
   browser: BrowserIcon,
   terminal: TerminalIcon,
@@ -85,6 +100,8 @@ function useToolUsage(): Partial<Record<ToolId, Usage>> {
     const proposals = steps.filter((s) => s.detail.kind === "NoteProposed");
     const facts = steps.filter((s) => s.detail.kind === "MemoryProposed");
     const calls = steps.filter((s) => s.detail.kind === "McpCall");
+    const docs = steps.filter((s) => ["FilesListed", "DocumentRead", "DocumentProposed"].includes(s.detail.kind));
+    const records = steps.filter((s) => s.detail.kind === "RecordsFound" || s.detail.kind === "RecordChanged");
     const artifactTimes = runs.flatMap((r) => (r.artifact ? [r.artifact.created_at_ms] : []));
     const fileTimes = [...proposals.map((s) => s.started_at_ms), ...artifactTimes];
     return {
@@ -96,6 +113,8 @@ function useToolUsage(): Partial<Record<ToolId, Usage>> {
       },
       memory: { running: facts.some((s) => s.status === "Running"), lastAt: facts[0]?.started_at_ms ?? null, count: facts.length },
       mcp: { running: calls.some((s) => s.status === "Running"), lastAt: calls[0]?.started_at_ms ?? null, count: calls.length },
+      documents: { running: docs.some((s) => s.status === "Running"), lastAt: docs[0]?.started_at_ms ?? null, count: docs.length },
+      records: { running: records.some((s) => s.status === "Running"), lastAt: records[0]?.started_at_ms ?? null, count: records.length },
     };
   }, [d.steps, d.runs]);
 }
@@ -134,6 +153,11 @@ function ToolDetail({ tool }: { tool: ToolInfo }) {
                 Open Memory
               </button>
             )}
+            {tool.id === "records" && (
+              <button type="button" className="ghost" onClick={() => goTo({ section: "jobs" })}>
+                Open Jobs
+              </button>
+            )}
           </>
         )}
       </Panel>
@@ -142,6 +166,12 @@ function ToolDetail({ tool }: { tool: ToolInfo }) {
         <>
           <McpServers />
           <RecentSteps kind="McpCall" title="Recent MCP calls" empty="No MCP tool calls yet." />
+        </>
+      )}
+      {tool.id === "documents" && (
+        <>
+          <SharedFolders />
+          <RecentSteps kind="DocumentRead" title="Recent reads" empty="No documents read yet." />
         </>
       )}
       {tool.id === "files" && (
@@ -153,13 +183,22 @@ function ToolDetail({ tool }: { tool: ToolInfo }) {
   );
 }
 
-function RecentSteps({ kind, title: heading, empty }: { kind: "Fetch" | "McpCall"; title: string; empty: string }) {
+function RecentSteps({
+  kind,
+  title: heading,
+  empty,
+}: {
+  kind: "Fetch" | "McpCall" | "DocumentRead";
+  title: string;
+  empty: string;
+}) {
   const d = useNexus();
   const goTo = useGoTo();
   const reads = (d.steps ?? []).filter((s) => s.detail.kind === kind).slice(0, 12);
-  const Icon = kind === "Fetch" ? GlobeIcon : PlugIcon;
+  const Icon = kind === "Fetch" ? GlobeIcon : kind === "DocumentRead" ? FolderIcon : PlugIcon;
+  const id = kind === "Fetch" ? "recent-reads" : kind === "DocumentRead" ? "recent-documents" : "recent-mcp-calls";
   return (
-    <Panel title={heading} icon={<Icon size={15} />} id={kind === "Fetch" ? "recent-reads" : "recent-mcp-calls"}>
+    <Panel title={heading} icon={<Icon size={15} />} id={id}>
       {reads.length === 0 ? (
         <Empty>{empty}</Empty>
       ) : (

@@ -492,7 +492,7 @@ async fn migrating_to_v11_keeps_every_message_and_step() {
             .call(|c| {
                 c.execute_batch(
                     "PRAGMA foreign_keys = OFF;
-                     DROP TABLE record_changes; DROP TABLE records; DROP TABLE registers;
+                     DROP TABLE folders; DROP TABLE record_changes; DROP TABLE records; DROP TABLE registers;
                      CREATE TABLE agent_steps_v10 (
                          id TEXT PRIMARY KEY, message_id TEXT NOT NULL REFERENCES messages (id),
                          seq INTEGER NOT NULL CHECK (seq >= 1),

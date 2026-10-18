@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::ids::{ConversationId, RecordId, RegisterId};
+use crate::ids::{ConversationId, FolderId, RecordId, RegisterId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub enum FieldKind {
@@ -138,4 +138,53 @@ pub struct SaveRecordRequest {
     pub revision: i64,
     /// Every field the user sees; an empty value clears it.
     pub values: BTreeMap<String, String>,
+}
+
+/// A register written to an Excel file in a shared folder.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct ExportView {
+    pub path: String,
+    pub rows: u32,
+}
+
+/// What an Excel or CSV file would import, before anything is added.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct ImportPreviewView {
+    pub file: String,
+    pub sheet: String,
+    /// The file's header row.
+    pub columns: Vec<String>,
+    /// The field each column goes to (`None`: not imported), as guessed.
+    pub mapping: Vec<Option<String>>,
+    /// Data rows (after the header).
+    pub rows: u32,
+    /// The first rows, as in the file.
+    pub sample: Vec<Vec<String>>,
+    /// The file has more rows than one import reads.
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct ImportRequest {
+    pub register_id: RegisterId,
+    pub folder_id: FolderId,
+    /// The file, relative to the shared folder.
+    pub path: String,
+    /// The field each column goes to, as the user confirmed it.
+    pub mapping: Vec<Option<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct ImportSkipView {
+    /// The row's number in the file (the header is row 1).
+    pub row: u32,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct ImportResultView {
+    pub added: u32,
+    /// Rows whose value could not be used as is (kept in the notes).
+    pub adjusted: u32,
+    pub skipped: Vec<ImportSkipView>,
 }

@@ -246,7 +246,7 @@ async fn migrating_to_v8_keeps_every_message() {
         store
             .call(|c| {
                 c.execute_batch(
-                    "DROP TABLE record_changes; DROP TABLE records; DROP TABLE registers; DROP TABLE automation_runs; DROP TABLE automations; DROP TABLE model_usage; DROP TABLE model_prices; DROP TABLE paused_turns; ALTER TABLE runs DROP COLUMN outcome_json;
+                    "DROP TABLE folders; DROP TABLE record_changes; DROP TABLE records; DROP TABLE registers; DROP TABLE automation_runs; DROP TABLE automations; DROP TABLE model_usage; DROP TABLE model_prices; DROP TABLE paused_turns; ALTER TABLE runs DROP COLUMN outcome_json;
                      PRAGMA user_version = 7;",
                 )?;
                 Ok(())

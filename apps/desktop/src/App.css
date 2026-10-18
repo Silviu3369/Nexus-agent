@@ -2651,6 +2651,27 @@ button.ghost.danger-ghost {
   font-size: 1.2rem;
 }
 
+/* ---------- Shared folders ---------- */
+
+.folder-entries {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  max-height: 260px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.86rem;
+}
+
+.folder-entries li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  overflow-wrap: anywhere;
+}
+
 /* ---------- Registers (Jobs) ---------- */
 
 .records {
@@ -2843,6 +2864,30 @@ button.ghost.danger-ghost {
 .stack .record-date input:not([type="checkbox"]) {
   width: auto;
   min-width: 160px;
+}
+
+.import-map {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+.import-map th,
+.import-map td {
+  text-align: left;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+
+.import-map select {
+  width: 100%;
+}
+
+.record-done {
+  margin: 0;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
 }
 
 .tl-actions {

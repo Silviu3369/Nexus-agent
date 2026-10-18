@@ -15,6 +15,7 @@ import type {
   ConversationSummary,
   ConversationView,
   EventView,
+  FolderView,
   HostStatus,
   MemoryItemView,
   McpServerView,
@@ -60,6 +61,8 @@ export interface NexusData {
   automations: AutomationView[] | null;
   /** The user's registers with their counts. */
   registers: RegisterView[] | null;
+  /** Folders the user shared with Nexus. */
+  folders: FolderView[] | null;
   /** Bumped whenever records change, so views with their own lists reread. */
   recordsRev: number;
   events: EventView[];
@@ -86,6 +89,7 @@ const EMPTY: NexusData = {
   usage: null,
   automations: null,
   registers: null,
+  folders: null,
   recordsRev: 0,
   events: [],
   focusId: null,
@@ -149,7 +153,7 @@ export function NexusProvider({ children }: { children: ReactNode }) {
 
   const fetchCollections = useCallback(
     async (what: Set<Collection>) => {
-      const [runs, steps, conversations, connections, persona, projects, proposals, mcp, usage, automations, registers] =
+      const [runs, steps, conversations, connections, persona, projects, proposals, mcp, usage, automations, registers, folders] =
         await Promise.all([
         what.has("runs") ? api.listRuns().then((s) => s.runs) : Promise.resolve(undefined),
         what.has("steps") ? api.getActivity() : Promise.resolve(undefined),
@@ -162,6 +166,7 @@ export function NexusProvider({ children }: { children: ReactNode }) {
         what.has("usage") ? api.getUsage() : Promise.resolve(undefined),
         what.has("automations") ? api.listAutomations() : Promise.resolve(undefined),
         what.has("registers") ? api.listRegisters() : Promise.resolve(undefined),
+        what.has("folders") ? api.listFolders() : Promise.resolve(undefined),
       ]);
       const current = latest.current;
       const nextSteps = steps ?? current.steps ?? [];
@@ -181,6 +186,7 @@ export function NexusProvider({ children }: { children: ReactNode }) {
         usage: usage ?? d.usage,
         automations: automations ?? d.automations,
         registers: registers ?? d.registers,
+        folders: folders ?? d.folders,
         recordsRev: registers ? d.recordsRev + 1 : d.recordsRev,
         focusId,
         focus: focusId === d.focusId ? d.focus : null,
@@ -192,7 +198,7 @@ export function NexusProvider({ children }: { children: ReactNode }) {
   );
 
   const bootstrap = useCallback(async () => {
-    const [snapshot, steps, conversations, connections, persona, projects, proposals, mcp, usage, automations, registers] =
+    const [snapshot, steps, conversations, connections, persona, projects, proposals, mcp, usage, automations, registers, folders] =
       await Promise.all([
       api.listRuns(),
       api.getActivity(),
@@ -205,6 +211,7 @@ export function NexusProvider({ children }: { children: ReactNode }) {
       api.getUsage(),
       api.listAutomations(),
       api.listRegisters(),
+      api.listFolders(),
     ]);
     // Everything after the snapshot's watermark arrives through the events.
     const history = await api.getEvents(Math.max(0, snapshot.watermark - 200));
@@ -224,6 +231,7 @@ export function NexusProvider({ children }: { children: ReactNode }) {
       usage,
       automations,
       registers,
+      folders,
       recordsRev: d.recordsRev + 1,
       events: history.events.filter((e) => e.seq <= snapshot.watermark),
       focusId,
@@ -329,7 +337,7 @@ export function NexusProvider({ children }: { children: ReactNode }) {
       refresh: async (what) => {
         try {
           await fetchCollections(
-            new Set(what ?? ["runs", "steps", "conversations", "connections", "projects", "memory", "mcp", "usage", "automations", "registers", "focus"]),
+            new Set(what ?? ["runs", "steps", "conversations", "connections", "projects", "memory", "mcp", "usage", "automations", "registers", "folders", "focus"]),
           );
         } catch (err) {
           patch({ syncError: describeError(err) });

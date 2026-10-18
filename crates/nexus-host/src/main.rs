@@ -13,6 +13,11 @@ async fn main() -> anyhow::Result<()> {
     if args.first().map(String::as_str) == Some("restore") {
         return restore(&args[1..]);
     }
+    // The document reader: one file, its text or rows as one JSON line,
+    // run contained by the Host (`documents::run_extractor`).
+    if args.first().map(String::as_str) == Some("extract") {
+        std::process::exit(nexus_host::documents::run_extract_command(&args[1..]));
+    }
 
     let profile = nexus_protocol::pairing::profile_dir();
     init_logging(&profile)?;

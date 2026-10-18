@@ -425,6 +425,66 @@ impl NexusClient {
             .await??)
     }
 
+    pub async fn folders(&self) -> Result<Vec<nexus_protocol::FolderView>, CallError> {
+        Ok(self.client.list_folders(context::current()).await??)
+    }
+
+    pub async fn save_folder(
+        &self,
+        request: nexus_protocol::SaveFolderRequest,
+    ) -> Result<nexus_protocol::FolderView, CallError> {
+        Ok(self
+            .client
+            .save_folder(context::current(), request)
+            .await??)
+    }
+
+    pub async fn remove_folder(&self, id: nexus_protocol::FolderId) -> Result<(), CallError> {
+        Ok(self.client.remove_folder(context::current(), id).await??)
+    }
+
+    pub async fn folder_entries(
+        &self,
+        id: nexus_protocol::FolderId,
+    ) -> Result<Vec<nexus_protocol::FolderEntryView>, CallError> {
+        Ok(self.client.folder_entries(context::current(), id).await??)
+    }
+
+    /// Building and writing the file can take a moment: waits like a
+    /// provider call.
+    pub async fn export_register(
+        &self,
+        register: nexus_protocol::RegisterId,
+        folder: nexus_protocol::FolderId,
+    ) -> Result<nexus_protocol::ExportView, CallError> {
+        Ok(self
+            .client
+            .export_register(provider_context(), register, folder)
+            .await??)
+    }
+
+    pub async fn import_preview(
+        &self,
+        register: nexus_protocol::RegisterId,
+        folder: nexus_protocol::FolderId,
+        path: String,
+    ) -> Result<nexus_protocol::ImportPreviewView, CallError> {
+        Ok(self
+            .client
+            .import_preview(provider_context(), register, folder, path)
+            .await??)
+    }
+
+    pub async fn import_records(
+        &self,
+        request: nexus_protocol::ImportRequest,
+    ) -> Result<nexus_protocol::ImportResultView, CallError> {
+        Ok(self
+            .client
+            .import_records(provider_context(), request)
+            .await??)
+    }
+
     pub async fn registers(&self) -> Result<Vec<nexus_protocol::RegisterView>, CallError> {
         Ok(self.client.list_registers(context::current()).await??)
     }

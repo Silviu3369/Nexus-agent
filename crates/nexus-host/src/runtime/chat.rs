@@ -29,6 +29,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use zeroize::Zeroizing;
 
+use super::document_run::{self, DOC_TOOL};
+use super::files::{self, LIST_TOOL, MAX_LISTS, MAX_READS, READ_TOOL};
 use super::records::{self, ADD_TOOL, FIND_TOOL, MAX_RECORD_READS, MAX_RECORD_WRITES, UPDATE_TOOL};
 use super::{Runtime, to_nexus_error};
 
@@ -41,7 +43,9 @@ const NOTE_TOOL: &str = "propose_note";
 const FETCH_TOOL: &str = "fetch_url";
 /// Model calls within one reply. A write (`propose_note`) always ends the
 /// turn, so this only bounds how long a read-only fetch chain can run.
-const MAX_AGENT_STEPS: u32 = MAX_FETCH_CALLS + MAX_MCP_CALLS + RECORD_STEPS + 2;
+const MAX_AGENT_STEPS: u32 = MAX_FETCH_CALLS + MAX_MCP_CALLS + RECORD_STEPS + FILE_STEPS + 2;
+/// Model calls a reply may spend on the user's shared folders.
+const FILE_STEPS: u32 = 4;
 /// Model calls a reply may spend on the user's registers (lookups and the
 /// changes that follow them).
 const RECORD_STEPS: u32 = 4;
@@ -744,7 +748,10 @@ impl Runtime {
             Some(call) => {
                 super::remote_call::call_outcome(&detail, &call, self.answers.take(c.run_id))
             }
-            None => proposal_outcome(&detail),
+            None => match document_run::request_of(&detail) {
+                Some(document) => document_run::outcome(&detail, &document),
+                None => proposal_outcome(&detail),
+            },
         };
         let PausedTurn {
             model,
@@ -887,14 +894,21 @@ impl Runtime {
                 Vec::new()
             }
         };
+        // The folders the user shared, as they are now.
+        let folders = self.shared_folders().await;
         let system_instruction = format!(
-            "{}{}{}{}",
+            "{}{}{}{}{}",
             system_instruction(persona),
             if mcp_offer.is_empty() { "" } else { MCP_NOTE },
             if registers.is_empty() {
                 String::new()
             } else {
                 records::records_note(&registers, &records::today())
+            },
+            if folders.is_empty() {
+                String::new()
+            } else {
+                files::files_note(&folders)
             },
             memory_block(&memory)
         );
@@ -931,6 +945,12 @@ impl Runtime {
             if budget.memory_proposals < MAX_MEMORY_PROPOSALS {
                 tools.push(memory_tool());
             }
+            tools.extend(document_run::document_tool(&folders));
+            tools.extend(files::file_tools(
+                &folders,
+                budget.file_lists < MAX_LISTS,
+                budget.file_reads < MAX_READS,
+            ));
             tools.extend(records::record_tools(
                 &registers,
                 budget.record_reads < MAX_RECORD_READS,
@@ -986,6 +1006,7 @@ impl Runtime {
                 .iter()
                 .filter(|c| {
                     c.name == NOTE_TOOL
+                        || (c.name == DOC_TOOL && folders.iter().any(|f| f.can_write))
                         || mcp_offer
                             .iter()
                             .any(|o| o.function == c.name && o.needs_approval)
@@ -994,7 +1015,9 @@ impl Runtime {
             let fetch_call = call.calls.iter().find(|c| c.name == FETCH_TOOL);
             for c in &call.calls {
                 if ![NOTE_TOOL, FETCH_TOOL, MEMORY_TOOL].contains(&c.name.as_str())
+                    && !(c.name == DOC_TOOL && folders.iter().any(|f| f.can_write))
                     && !(is_record_tool(&c.name) && !registers.is_empty())
+                    && !(is_file_tool(&c.name) && !folders.is_empty())
                     && !mcp_offer.iter().any(|o| o.function == c.name)
                 {
                     tracing::warn!(tool = %c.name, "ignored a tool proposal the host does not offer");
@@ -1022,6 +1045,38 @@ impl Runtime {
                     .await;
                 budget.memory_proposals += 1;
                 handled.push((proposal, response));
+            }
+
+            // The user's shared folders: listings and reads, which only read.
+            if !folders.is_empty() {
+                let mut file_calls: Vec<&ToolCall> = call
+                    .calls
+                    .iter()
+                    .filter(|c| is_file_tool(&c.name))
+                    .collect();
+                file_calls.sort_by_key(|c| c.order);
+                for c in file_calls {
+                    let response = if c.name == LIST_TOOL {
+                        if budget.file_lists >= MAX_LISTS {
+                            json!({ "error": BUDGET_SPENT })
+                        } else {
+                            budget.file_lists += 1;
+                            self.agent_list_files(reply, &folders, &c.arguments).await
+                        }
+                    } else if budget.file_reads >= MAX_READS {
+                        json!({ "error": BUDGET_SPENT })
+                    } else {
+                        budget.file_reads += 1;
+                        self.agent_read_document(
+                            reply,
+                            &folders,
+                            &c.arguments,
+                            &mut budget.read_hosts,
+                        )
+                        .await
+                    };
+                    handled.push((c, response));
+                }
             }
 
             // The user's registers: lookups, then the changes the user told
@@ -1074,6 +1129,10 @@ impl Runtime {
                 let proposed_run_id = match mcp_offer.iter().find(|o| o.function == proposed.name) {
                     Some(offered) => {
                         self.propose_mcp_call(reply, offered, &proposed.arguments)
+                            .await
+                    }
+                    None if proposed.name == DOC_TOOL => {
+                        self.propose_document(reply, &folders, &proposed.arguments)
                             .await
                     }
                     None => self.propose_note(reply, &proposed.arguments).await,
@@ -1957,6 +2016,28 @@ fn step_view(row: &AgentStepRow) -> AgentStepView {
                 .map(RunId),
             error: text("error"),
         },
+        AgentStepKind::FilesListed => AgentStepDetail::FilesListed {
+            folder: text("folder").unwrap_or_default(),
+            path: text("path").unwrap_or_default(),
+            count: number("count").and_then(|n| u32::try_from(n).ok()),
+            error: text("error"),
+        },
+        AgentStepKind::DocumentRead => AgentStepDetail::DocumentRead {
+            folder: text("folder").unwrap_or_default(),
+            path: text("path").unwrap_or_default(),
+            format: text("format"),
+            chars: number("chars").and_then(|n| u32::try_from(n).ok()),
+            truncated: d.get("truncated").and_then(Value::as_bool),
+            error: text("error"),
+        },
+        AgentStepKind::DocumentProposed => AgentStepDetail::DocumentProposed {
+            folder: text("folder").unwrap_or_default(),
+            file_name: text("file_name").unwrap_or_default(),
+            run_id: text("run_id")
+                .and_then(|s| uuid::Uuid::parse_str(&s).ok())
+                .map(RunId),
+            error: text("error"),
+        },
         AgentStepKind::RecordsFound => AgentStepDetail::RecordsFound {
             register: text("register").unwrap_or_default(),
             query: text("query").unwrap_or_default(),
@@ -2145,6 +2226,10 @@ struct TurnBudget {
     record_reads: u32,
     #[serde(default)]
     record_writes: u32,
+    #[serde(default)]
+    file_lists: u32,
+    #[serde(default)]
+    file_reads: u32,
 }
 
 struct ReplyOutcome {
@@ -2207,8 +2292,9 @@ fn paused_turn(
     budget: TurnBudget,
 ) -> Option<Pause> {
     let known = |c: &ToolCall| {
-        [NOTE_TOOL, FETCH_TOOL, MEMORY_TOOL].contains(&c.name.as_str())
+        [NOTE_TOOL, FETCH_TOOL, MEMORY_TOOL, DOC_TOOL].contains(&c.name.as_str())
             || is_record_tool(&c.name)
+            || is_file_tool(&c.name)
             || mcp_offer.iter().any(|o| o.function == c.name)
     };
     let mut calls: Vec<&ToolCall> = step.calls.iter().filter(|c| known(c)).collect();
@@ -2269,12 +2355,16 @@ fn is_record_tool(name: &str) -> bool {
     [FIND_TOOL, ADD_TOOL, UPDATE_TOOL].contains(&name)
 }
 
+fn is_file_tool(name: &str) -> bool {
+    [LIST_TOOL, READ_TOOL].contains(&name)
+}
+
 /// What a waiting turn keeps of a tool's result: a web page's, an MCP
 /// tool's and a register lookup's are replaced by a stub (an error stays:
 /// it is the host's own message); the model looks again if it still needs
 /// them.
 fn kept_response(name: &str, response: &Value) -> Value {
-    if name == FETCH_TOOL || name == FIND_TOOL || name.starts_with("mcp") {
+    if [FETCH_TOOL, FIND_TOOL, LIST_TOOL, READ_TOOL].contains(&name) || name.starts_with("mcp") {
         match response.get("error") {
             Some(error) => json!({ "error": error }),
             None => json!({ "note": NOT_KEPT }),

@@ -5,7 +5,15 @@
 // deletes them here too. Every value is checked by the Host.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { FieldDef, RecordDetailView, RecordView, RegisterView } from "@nexus/contracts";
+import type {
+  FieldDef,
+  FolderEntryView,
+  ImportPreviewView,
+  ImportResultView,
+  RecordDetailView,
+  RecordView,
+  RegisterView,
+} from "@nexus/contracts";
 import { api, describeError, errorCode } from "../api";
 import { dateTimeText } from "../model/automation.ts";
 import {
@@ -25,7 +33,7 @@ import type { RecordFilterState } from "../model/records.ts";
 import { useGoTo } from "../shell/nav";
 import { useDerived, useNexus, useNexusActions } from "../state/store";
 import { Empty, ErrorLine, Panel, StatusPill } from "../ui";
-import { BriefcaseIcon, PlusIcon } from "../icons";
+import { BriefcaseIcon, FolderIcon, PlusIcon } from "../icons";
 
 const REGISTER = "job_applications";
 const LIST_LIMIT = 500;
@@ -45,6 +53,7 @@ function RegisterScreen({ register, initialRecordId }: { register: RegisterView;
   const [filter, setFilter] = useState<RecordFilterState>({ status: null, dueOnly: false, text: "" });
   const [selected, setSelected] = useState<string | null>(initialRecordId);
   const [adding, setAdding] = useState(false);
+  const [side, setSide] = useState<"import" | "export" | null>(null);
   const deselect = useCallback(() => setSelected(null), []);
 
   useEffect(() => {
@@ -74,17 +83,26 @@ function RegisterScreen({ register, initialRecordId }: { register: RegisterView;
         icon={<BriefcaseIcon size={15} />}
         id="register"
         actions={
-          <button
-            type="button"
-            className="ghost"
-            disabled={adding}
-            onClick={() => {
-              setAdding(true);
-              setSelected(null);
-            }}
-          >
-            <PlusIcon size={14} /> New {item}
-          </button>
+          <>
+            <button type="button" className="ghost" aria-pressed={side === "import"} onClick={() => setSide(side === "import" ? null : "import")}>
+              Import
+            </button>
+            <button type="button" className="ghost" aria-pressed={side === "export"} onClick={() => setSide(side === "export" ? null : "export")}>
+              Export
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              disabled={adding}
+              onClick={() => {
+                setAdding(true);
+                setSelected(null);
+                setSide(null);
+              }}
+            >
+              <PlusIcon size={14} /> New {item}
+            </button>
+          </>
         }
       >
         <div className="record-filters">
@@ -160,6 +178,8 @@ function RegisterScreen({ register, initialRecordId }: { register: RegisterView;
         </p>
       </Panel>
       <div className="records-side">
+        {side === "export" && <ExportPanel register={register} onClose={() => setSide(null)} />}
+        {side === "import" && <ImportPanel register={register} onClose={() => setSide(null)} />}
         {adding ? (
           <Panel title={`New ${item}`} icon={<PlusIcon size={15} />} id="record-new">
             <RecordForm
@@ -486,5 +506,251 @@ function RecordForm({
       </div>
       <ErrorLine error={error} />
     </form>
+  );
+}
+
+const SPREADSHEET = /\.(xlsx|xlsm|xls|ods|csv|tsv)$/i;
+
+/** No shared folder fits: say where to share one. */
+function NoFolder({ text }: { text: string }) {
+  const goTo = useGoTo();
+  return (
+    <>
+      <p className="muted">{text}</p>
+      <button type="button" className="ghost" onClick={() => goTo({ section: "tools", tool: "documents" })}>
+        <FolderIcon size={14} /> Share a folder
+      </button>
+    </>
+  );
+}
+
+function ExportPanel({ register, onClose }: { register: RegisterView; onClose: () => void }) {
+  const d = useNexus();
+  const folders = (d.folders ?? []).filter((f) => f.can_write && f.available);
+  const [folder, setFolder] = useState<string>("");
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const chosen = folder || folders[0]?.folder_id || "";
+
+  async function run() {
+    setBusy(true);
+    setError(null);
+    try {
+      const out = await api.exportRegister(register.register_id, chosen);
+      setDone(`Saved ${out.rows} ${out.rows === 1 ? register.item_name : `${register.item_name}s`} to ${out.path}`);
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Panel title="Export to Excel" icon={<FolderIcon size={15} />} id="record-export">
+      {folders.length === 0 ? (
+        <NoFolder text="Exports go to a folder you shared with new files allowed. None is shared that way yet." />
+      ) : (
+        <div className="stack">
+          <label>
+            Folder
+            <select value={chosen} onChange={(e) => setFolder(e.currentTarget.value)}>
+              {folders.map((f) => (
+                <option key={f.folder_id} value={f.folder_id}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="muted">A new .xlsx file with every field; an existing file is never replaced.</p>
+          <div className="actions">
+            <button type="button" className="primary" disabled={busy || !chosen} onClick={() => void run()}>
+              Export to Excel
+            </button>
+            <button type="button" className="ghost" onClick={onClose}>
+              Close
+            </button>
+          </div>
+          {done && (
+            <p className="record-done" role="status">
+              {done}
+            </p>
+          )}
+          <ErrorLine error={error} />
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function ImportPanel({ register, onClose }: { register: RegisterView; onClose: () => void }) {
+  const d = useNexus();
+  const { refresh } = useNexusActions();
+  const folders = (d.folders ?? []).filter((f) => f.available);
+  const [folder, setFolder] = useState<string>("");
+  const [files, setFiles] = useState<FolderEntryView[] | null>(null);
+  const [file, setFile] = useState<string>("");
+  const [preview, setPreview] = useState<ImportPreviewView | null>(null);
+  const [mapping, setMapping] = useState<(string | null)[]>([]);
+  const [result, setResult] = useState<ImportResultView | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const chosen = folder || folders[0]?.folder_id || "";
+
+  useEffect(() => {
+    if (!chosen) return;
+    let alive = true;
+    setFiles(null);
+    setFile("");
+    setPreview(null);
+    api
+      .folderEntries(chosen)
+      .then((e) => {
+        if (!alive) return;
+        const sheets = e.filter((x) => !x.is_dir && SPREADSHEET.test(x.path));
+        setFiles(sheets);
+        // One file to choose from: it is the one.
+        if (sheets.length === 1) setFile(sheets[0].path);
+      })
+      .catch((err) => alive && setError(describeError(err)));
+    return () => {
+      alive = false;
+    };
+  }, [chosen]);
+
+  async function work(task: () => Promise<void>) {
+    setBusy(true);
+    setError(null);
+    try {
+      await task();
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const loadPreview = () =>
+    work(async () => {
+      setResult(null);
+      const p = await api.importPreview(register.register_id, chosen, file);
+      setPreview(p);
+      setMapping(p.mapping);
+    });
+
+  const runImport = () =>
+    work(async () => {
+      if (!preview) return;
+      const r = await api.importRecords({ register_id: register.register_id, folder_id: chosen, path: file, mapping });
+      setResult(r);
+      setPreview(null);
+      await refresh(["registers"]);
+    });
+
+  const used = mapping.filter(Boolean);
+  const duplicate = used.length !== new Set(used).size;
+  return (
+    <Panel title="Import from Excel or CSV" icon={<FolderIcon size={15} />} id="record-import">
+      {folders.length === 0 ? (
+        <NoFolder text="Imports read a file in a folder you shared. None is shared yet." />
+      ) : (
+        <div className="stack">
+          <label>
+            Folder
+            <select value={chosen} onChange={(e) => setFolder(e.currentTarget.value)}>
+              {folders.map((f) => (
+                <option key={f.folder_id} value={f.folder_id}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            File
+            <select value={file} onChange={(e) => setFile(e.currentTarget.value)} disabled={!files || files.length === 0}>
+              <option value="">
+                {files === null ? "Loading…" : files.length === 0 ? "No Excel or CSV file here" : "Choose a file"}
+              </option>
+              {(files ?? []).map((f) => (
+                <option key={f.path} value={f.path}>
+                  {f.path}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="actions">
+            <button type="button" className="secondary" disabled={busy || !file} onClick={() => void loadPreview()}>
+              Preview
+            </button>
+            <button type="button" className="ghost" onClick={onClose}>
+              Close
+            </button>
+          </div>
+          {preview && (
+            <>
+              <p className="muted">
+                {`${preview.rows} rows in ${preview.file}${preview.truncated ? " (only the first ones are imported)" : ""}. Check where each column goes; a value that cannot be used as is goes to the notes.`}
+              </p>
+              <table className="import-map" aria-label="Columns">
+                <thead>
+                  <tr>
+                    <th>Column in the file</th>
+                    <th>Goes to</th>
+                    <th>First value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.columns.map((c, i) => (
+                    <tr key={`${c}-${i}`}>
+                      <td>{c || <em>no name</em>}</td>
+                      <td>
+                        <select
+                          aria-label={`Field for ${c || `column ${i + 1}`}`}
+                          value={mapping[i] ?? ""}
+                          onChange={(e) => {
+                            const next = [...mapping];
+                            next[i] = e.currentTarget.value || null;
+                            setMapping(next);
+                          }}
+                        >
+                          <option value="">— not imported</option>
+                          {register.fields.map((f) => (
+                            <option key={f.key} value={f.key}>
+                              {f.label}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="muted">{preview.sample[0]?.[i] ?? ""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {duplicate && <p className="error">Two columns go to the same field; choose one.</p>}
+              <div className="actions">
+                <button type="button" className="primary" disabled={busy || duplicate || used.length === 0} onClick={() => void runImport()}>
+                  {`Import ${preview.rows} rows`}
+                </button>
+              </div>
+            </>
+          )}
+          {result && (
+            <div className="record-done" role="status">
+              <p>
+                {`Imported ${result.added} ${result.added === 1 ? register.item_name : `${register.item_name}s`}${result.adjusted > 0 ? ` · ${result.adjusted} with a value kept in the notes` : ""} · ${result.skipped.length} skipped`}
+              </p>
+              {result.skipped.length > 0 && (
+                <ul className="bullets">
+                  {result.skipped.slice(0, 20).map((sk) => (
+                    <li key={sk.row}>{`Row ${sk.row}: ${sk.reason}`}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+          <ErrorLine error={error} />
+        </div>
+      )}
+    </Panel>
   );
 }

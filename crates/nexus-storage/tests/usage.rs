@@ -148,7 +148,7 @@ async fn migrating_to_v9_keeps_every_message() {
         store
             .call(|c| {
                 c.execute_batch(
-                    "DROP TABLE record_changes; DROP TABLE records; DROP TABLE registers; DROP TABLE automation_runs; DROP TABLE automations; DROP TABLE model_usage; DROP TABLE model_prices; PRAGMA user_version = 8;",
+                    "DROP TABLE folders; DROP TABLE record_changes; DROP TABLE records; DROP TABLE registers; DROP TABLE automation_runs; DROP TABLE automations; DROP TABLE model_usage; DROP TABLE model_prices; PRAGMA user_version = 8;",
                 )?;
                 Ok(())
             })

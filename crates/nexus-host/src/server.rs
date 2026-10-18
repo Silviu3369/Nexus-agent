@@ -9,13 +9,15 @@ use nexus_protocol::{
     AddMemoryRequest, AgentStepView, ArtifactId, AutomationId, AutomationRunView, AutomationView,
     BackupModelView, BackupSummary, ConnectionId, ConnectionView, ConversationId,
     ConversationSummary, ConversationView, DecideApprovalRequest, DeletedView, ErrorCode,
-    EventsPage, GetHealthResponse, HandshakeRequest, HandshakeResponse, HealthStatus, McpServerId,
-    McpServerView, MemoryContextView, MemoryId, MemoryItemView, MemoryQuery, MessageId, ModelPrice,
-    ModelView, NexusError, PROTOCOL_VERSION, PersonaView, ProjectId, ProjectView, RecordDetailView,
-    RecordId, RecordQuery, RecordView, RegisterView, RunId, RunView, SaveAutomationRequest,
-    SaveConnectionRequest, SaveMcpServerRequest, SavePersonaRequest, SaveProjectRequest,
-    SaveRecordRequest, SendMessageRequest, SendMessageResponse, Snapshot, SubmitNoteRequest,
-    SubmitNoteResponse, SystemStatusView, ThinkingLevel, UsageView,
+    EventsPage, ExportView, FolderEntryView, FolderId, FolderView, GetHealthResponse,
+    HandshakeRequest, HandshakeResponse, HealthStatus, ImportPreviewView, ImportRequest,
+    ImportResultView, McpServerId, McpServerView, MemoryContextView, MemoryId, MemoryItemView,
+    MemoryQuery, MessageId, ModelPrice, ModelView, NexusError, PROTOCOL_VERSION, PersonaView,
+    ProjectId, ProjectView, RecordDetailView, RecordId, RecordQuery, RecordView, RegisterId,
+    RegisterView, RunId, RunView, SaveAutomationRequest, SaveConnectionRequest, SaveFolderRequest,
+    SaveMcpServerRequest, SavePersonaRequest, SaveProjectRequest, SaveRecordRequest,
+    SendMessageRequest, SendMessageResponse, Snapshot, SubmitNoteRequest, SubmitNoteResponse,
+    SystemStatusView, ThinkingLevel, UsageView,
 };
 use tarpc::context::Context;
 use tarpc::server::{BaseChannel, Channel};
@@ -432,6 +434,66 @@ impl NexusService for HostServer {
     ) -> Result<UsageView, NexusError> {
         self.require_session()?;
         self.runtime.set_model_price(provider, model, price).await
+    }
+
+    async fn export_register(
+        self,
+        _ctx: Context,
+        register_id: RegisterId,
+        folder_id: FolderId,
+    ) -> Result<ExportView, NexusError> {
+        self.require_session()?;
+        self.runtime.export_register(register_id, folder_id).await
+    }
+
+    async fn import_preview(
+        self,
+        _ctx: Context,
+        register_id: RegisterId,
+        folder_id: FolderId,
+        path: String,
+    ) -> Result<ImportPreviewView, NexusError> {
+        self.require_session()?;
+        self.runtime
+            .import_preview(register_id, folder_id, path)
+            .await
+    }
+
+    async fn import_records(
+        self,
+        _ctx: Context,
+        request: ImportRequest,
+    ) -> Result<ImportResultView, NexusError> {
+        self.require_session()?;
+        self.runtime.import_records(request).await
+    }
+
+    async fn list_folders(self, _ctx: Context) -> Result<Vec<FolderView>, NexusError> {
+        self.require_session()?;
+        self.runtime.list_folders().await
+    }
+
+    async fn save_folder(
+        self,
+        _ctx: Context,
+        request: SaveFolderRequest,
+    ) -> Result<FolderView, NexusError> {
+        self.require_session()?;
+        self.runtime.save_folder(request).await
+    }
+
+    async fn remove_folder(self, _ctx: Context, folder_id: FolderId) -> Result<(), NexusError> {
+        self.require_session()?;
+        self.runtime.remove_folder(folder_id).await
+    }
+
+    async fn folder_entries(
+        self,
+        _ctx: Context,
+        folder_id: FolderId,
+    ) -> Result<Vec<FolderEntryView>, NexusError> {
+        self.require_session()?;
+        self.runtime.folder_entries(folder_id).await
     }
 
     async fn list_registers(self, _ctx: Context) -> Result<Vec<RegisterView>, NexusError> {

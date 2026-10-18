@@ -1,4 +1,5 @@
 pub mod backup;
+pub mod documents;
 pub mod fault;
 pub mod runtime;
 pub mod schedule;

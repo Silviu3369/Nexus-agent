@@ -214,6 +214,32 @@ pub enum AgentStepDetail {
         count: Option<u32>,
         error: Option<String>,
     },
+    /// The agent listed files in a folder the user shared.
+    FilesListed {
+        folder: String,
+        path: String,
+        count: Option<u32>,
+        error: Option<String>,
+    },
+    /// The agent read a document in a folder the user shared.
+    DocumentRead {
+        folder: String,
+        path: String,
+        /// Text, Word, PDF or Spreadsheet.
+        format: Option<String>,
+        /// Characters of text given to the model.
+        chars: Option<u32>,
+        truncated: Option<bool>,
+        error: Option<String>,
+    },
+    /// The agent proposed a new document in a folder; it waits for the
+    /// user's approval of the exact file as this run.
+    DocumentProposed {
+        folder: String,
+        file_name: String,
+        run_id: Option<RunId>,
+        error: Option<String>,
+    },
     /// The agent added or changed a record; the user can undo it.
     RecordChanged {
         register: String,

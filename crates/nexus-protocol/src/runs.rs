@@ -73,6 +73,8 @@ pub enum RunKind {
     Note,
     /// Call a tool of an MCP server that can change things there.
     McpCall,
+    /// Create a new document (Word or text) in a folder the user shared.
+    Document,
 }
 
 /// A call to an MCP tool, exactly as the user approves it.

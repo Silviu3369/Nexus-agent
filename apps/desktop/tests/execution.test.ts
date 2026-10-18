@@ -12,6 +12,7 @@ import {
   invalidatedBy,
   modelStats,
   nextLine,
+  noteItems,
   stepStatus,
   taskRows,
 } from "../src/model/execution.ts";
@@ -667,4 +668,58 @@ test("record events refresh the registers, and an undo the task's steps", () => 
     assert.deepEqual([...invalidatedBy([ev(kind)])], ["registers"], kind);
   }
   assert.deepEqual([...invalidatedBy([ev("RecordChangeUndone")])].sort(), ["focus", "registers", "steps"]);
+});
+
+test("document steps say what was read and proposed, and a document run is a file write", () => {
+  const listed = step({ kind: "FilesListed", folder: "Jobs", path: "", count: 3, error: null }, "Done", T0 + 900, T0 + 905);
+  const read = step(
+    { kind: "DocumentRead", folder: "Jobs", path: "CV.docx", format: "Word", chars: 1200, truncated: false, error: null },
+    "Done",
+    T0 + 906,
+    T0 + 950,
+  );
+  const outside = step(
+    { kind: "DocumentRead", folder: "Jobs", path: "../x.txt", format: null, chars: null, truncated: null, error: "\"..\" is not a valid name" },
+    "Failed",
+    T0 + 951,
+    T0 + 952,
+  );
+  const proposed = step(
+    { kind: "DocumentProposed", folder: "Letters", file_name: "Cover letter.docx", run_id: "r-9", error: null },
+    "Done",
+    T0 + 1900,
+    T0 + 1910,
+  );
+  const [run] = buildRuns(conversation(message("Model", REPLY, [model("Done", T0, T0 + 900), listed, read, outside, proposed])), new Map(), "Nexus");
+  const docs = run.items.filter((i) => i.kind === "doc");
+  assert.deepEqual(
+    docs.map((i) => [i.title, i.outcome, i.status]),
+    [
+      ["Looked in Jobs", "3 items", "completed"],
+      ["Read CV.docx in Jobs", "Word · 1,200 characters to the model", "completed"],
+      ["Read ../x.txt in Jobs", "\"..\" is not a valid name", "failed"],
+      ["Propose Cover letter.docx in Letters", "Proposal recorded; nothing written yet", "completed"],
+    ],
+  );
+  const core = deriveCore({ run, pendingApprovals: 0, composing: false, now: T0 + 2000 });
+  assert.ok(core.nodes.some((n) => n.id === "files" && n.label === "Documents"));
+
+  const documentRun: RunView = { ...noteRun("Succeeded"), kind: "Document", title: "Cover letter.docx in Letters" };
+  const items = noteItems(documentRun);
+  assert.deepEqual(
+    items.map((i) => [i.title, i.tool]),
+    [
+      ["Your approval", null],
+      ["Write Cover letter.docx in Letters", "Documents"],
+    ],
+  );
+});
+
+test("folder and document events refresh what they describe", () => {
+  const ev = (kind: string) => ({ seq: 1, kind, entity_id: "x", created_at_ms: T0 });
+  for (const kind of ["FolderShared", "FolderUpdated", "FolderUnshared"]) {
+    assert.deepEqual([...invalidatedBy([ev(kind)])], ["folders"], kind);
+  }
+  assert.deepEqual([...invalidatedBy([ev("DocumentCreated")])].sort(), ["focus", "runs"]);
+  assert.deepEqual([...invalidatedBy([ev("RecordsImported")])], ["registers"]);
 });

@@ -70,7 +70,7 @@ export type RunOrigin = { message_id: MessageId; conversation_id: ConversationId
 /**
  * What a run does.
  */
-export type RunKind = "Note" | "McpCall"
+export type RunKind = "Note" | "McpCall" | "Document"
 
 /**
  * A call to an MCP tool, exactly as the user approves it.
@@ -138,7 +138,7 @@ export type AgentStepStatus = "Running" | "Done" | "Failed"
  * One step's kind-specific facts. Metadata only: a web read shows its
  * address, status and size, never the page's text.
  */
-export type AgentStepDetail = { kind: "ModelCall"; model: string; first_byte_ms: number | null; duration_ms: number | null; error: string | null; attempt: number | null; backup: boolean | null; memory_items: number | null; mcp_servers: string[] | null; mcp_tools: number | null; prompt_tokens: number | null; output_tokens: number | null } | { kind: "Fetch"; url: string; final_url: string | null; http_status: number | null; text_bytes: number | null; truncated: boolean | null; error: string | null } | { kind: "MemoryProposed"; content: string; scope: MemoryScope | null; memory_id: MemoryId | null; error: string | null } | { kind: "McpCall"; server: string; tool: string; arguments: string; result_chars: number | null; truncated: boolean | null; is_error: boolean | null; duration_ms: number | null; error: string | null; run_id: RunId | null } | { kind: "NoteProposed"; title: string; run_id: RunId | null; error: string | null } | { kind: "RecordsFound"; register: string; query: string; count: number | null; error: string | null } | { kind: "RecordChanged"; register: string; action: string; title: string; fields: string[]; record_id: RecordId | null; change_id: number | null; undone: boolean; error: string | null }
+export type AgentStepDetail = { kind: "ModelCall"; model: string; first_byte_ms: number | null; duration_ms: number | null; error: string | null; attempt: number | null; backup: boolean | null; memory_items: number | null; mcp_servers: string[] | null; mcp_tools: number | null; prompt_tokens: number | null; output_tokens: number | null } | { kind: "Fetch"; url: string; final_url: string | null; http_status: number | null; text_bytes: number | null; truncated: boolean | null; error: string | null } | { kind: "MemoryProposed"; content: string; scope: MemoryScope | null; memory_id: MemoryId | null; error: string | null } | { kind: "McpCall"; server: string; tool: string; arguments: string; result_chars: number | null; truncated: boolean | null; is_error: boolean | null; duration_ms: number | null; error: string | null; run_id: RunId | null } | { kind: "NoteProposed"; title: string; run_id: RunId | null; error: string | null } | { kind: "RecordsFound"; register: string; query: string; count: number | null; error: string | null } | { kind: "FilesListed"; folder: string; path: string; count: number | null; error: string | null } | { kind: "DocumentRead"; folder: string; path: string; format: string | null; chars: number | null; truncated: boolean | null; error: string | null } | { kind: "DocumentProposed"; folder: string; file_name: string; run_id: RunId | null; error: string | null } | { kind: "RecordChanged"; register: string; action: string; title: string; fields: string[]; record_id: RecordId | null; change_id: number | null; undone: boolean; error: string | null }
 
 export type AgentStepView = { step_id: AgentStepId; message_id: MessageId; conversation_id: ConversationId; conversation_title: string; seq: number; status: AgentStepStatus; detail: AgentStepDetail; started_at_ms: number; finished_at_ms: number | null }
 
@@ -216,6 +216,33 @@ export type RecordDetailView = { record: RecordView; history: RecordChangeView[]
 export type RecordQuery = { register_id: RegisterId; statuses: string[]; text: string | null; follow_up_due: boolean; limit: number }
 
 export type SaveRecordRequest = { register_id: RegisterId; record_id: RecordId | null; revision: number; values: { [key: string]: string } }
+
+export type FolderId = string
+
+export type FolderView = { folder_id: FolderId; label: string; path: string; can_write: boolean; available: boolean; problem: string | null; revision: number; created_at_ms: number }
+
+export type SaveFolderRequest = { folder_id: FolderId | null; revision: number; path: string; label: string; can_write: boolean }
+
+/**
+ * One file or folder inside a shared folder.
+ */
+export type FolderEntryView = { path: string; is_dir: boolean; size_bytes: number; modified_ms: number; readable: boolean }
+
+/**
+ * A register written to an Excel file in a shared folder.
+ */
+export type ExportView = { path: string; rows: number }
+
+/**
+ * What an Excel or CSV file would import, before anything is added.
+ */
+export type ImportPreviewView = { file: string; sheet: string; columns: string[]; mapping: (string | null)[]; rows: number; sample: string[][]; truncated: boolean }
+
+export type ImportRequest = { register_id: RegisterId; folder_id: FolderId; path: string; mapping: (string | null)[] }
+
+export type ImportSkipView = { row: number; reason: string }
+
+export type ImportResultView = { added: number; adjusted: number; skipped: ImportSkipView[] }
 
 /**
  * When an automation runs, in this PC's local time.

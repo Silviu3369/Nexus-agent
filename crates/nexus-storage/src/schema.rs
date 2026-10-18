@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::StorageError;
 
-pub const SUPPORTED_VERSION: i64 = 11;
+pub const SUPPORTED_VERSION: i64 = 12;
 
 /// Version 1: everything M1 persists. State columns are closed lists that a
 /// test keeps identical to the `nexus-core` enums. Times are UTC unix ms.
@@ -540,6 +540,46 @@ CREATE INDEX agent_steps_by_start ON agent_steps (started_at_ms);
 CREATE INDEX agent_steps_by_status ON agent_steps (status);
 "#;
 
+/// Version 12: folders the user shares with Nexus (`PLAN_NEXUS_RO.md` §3a,
+/// step 2). A row is only the user's permission: documents are read from
+/// the folder when needed, never copied here. Agent steps gain
+/// FilesListed, DocumentRead and DocumentProposed (the CHECK list is closed,
+/// so that table is rebuilt; no other table refers to it).
+const V12: &str = r#"
+CREATE TABLE folders (
+    id            TEXT    PRIMARY KEY,
+    label         TEXT    NOT NULL UNIQUE CHECK (length(label) BETWEEN 1 AND 60),
+    path          TEXT    NOT NULL UNIQUE CHECK (length(path) BETWEEN 3 AND 1024),
+    can_write     INTEGER NOT NULL CHECK (can_write IN (0, 1)),
+    revision      INTEGER NOT NULL CHECK (revision >= 1),
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE agent_steps_v12 (
+    id             TEXT    PRIMARY KEY,
+    message_id     TEXT    NOT NULL REFERENCES messages (id),
+    seq            INTEGER NOT NULL CHECK (seq >= 1),
+    kind           TEXT    NOT NULL CHECK (kind IN ('ModelCall', 'Fetch', 'NoteProposed', 'MemoryProposed', 'McpCall',
+                                                    'RecordsFound', 'RecordChanged', 'FilesListed', 'DocumentRead',
+                                                    'DocumentProposed')),
+    status         TEXT    NOT NULL CHECK (status IN ('Running', 'Done', 'Failed')),
+    detail_json    TEXT    NOT NULL CHECK (json_valid(detail_json)),
+    started_at_ms  INTEGER NOT NULL,
+    finished_at_ms INTEGER,
+    CHECK ((status = 'Running') = (finished_at_ms IS NULL)),
+    UNIQUE (message_id, seq)
+) STRICT;
+INSERT INTO agent_steps_v12
+    (id, message_id, seq, kind, status, detail_json, started_at_ms, finished_at_ms)
+SELECT id, message_id, seq, kind, status, detail_json, started_at_ms, finished_at_ms
+FROM agent_steps;
+DROP TABLE agent_steps;
+ALTER TABLE agent_steps_v12 RENAME TO agent_steps;
+CREATE INDEX agent_steps_by_start ON agent_steps (started_at_ms);
+CREATE INDEX agent_steps_by_status ON agent_steps (status);
+"#;
+
 struct Migration {
     sql: &'static str,
     /// Rebuilds a table other tables refer to (see [`V5`]).
@@ -589,6 +629,10 @@ const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         sql: V11,
+        rebuilds_parent_table: false,
+    },
+    Migration {
+        sql: V12,
         rebuilds_parent_table: false,
     },
 ];

@@ -28,9 +28,12 @@ use crate::vault::SecretVault;
 
 mod automation;
 mod chat;
+mod document_run;
+mod files;
 mod mcp;
 mod memory;
 mod records;
+mod records_io;
 mod remote_call;
 mod usage;
 
@@ -100,6 +103,8 @@ pub struct Runtime {
     mcp_clients: mcp::McpClients,
     /// Answers of approved MCP calls, until their task continues.
     answers: remote_call::Answers,
+    /// The document reader program (`None`: this executable).
+    extractor_exe: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -119,6 +124,10 @@ pub struct RuntimeConfig {
     pub retry_waits: Vec<Duration>,
     /// Tests and debug builds only: accept a loopback `http://` MCP server.
     pub allow_loopback_mcp: bool,
+    /// The program that reads documents (`nexus-host extract …`); `None`
+    /// is this executable. Tests running the Host in-process name the built
+    /// `nexus-host.exe`.
+    pub extractor_exe: Option<PathBuf>,
 }
 
 impl Default for RuntimeConfig {
@@ -133,6 +142,7 @@ impl Default for RuntimeConfig {
             reply_deadline: Duration::from_secs(120),
             retry_waits: vec![Duration::from_secs(2), Duration::from_secs(5)],
             allow_loopback_mcp: false,
+            extractor_exe: None,
         }
     }
 }
@@ -176,6 +186,7 @@ impl Runtime {
             allow_loopback_mcp: config.allow_loopback_mcp,
             mcp_clients: mcp::McpClients::default(),
             answers: remote_call::Answers::default(),
+            extractor_exe: config.extractor_exe,
         });
         runtime.ensure_registers().await?;
         if paused {
@@ -253,6 +264,26 @@ impl Runtime {
             return Ok(false);
         };
         let run_id = detail.run.id;
+        if let Some(document) = document_run::request_of(&detail) {
+            match detail.action.as_ref().map(|a| a.state) {
+                None => self.prepare_document(&detail, &document).await?,
+                Some(ActionState::Authorized) => self.execute_document(&detail, &document).await?,
+                Some(ActionState::Executing) => self.resume_document(&detail, &document).await?,
+                Some(other) => {
+                    self.store
+                        .mark_needs_review(
+                            run_id,
+                            RunError::new(
+                                "OutcomeUnknown",
+                                format!("queued document has action in state {other}"),
+                            ),
+                            now_ms(),
+                        )
+                        .await?;
+                }
+            }
+            return Ok(true);
+        }
         if let Some(call) = remote_call::request_of(&detail) {
             match detail.action.as_ref().map(|a| a.state) {
                 None => self.prepare_call(&detail, &call).await?,
@@ -530,6 +561,12 @@ impl Runtime {
                 continue;
             };
 
+            if let Some(document) = document_run::request_of(&detail) {
+                tracing::info!(run = %run_id, "reconciling an interrupted document");
+                self.reconcile_document(&detail, &document, operation_id)
+                    .await?;
+                continue;
+            }
             if remote_call::request_of(&detail).is_some() {
                 // A call cannot be observed afterwards: it may have reached
                 // the server, so it is left for the user, never repeated.
@@ -767,14 +804,16 @@ impl Runtime {
 
     fn view(&self, d: &RunDetail, with_preview: bool) -> RunView {
         let call = remote_call::request_of(d);
-        let request: Option<NoteRequest> = match call {
-            Some(_) => None,
-            None => serde_json::from_str(&d.task.request_json).ok(),
+        let document = document_run::request_of(d);
+        let request: Option<NoteRequest> = match (&call, &document) {
+            (None, None) => serde_json::from_str(&d.task.request_json).ok(),
+            _ => None,
         };
-        let title = match (&call, &request) {
-            (Some(c), _) => format!("{} on {}", c.tool, c.server_name),
-            (None, Some(r)) => r.title.trim().to_string(),
-            (None, None) => String::new(),
+        let title = match (&call, &document, &request) {
+            (Some(c), _, _) => format!("{} on {}", c.tool, c.server_name),
+            (_, Some(doc), _) => format!("{} in {}", doc.file_name, doc.folder_label),
+            (_, _, Some(r)) => r.title.trim().to_string(),
+            _ => String::new(),
         };
         let awaiting = match (&d.action, &d.approval) {
             (Some(action), Some(approval))
@@ -825,6 +864,21 @@ impl Runtime {
             }
             _ => None,
         };
+        // A document shows the exact file, as its manifest covers it.
+        let pending_approval = match (&document, &d.action, awaiting) {
+            (Some(doc), Some(action), Some(approval)) => Some(PendingApproval {
+                approval_id: approval.id,
+                manifest_sha256: approval.manifest_sha256.clone(),
+                expires_at_ms: approval.expires_at_ms,
+                preview: if with_preview {
+                    document_run::preview(doc, &action.manifest_json)
+                } else {
+                    None
+                },
+                call: None,
+            }),
+            _ => pending_approval,
+        };
         // A call shows what the server says about the tool, as approved.
         let pending_approval = match (&call, awaiting) {
             (Some(c), Some(approval)) => Some(PendingApproval {
@@ -861,6 +915,8 @@ impl Runtime {
             }),
             kind: if call.is_some() {
                 RunKind::McpCall
+            } else if document.is_some() {
+                RunKind::Document
             } else {
                 RunKind::Note
             },
@@ -940,6 +996,7 @@ fn to_nexus_error(err: StorageError) -> NexusError {
         StorageError::RevisionConflict(_) => (ErrorCode::RevisionConflict, err.to_string()),
         StorageError::ReplyInProgress => (ErrorCode::InvalidRequest, err.to_string()),
         StorageError::NotUndoable(_) => (ErrorCode::InvalidRequest, err.to_string()),
+        StorageError::AlreadyShared => (ErrorCode::InvalidRequest, err.to_string()),
         _ => {
             tracing::error!(error = %err, "storage failure");
             (

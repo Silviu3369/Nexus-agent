@@ -10,6 +10,7 @@ import {
   BriefcaseIcon,
   CheckIcon,
   ChevronDownIcon,
+  FolderIcon,
   GlobeIcon,
   LockIcon,
   MemoryIcon,
@@ -33,6 +34,8 @@ function KindIcon({ item }: { item: TimelineItem }) {
       return <PlugIcon size={14} />;
     case "record":
       return <BriefcaseIcon size={14} />;
+    case "doc":
+      return <FolderIcon size={14} />;
     case "approval":
       return <LockIcon size={14} />;
   }

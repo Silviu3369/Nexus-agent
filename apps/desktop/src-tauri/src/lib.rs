@@ -2,6 +2,7 @@ mod automation;
 mod autostart;
 mod bindings;
 mod chat;
+mod files;
 mod host;
 mod mcp;
 mod memory;
@@ -55,6 +56,13 @@ pub fn run() {
             memory::decide_memory,
             memory::delete_memory,
             memory::memory_context,
+            files::list_folders,
+            files::save_folder,
+            files::remove_folder,
+            files::folder_entries,
+            files::export_register,
+            files::import_preview,
+            files::import_records,
             records::list_registers,
             records::list_records,
             records::record_detail,

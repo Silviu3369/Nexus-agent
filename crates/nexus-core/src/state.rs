@@ -197,6 +197,9 @@ closed_enum!(AgentStepKind {
     McpCall,
     RecordsFound,
     RecordChanged,
+    FilesListed,
+    DocumentRead,
+    DocumentProposed,
 });
 
 closed_enum!(AgentStepStatus {

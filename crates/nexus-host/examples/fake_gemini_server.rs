@@ -108,6 +108,20 @@ async fn main() {
     fake.push(Reply::text(&[
         "Saved: Acme, Service Desk Analyst, applied today.",
     ]));
+    // Documents: the agent reads the CV in the shared folder, proposes the
+    // cover letter there, and continues once the user approves it.
+    fake.push(Reply::calls(&[(
+        "read_document",
+        serde_json::json!({"folder": "Jobs", "path": "CV.txt"}),
+    )]));
+    fake.push(Reply::calls(&[(
+        "propose_document",
+        serde_json::json!({
+            "folder": "Jobs", "file_name": "Cover letter Acme", "format": "docx",
+            "body": "Dear Acme team,\n\nI am applying for the Service Desk Analyst role."
+        }),
+    )]));
+    fake.push(Reply::text(&["The letter is saved in Jobs."]));
     println!("{}", fake.base_url);
     println!("{}", mcp.url);
     std::io::stdout().flush().expect("stdout");

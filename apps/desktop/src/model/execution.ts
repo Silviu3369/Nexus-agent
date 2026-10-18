@@ -58,7 +58,7 @@ export type CoreState =
   | "SUCCESS"
   | "ERROR";
 
-export type ItemKind = "model" | "web" | "note" | "memory" | "mcp" | "record" | "approval" | "write";
+export type ItemKind = "model" | "web" | "note" | "doc" | "memory" | "mcp" | "record" | "approval" | "write";
 
 export interface TimelineItem {
   id: string;
@@ -170,6 +170,24 @@ export function describeStep(step: AgentStepView): { title: string; detail: stri
       const title = `Proposed to remember "${clip(d.content, 60)}"`;
       if (d.error) return { title, detail: d.error };
       return { title, detail: running ? null : "remembered only if you approve it" };
+    }
+    case "FilesListed": {
+      const where = d.path ? `${d.folder}/${d.path}` : d.folder;
+      const title = `${running ? "Looking in" : "Looked in"} ${where}`;
+      if (d.error) return { title, detail: d.error };
+      return { title, detail: d.count === null ? null : `${d.count} ${d.count === 1 ? "item" : "items"}` };
+    }
+    case "DocumentRead": {
+      const title = `${running ? "Reading" : "Read"} ${d.path} in ${d.folder}`;
+      if (d.error) return { title, detail: d.error };
+      if (d.chars === null) return { title, detail: null };
+      const parts = [d.format, `${d.chars.toLocaleString("en-US")} characters to the model`, d.truncated ? "cut" : null].filter(Boolean);
+      return { title, detail: parts.join(" · ") };
+    }
+    case "DocumentProposed": {
+      const title = `Proposed ${d.file_name || "a file"} in ${d.folder}`;
+      if (d.error) return { title, detail: d.error };
+      return { title, detail: running ? null : "written only if you approve it" };
     }
     case "RecordsFound": {
       const title = `${running ? "Looking up" : "Looked up"} ${d.register}`;
@@ -314,6 +332,38 @@ function stepItem(step: AgentStepView, agent: string, pendingMemory: ReadonlySet
         ]),
       };
     }
+    case "FilesListed":
+    case "DocumentRead":
+      return {
+        ...base,
+        kind: "doc",
+        title: describeStep(step).title,
+        model: null,
+        tool: "Documents",
+        outcome: detail,
+        facts: compact([
+          ["Folder", d.folder],
+          ["Path", d.path || null],
+          ["Format", d.kind === "DocumentRead" ? d.format : null],
+          ["Error", d.error],
+        ]),
+      };
+    case "DocumentProposed":
+      return {
+        ...base,
+        kind: "doc",
+        title: `Propose ${d.file_name || "a file"} in ${d.folder}`,
+        model: null,
+        tool: "Documents",
+        outcome: d.error ?? (status === "completed" ? "Proposal recorded; nothing written yet" : null),
+        proposal: true,
+        facts: compact([
+          ["Folder", d.folder],
+          ["File", d.file_name || null],
+          ["Run", d.run_id],
+          ["Error", d.error],
+        ]),
+      };
     case "RecordsFound":
       return {
         ...base,
@@ -476,6 +526,7 @@ function callItems(run: RunView): TimelineItem[] {
 export function noteItems(run: RunView): TimelineItem[] {
   if (run.kind === "McpCall") return callItems(run);
   const at = run.updated_at_ms;
+  const isDocument = run.kind === "Document";
   const approval = (status: ExecStatus, outcome: string): TimelineItem => ({
     id: `${run.run_id}:approval`,
     kind: "approval",
@@ -489,7 +540,7 @@ export function noteItems(run: RunView): TimelineItem[] {
     durationMs: null,
     outcome,
     facts: compact([
-      ["Action", `Create note "${run.title}"`],
+      ["Action", isDocument ? `Create file ${run.title}` : `Create note "${run.title}"`],
       ["Expires", run.pending_approval ? new Date(run.pending_approval.expires_at_ms).toLocaleTimeString("en-US") : null],
       ["Manifest", run.pending_approval?.manifest_sha256 ?? null],
     ]),
@@ -497,17 +548,17 @@ export function noteItems(run: RunView): TimelineItem[] {
   const write = (status: ExecStatus, outcome: string): TimelineItem => ({
     id: `${run.run_id}:write`,
     kind: "write",
-    title: "Write note",
+    title: isDocument ? `Write ${run.title}` : "Write note",
     status,
     agent: "Host",
     model: null,
-    tool: "Files",
+    tool: isDocument ? "Documents" : "Files",
     startedAt: at,
     finishedAt: status === "completed" || status === "failed" || status === "cancelled" ? at : null,
     durationMs: null,
     outcome,
     facts: compact([
-      ["Action", "CreateMarkdownArtifact"],
+      ["Action", isDocument ? "CreateDocument" : "CreateMarkdownArtifact"],
       ["File", run.artifact?.path ?? null],
       ["SHA-256", run.artifact?.sha256 ?? null],
       ["Size", run.artifact ? kib(run.artifact.size_bytes) : null],
@@ -658,7 +709,7 @@ function markRetries(items: TimelineItem[]): TimelineItem[] {
 /** While a reply is still settling, only its proposal step names the run. */
 function proposedRun(m: ChatMessageView, runsById: ReadonlyMap<string, RunView>): RunView | undefined {
   for (const s of m.steps) {
-    if ((s.detail.kind === "NoteProposed" || s.detail.kind === "McpCall") && s.detail.run_id)
+    if ((s.detail.kind === "NoteProposed" || s.detail.kind === "McpCall" || s.detail.kind === "DocumentProposed") && s.detail.run_id)
       return runsById.get(s.detail.run_id);
   }
   return undefined;
@@ -739,6 +790,7 @@ const NODE_OF: Record<ItemKind, NodeKind> = {
   memory: "memory",
   mcp: "mcp",
   record: "records",
+  doc: "files",
   write: "files",
   approval: "approval",
 };
@@ -783,6 +835,7 @@ export function deriveCore(input: {
     // Intent and execution are told apart: a proposal stays a proposal
     // until the Host executes it (or it is decided).
     if (item.kind === "note") node.proposed = true;
+    else if (item.kind === "doc") node.proposed = item.proposal === true;
     else if (item.kind === "write") node.proposed = item.status === "queued";
     else if (item.kind === "memory") node.proposed = item.status === "waiting";
     else if (item.kind === "mcp") node.proposed = item.proposal === true || item.status === "queued";
@@ -809,6 +862,9 @@ export function deriveCore(input: {
     } else if (running.kind === "memory") {
       state = "USING_TOOL";
       label = "Proposing a fact to remember";
+    } else if (running.kind === "doc") {
+      state = "USING_TOOL";
+      label = running.title;
     } else if (running.kind === "record") {
       state = "USING_TOOL";
       label = running.title;
@@ -868,7 +924,7 @@ function nodeLabel(id: NodeKind, item: TimelineItem): string {
     case "web":
       return "Web read";
     case "files":
-      return "Notes";
+      return item.kind === "doc" || item.tool === "Documents" ? "Documents" : "Notes";
     case "memory":
       return "Memory";
     case "mcp":
@@ -887,6 +943,7 @@ function nodeSublabel(id: NodeKind, item: TimelineItem): string | null {
     case "web":
       return item.title.replace(/^(Reading|Read) /, "");
     case "files":
+      if (item.kind === "doc") return item.proposal ? "proposal" : "read";
       return item.kind === "write" ? "write" : "proposal";
     case "memory":
       return item.status === "waiting" ? "proposal · your review" : "proposal";
@@ -995,7 +1052,7 @@ export function modelStats(steps: AgentStepView[]): ModelStats[] {
 
 // ---------- Activity log ----------
 
-export type ActivityTool = "Model" | "Web read" | "Notes" | "Memory" | "Records" | "MCP" | "Automations" | "System";
+export type ActivityTool = "Model" | "Web read" | "Notes" | "Documents" | "Memory" | "Records" | "MCP" | "Automations" | "System";
 
 export interface ActivityEntry {
   id: string;
@@ -1050,6 +1107,11 @@ const EVENT_TEXT: Record<string, { title: string; tool: ActivityTool; status?: E
   McpToolEnabled: { title: "MCP tool enabled", tool: "MCP" },
   McpToolDisabled: { title: "MCP tool turned off", tool: "MCP" },
   RemoteCallCompleted: { title: "Approved MCP call made once", tool: "MCP", status: "completed" },
+  FolderShared: { title: "Folder shared with Nexus", tool: "Documents" },
+  FolderUpdated: { title: "Shared folder changed", tool: "Documents" },
+  FolderUnshared: { title: "Folder no longer shared", tool: "Documents" },
+  DocumentCreated: { title: "Approved file written and verified", tool: "Documents", status: "completed" },
+  RecordsImported: { title: "Records imported from a file", tool: "Records", status: "completed" },
   RecordAdded: { title: "Record added", tool: "Records" },
   RecordUpdated: { title: "Record changed", tool: "Records" },
   RecordDeleted: { title: "Record deleted with its history", tool: "Records" },
@@ -1144,6 +1206,9 @@ const TOOL_OF_STEP: Record<AgentStepView["detail"]["kind"], ActivityTool> = {
   McpCall: "MCP",
   RecordsFound: "Records",
   RecordChanged: "Records",
+  FilesListed: "Documents",
+  DocumentRead: "Documents",
+  DocumentProposed: "Documents",
 };
 
 function splitWords(kind: string): string {
@@ -1165,6 +1230,7 @@ export type Collection =
   | "usage"
   | "automations"
   | "registers"
+  | "folders"
   | "focus";
 
 /** What each durable event invalidates. Events are notifications only;
@@ -1216,6 +1282,11 @@ export function invalidatedBy(events: EventView[]): Set<Collection> {
       out.add("usage");
     } else if (k.startsWith("Automation")) {
       out.add("automations");
+    } else if (k.startsWith("Folder")) {
+      out.add("folders");
+    } else if (k === "DocumentCreated") {
+      out.add("runs");
+      out.add("focus");
     } else if (k.startsWith("Record")) {
       out.add("registers");
       // An undone change shows on the agent's step in its task.

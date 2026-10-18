@@ -301,6 +301,42 @@ impl Store {
         .await
     }
 
+    /// Adds many records the user imported, in one transaction: all of them
+    /// or none. Each gets its own history entry; one event names the count.
+    pub async fn import_records(
+        &self,
+        register_id: RegisterId,
+        rows: Vec<Values>,
+        now: i64,
+    ) -> Result<Vec<RecordId>, StorageError> {
+        self.call(move |conn| {
+            let tx = conn.transaction()?;
+            let register = load_register(&tx, register_id)?;
+            let mut ids = Vec::with_capacity(rows.len());
+            for values in &rows {
+                let id = RecordId::new();
+                let (status, follow_up) = derived(&register, values);
+                tx.execute(
+                    &format!("INSERT INTO records ({RECORD_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, 1, 'User', ?6, ?6)"),
+                    params![id.to_string(), register_id.to_string(), values_json(values)?, status, follow_up, now],
+                )?;
+                insert_change(&tx, id, RecordChangeKind::Created, RecordActor::User, None, values, 1, None, now)?;
+                ids.push(id);
+            }
+            insert_event(
+                &tx,
+                "RecordsImported",
+                &register_id.to_string(),
+                1,
+                json!({"register": register.key, "count": ids.len()}),
+                now,
+            )?;
+            tx.commit()?;
+            Ok(ids)
+        })
+        .await
+    }
+
     /// Replaces a record's values. `expected_revision` (the user's edit)
     /// refuses a record changed meanwhile; the agent writes on the latest.
     /// Writing the same values changes nothing and records no history.

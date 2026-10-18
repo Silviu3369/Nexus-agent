@@ -558,6 +558,30 @@ impl Store {
         outcome_json: String,
         now: i64,
     ) -> Result<RunDetail, StorageError> {
+        self.complete_outside(run_id, outcome_json, "RemoteCallCompleted", now)
+            .await
+    }
+
+    /// A document written into a folder the user shared and verified: it is
+    /// the user's file, not a Nexus artifact (backups never copy it), so
+    /// only its path, size and hash are recorded (`outcome_json`).
+    pub async fn complete_document(
+        &self,
+        run_id: RunId,
+        outcome_json: String,
+        now: i64,
+    ) -> Result<RunDetail, StorageError> {
+        self.complete_outside(run_id, outcome_json, "DocumentCreated", now)
+            .await
+    }
+
+    async fn complete_outside(
+        &self,
+        run_id: RunId,
+        outcome_json: String,
+        event: &'static str,
+        now: i64,
+    ) -> Result<RunDetail, StorageError> {
         self.call(move |conn| {
             let tx = conn.transaction()?;
             let detail = load_detail(&tx, run_id)?;
@@ -573,13 +597,18 @@ impl Store {
             )?;
             insert_event(
                 &tx,
-                "RemoteCallCompleted",
+                event,
                 &run_id.to_string(),
                 1,
                 json!({"run_id": run_id.to_string()}),
                 now,
             )?;
-            transition_run(&tx, run_id, RunState::Verifying, None, now)?;
+            // A reconciled run already proved the effect; a live one passes
+            // through Verifying as the contract's happy path requires.
+            match detail.run.state {
+                RunState::Verifying | RunState::NeedsReconciliation => {}
+                _ => transition_run(&tx, run_id, RunState::Verifying, None, now)?,
+            }
             transition_run(&tx, run_id, RunState::Succeeded, None, now)?;
             let detail = load_detail(&tx, run_id)?;
             tx.commit()?;

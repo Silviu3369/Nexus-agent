@@ -72,6 +72,8 @@ export function ApprovalCard({ run, agentName, compact = false }: { run: RunView
   const preview = pending?.preview ?? null;
   // A call to an MCP tool that can change things, shown as the Host will make it.
   const call = run.kind === "McpCall" ? (detail?.call ?? run.call) : null;
+  // A new file in a folder you shared: shown like a note, with its folder.
+  const isDocument = run.kind === "Document";
   const callPreview = pending?.call ?? null;
   const ready = call ? callPreview !== null : preview !== null;
   const left = (pending?.expires_at_ms ?? run.pending_approval?.expires_at_ms ?? now) - now;
@@ -103,7 +105,7 @@ export function ApprovalCard({ run, agentName, compact = false }: { run: RunView
       <dl className="kv approval-facts">
         <div className="kv-row">
           <dt>Action</dt>
-          <dd>{call ? `Call ${call.tool} on ${call.server}` : `Create note “${run.title}”`}</dd>
+          <dd>{call ? `Call ${call.tool} on ${call.server}` : isDocument ? `Create file ${run.title}` : `Create note “${run.title}”`}</dd>
         </div>
         <div className="kv-row">
           <dt>Requested by</dt>
@@ -116,7 +118,9 @@ export function ApprovalCard({ run, agentName, compact = false }: { run: RunView
               ? request
                 ? `Proposed while answering: “${request}”`
                 : "Proposed by the agent while answering this task"
-              : "You asked for this note"}
+              : isDocument
+                ? "You asked for this file"
+                : "You asked for this note"}
           </dd>
         </div>
         <div className="kv-row">
@@ -161,7 +165,7 @@ export function ApprovalCard({ run, agentName, compact = false }: { run: RunView
         <div className="approval-inspect">
           <p className="mono hash">SHA-256 {preview.sha256}</p>
           {compact && <p className="mono path">{preview.destination}</p>}
-          <pre className="content" aria-label="Exact content of the note">
+          <pre className="content" aria-label={isDocument ? "Exact content of the file" : "Exact content of the note"}>
             {preview.content}
           </pre>
         </div>

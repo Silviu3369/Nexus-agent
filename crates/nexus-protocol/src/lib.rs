@@ -6,6 +6,7 @@
 pub mod automation;
 pub mod chat;
 pub mod error;
+pub mod files;
 pub mod handshake;
 pub mod ids;
 pub mod mcp;
@@ -33,11 +34,12 @@ pub use chat::{
     SendMessageResponse, ThinkingLevel,
 };
 pub use error::{ErrorCode, NexusError};
+pub use files::{FolderEntryView, FolderView, SaveFolderRequest};
 pub use handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse, HealthStatus};
 pub use ids::{
     ActionId, AgentStepId, ApprovalId, ArtifactId, AutomationId, ConnectionId, ConversationId,
-    EventId, McpServerId, MemoryId, MessageId, OperationId, ProjectId, RecordId, RegisterId,
-    RequestId, RunId, StepId, TaskId,
+    EventId, FolderId, McpServerId, MemoryId, MessageId, OperationId, ProjectId, RecordId,
+    RegisterId, RequestId, RunId, StepId, TaskId,
 };
 pub use mcp::{McpServerView, McpToolView, SaveMcpServerRequest};
 pub use memory::{
@@ -45,7 +47,8 @@ pub use memory::{
     MemoryStatus, ProjectView, SaveProjectRequest,
 };
 pub use records::{
-    FieldChange, FieldDef, FieldKind, RecordActor, RecordChangeKind, RecordChangeView,
+    ExportView, FieldChange, FieldDef, FieldKind, ImportPreviewView, ImportRequest,
+    ImportResultView, ImportSkipView, RecordActor, RecordChangeKind, RecordChangeView,
     RecordDetailView, RecordQuery, RecordView, RegisterView, SaveRecordRequest,
 };
 pub use service::{NexusService, NexusServiceClient};

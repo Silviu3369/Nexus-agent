@@ -9,17 +9,21 @@ use crate::chat::{
     SendMessageRequest, SendMessageResponse, ThinkingLevel,
 };
 use crate::error::NexusError;
+use crate::files::{FolderEntryView, FolderView, SaveFolderRequest};
 use crate::handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse};
 use crate::ids::{
-    ArtifactId, AutomationId, ConnectionId, ConversationId, McpServerId, MemoryId, MessageId,
-    ProjectId, RecordId, RunId,
+    ArtifactId, AutomationId, ConnectionId, ConversationId, FolderId, McpServerId, MemoryId,
+    MessageId, ProjectId, RecordId, RegisterId, RunId,
 };
 use crate::mcp::{McpServerView, SaveMcpServerRequest};
 use crate::memory::{
     AddMemoryRequest, MemoryContextView, MemoryItemView, MemoryQuery, ProjectView,
     SaveProjectRequest,
 };
-use crate::records::{RecordDetailView, RecordQuery, RecordView, RegisterView, SaveRecordRequest};
+use crate::records::{
+    ExportView, ImportPreviewView, ImportRequest, ImportResultView, RecordDetailView, RecordQuery,
+    RecordView, RegisterView, SaveRecordRequest,
+};
 use crate::runs::{
     BackupSummary, DecideApprovalRequest, EventsPage, RunView, Snapshot, SubmitNoteRequest,
     SubmitNoteResponse, SystemStatusView,
@@ -159,6 +163,35 @@ pub trait NexusService {
 
     /// Exactly the facts a request in this project sends to the model.
     async fn memory_context(project_id: ProjectId) -> Result<MemoryContextView, NexusError>;
+
+    /// Writes the register to a new Excel file in a folder shared for
+    /// writing; nothing is replaced.
+    async fn export_register(
+        register_id: RegisterId,
+        folder_id: FolderId,
+    ) -> Result<ExportView, NexusError>;
+
+    /// What an Excel or CSV file in a shared folder would import.
+    async fn import_preview(
+        register_id: RegisterId,
+        folder_id: FolderId,
+        path: String,
+    ) -> Result<ImportPreviewView, NexusError>;
+
+    /// Adds the file's rows as the user's records, with the mapping the
+    /// user confirmed; rows that cannot be used are listed, not guessed.
+    async fn import_records(request: ImportRequest) -> Result<ImportResultView, NexusError>;
+
+    /// Folders the user shared with Nexus.
+    async fn list_folders() -> Result<Vec<FolderView>, NexusError>;
+
+    async fn save_folder(request: SaveFolderRequest) -> Result<FolderView, NexusError>;
+
+    /// Stops sharing it; nothing in the folder is touched.
+    async fn remove_folder(folder_id: FolderId) -> Result<(), NexusError>;
+
+    /// What a shared folder holds (a few levels deep, bounded).
+    async fn folder_entries(folder_id: FolderId) -> Result<Vec<FolderEntryView>, NexusError>;
 
     /// The user's registers (job applications first) with their fields.
     async fn list_registers() -> Result<Vec<RegisterView>, NexusError>;

@@ -23,7 +23,9 @@
   connection with its vault entry; an automation you create and run now, with
   its history, its task, turning it off and deleting it; a job application
   the agent records from what you tell it, undone from the task, and one you
-  add, edit, undo and delete in Jobs. Build first:
+  add, edit, undo and delete in Jobs; a shared folder whose CV the agent reads
+  before proposing a cover letter written only after approval, Jobs exported
+  to Excel and a CSV list imported. Build first:
     cargo build -p nexus-host --locked
     cargo build -p nexus-host --example fake_gemini_server --locked
     pnpm --filter @nexus/desktop tauri build --no-bundle
@@ -47,6 +49,9 @@ foreach ($f in $exe, $hostExe, $fakeExe) { if (-not (Test-Path $f)) { throw "mis
 
 $profileDir = Join-Path $env:TEMP ("nexus-m2-ui-check-" + [guid]::NewGuid())
 New-Item -ItemType Directory $profileDir | Out-Null
+# A folder to share: outside app data (Nexus refuses to share those).
+$shareDir = Join-Path $Root ("target\uicheck-share-" + [guid]::NewGuid())
+New-Item -ItemType Directory $shareDir | Out-Null
 $env:NEXUS_PROFILE_DIR = $profileDir
 
 # Test values only; the fake accepts exactly $testKey.
@@ -199,6 +204,11 @@ function Profile-Bytes {
     try { $buf = New-Object byte[] $fs.Length; [void]$fs.Read($buf, 0, $buf.Length); $all.AddRange($buf) } finally { $fs.Dispose() }
   }
   [System.Text.Encoding]::UTF8.GetString($all.ToArray())
+}
+
+# A check box whose accessible name contains $fragment.
+function Find-Check($win, [string]$fragment) {
+  $win.FindAll($S::Descendants, $True_) | Where-Object { $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::CheckBox -and $_.Current.Name -like "*$fragment*" } | Select-Object -First 1
 }
 
 function Send-Chat($win, [string]$text) {
@@ -568,6 +578,51 @@ try {
   Click-Button $win "Delete for good"
   Check ($null -ne (Wait-Contains $win "No applications yet")) "the application is deleted"
 
+  # --- documents: a shared folder, the CV read, a letter written after approval ---
+  Set-Content -Path (Join-Path $shareDir "CV.txt") -Value "Service desk analyst, five years of Microsoft 365 support." -Encoding utf8
+  Set-Content -Path (Join-Path $shareDir "candidaturi.csv") -Value "Firma;Post;Status;Data aplicarii`nBeta;IT Support;Aplicat;18.10.2026`nGamma;Sysadmin;in asteptare;ieri" -Encoding utf8
+  Click-Button $win "Tools"
+  $docsRow = Wait-Like $win "Documents · shared folders"
+  Check ($null -ne $docsRow) "Tools lists documents and shared folders"
+  if ($docsRow) { Invoke-Element $docsRow }
+  Check ($null -ne (Wait-Contains $win "No folder is shared yet")) "no folder is shared until you share one"
+  Set-Field $win "Folder path" $shareDir
+  Set-Field $win "Name" "Jobs"
+  $write = Find-Check $win "may propose new files"
+  if ($write) { Invoke-Element $write }
+  Click-Button $win "Share folder"
+  Check ($null -ne (Wait-Contains $win "New files allowed")) "the folder is shared with new files allowed"
+  Click-Button $win "Overview"
+  Set-Field $win "Give Nexus a task" "Write my cover letter for Acme based on my CV"
+  Click-Button $win "Run" 20
+  Check ($null -ne (Wait-Like $win "Read CV.txt in Jobs" 20)) "the agent reads the CV in the shared folder"
+  Check ($null -ne (Wait-Contains $win "Create file Cover letter Acme.docx in Jobs" 20)) "the approval card names the exact file"
+  $letter = Join-Path $shareDir "Cover letter Acme.docx"
+  Check (-not (Test-Path $letter)) "nothing is written before the approval"
+  Click-Button $win "Inspect" 20
+  Check ($null -ne (Wait-Contains $win "I am applying for the Service Desk Analyst role.")) "the exact text can be inspected"
+  Click-Button $win "Approve" 20
+  Check (Wait-Text $win "The letter is saved in Jobs." 20) "after the approval the letter is written and the task continues"
+  Check (Test-Path $letter) "the Word file exists in the shared folder"
+  Click-Button $win "Jobs"
+  Click-Button $win "Import"
+  Click-Button $win "Preview" 15
+  Check ($null -ne (Wait-Contains $win "2 rows in candidaturi.csv")) "the import shows the file's rows first"
+  Click-Button $win "Import 2 rows"
+  Check ($null -ne (Wait-Contains $win "Imported 2 applications")) "the rows are imported"
+  Check ($null -ne (Wait-Like $win "Gamma · Sysadmin")) "imported applications are listed"
+  Click-Button $win "Export"
+  Click-Button $win "Export to Excel"
+  Check ($null -ne (Wait-Contains $win "Saved 2 applications to")) "Jobs exports to an Excel file in the shared folder"
+  Check (@(Get-ChildItem -Path $shareDir -Filter "Job applications *.xlsx").Count -eq 1) "the Excel file is on disk"
+  Click-Button $win "Tools"
+  $docsRow = Wait-Like $win "Documents · shared folders"
+  if ($docsRow) { Invoke-Element $docsRow }
+  Click-Button $win "Stop sharing"
+  Click-Button $win "Stop sharing now"
+  Check ($null -ne (Wait-Contains $win "No folder is shared yet")) "the folder is no longer shared"
+  Check (Test-Path $letter) "unsharing touches nothing in the folder"
+
   # --- removing the connection removes its key ---
   Click-Button $win "Models"
   Check (Wait-Text $win "No backup model.") "there is no backup model unless one is chosen"
@@ -585,6 +640,7 @@ finally {
   # Safety net: no test entry may stay in Credential Manager.
   foreach ($t in Vault-Entries) { cmdkey /delete:$t | Out-Null }
   Remove-Item -Recurse -Force $profileDir -ErrorAction SilentlyContinue
+  Remove-Item -Recurse -Force $shareDir -ErrorAction SilentlyContinue
   Remove-Item Env:NEXUS_PROFILE_DIR -ErrorAction SilentlyContinue
   Remove-Item Env:NEXUS_GEMINI_BASE_URL -ErrorAction SilentlyContinue
   Remove-Item Env:NEXUS_ALLOW_LOOPBACK_MCP -ErrorAction SilentlyContinue
