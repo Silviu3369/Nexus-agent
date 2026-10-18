@@ -1,0 +1,322 @@
+//! A register's inbox (`schema::V13`): a shared folder whose new documents
+//! the agent reads and records on its own. One row per file content (its
+//! SHA-256), so the same file is handled once even if it is renamed or
+//! copied again. The store keeps what was seen and what came of it; the
+//! Host decides when a file is ready and starts its task.
+
+use nexus_protocol::{ConversationId, FolderId, RegisterId};
+use rusqlite::{OptionalExtension, Transaction, params};
+use serde_json::json;
+
+use crate::repo::{insert_event, parse_uuid};
+use crate::{StorageError, Store};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InboxRow {
+    pub register_id: RegisterId,
+    pub folder_id: Option<FolderId>,
+    pub enabled: bool,
+    pub revision: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InboxFileRow {
+    pub id: i64,
+    pub path: String,
+    pub sha256: String,
+    /// Waiting, Started, Failed or Skipped.
+    pub status: String,
+    pub reason: Option<String>,
+    pub conversation_id: Option<ConversationId>,
+    pub seen_at_ms: i64,
+    pub started_at_ms: Option<i64>,
+}
+
+const FILE_COLUMNS: &str =
+    "id, path, sha256, status, reason, conversation_id, seen_at_ms, started_at_ms";
+const MAX_REASON_CHARS: usize = 300;
+
+/// A row as read, before ids are parsed.
+type RawFile = (
+    i64,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    i64,
+    Option<i64>,
+);
+
+fn raw_file(r: &rusqlite::Row) -> rusqlite::Result<RawFile> {
+    Ok((
+        r.get(0)?,
+        r.get(1)?,
+        r.get(2)?,
+        r.get(3)?,
+        r.get(4)?,
+        r.get(5)?,
+        r.get(6)?,
+        r.get(7)?,
+    ))
+}
+
+fn parse_file(
+    (id, path, sha256, status, reason, conversation, seen_at_ms, started_at_ms): RawFile,
+) -> Result<InboxFileRow, StorageError> {
+    Ok(InboxFileRow {
+        id,
+        path,
+        sha256,
+        status,
+        reason,
+        conversation_id: conversation
+            .map(|c| Ok::<_, StorageError>(ConversationId(parse_uuid(&c)?)))
+            .transpose()?,
+        seen_at_ms,
+        started_at_ms,
+    })
+}
+
+fn load_inbox(tx: &Transaction, register: RegisterId) -> Result<InboxRow, StorageError> {
+    let row: Option<(Option<String>, bool, i64)> = tx
+        .query_row(
+            "SELECT folder_id, enabled, revision FROM register_inboxes WHERE register_id = ?1",
+            [register.to_string()],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    Ok(match row {
+        None => InboxRow {
+            register_id: register,
+            folder_id: None,
+            enabled: false,
+            revision: 0,
+        },
+        Some((folder, enabled, revision)) => InboxRow {
+            register_id: register,
+            folder_id: folder
+                .map(|f| Ok::<_, StorageError>(FolderId(parse_uuid(&f)?)))
+                .transpose()?,
+            enabled,
+            revision,
+        },
+    })
+}
+
+impl Store {
+    /// The register's inbox (an empty, off one if never set).
+    pub async fn inbox(&self, register: RegisterId) -> Result<InboxRow, StorageError> {
+        self.call(move |conn| load_inbox(&conn.transaction()?, register))
+            .await
+    }
+
+    /// Enabled inboxes with their folder.
+    pub async fn active_inboxes(&self) -> Result<Vec<InboxRow>, StorageError> {
+        self.call(|conn| {
+            let tx = conn.transaction()?;
+            let ids: Vec<String> = {
+                let mut stmt = tx.prepare(
+                    "SELECT register_id FROM register_inboxes WHERE enabled = 1 AND folder_id IS NOT NULL",
+                )?;
+                stmt.query_map([], |r| r.get(0))?
+                    .collect::<Result<_, _>>()?
+            };
+            ids.iter()
+                .map(|id| load_inbox(&tx, RegisterId(parse_uuid(id)?)))
+                .collect()
+        })
+        .await
+    }
+
+    /// Chooses the folder and turns the inbox on or off; refused if it
+    /// changed since `revision` (0 for one never set).
+    pub async fn save_inbox(
+        &self,
+        register: RegisterId,
+        revision: i64,
+        folder: Option<FolderId>,
+        enabled: bool,
+        now: i64,
+    ) -> Result<InboxRow, StorageError> {
+        self.call(move |conn| {
+            let tx = conn.transaction()?;
+            let current = load_inbox(&tx, register)?;
+            if current.revision != revision {
+                return Err(StorageError::RevisionConflict("inbox"));
+            }
+            tx.execute(
+                "INSERT INTO register_inboxes (register_id, folder_id, enabled, revision, created_at_ms, updated_at_ms)
+                 VALUES (?1, ?2, ?3, 1, ?4, ?4)
+                 ON CONFLICT (register_id) DO UPDATE SET folder_id = ?2, enabled = ?3,
+                     revision = revision + 1, updated_at_ms = ?4",
+                params![register.to_string(), folder.map(|f| f.to_string()), enabled, now],
+            )?;
+            insert_event(&tx, "InboxUpdated", &register.to_string(), revision + 1, json!({"enabled": enabled}), now)?;
+            let row = load_inbox(&tx, register)?;
+            tx.commit()?;
+            Ok(row)
+        })
+        .await
+    }
+
+    /// Newest first.
+    pub async fn inbox_files(
+        &self,
+        register: RegisterId,
+        limit: u32,
+    ) -> Result<Vec<InboxFileRow>, StorageError> {
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {FILE_COLUMNS} FROM inbox_files WHERE register_id = ?1 ORDER BY id DESC LIMIT ?2"
+            ))?;
+            let raw = stmt
+                .query_map(params![register.to_string(), limit], raw_file)?
+                .collect::<Result<Vec<_>, _>>()?;
+            raw.into_iter().map(parse_file).collect()
+        })
+        .await
+    }
+
+    /// The contents already seen (any status), to tell a new file.
+    pub async fn inbox_known(&self, register: RegisterId) -> Result<Vec<String>, StorageError> {
+        self.call(move |conn| {
+            let mut stmt = conn.prepare("SELECT sha256 FROM inbox_files WHERE register_id = ?1")?;
+            let shas = stmt
+                .query_map([register.to_string()], |r| r.get(0))?
+                .collect::<Result<Vec<String>, _>>()?;
+            Ok(shas)
+        })
+        .await
+    }
+
+    /// Records a newly seen file (once per content). Returns false when the
+    /// same content was seen before.
+    pub async fn inbox_seen(
+        &self,
+        register: RegisterId,
+        path: String,
+        sha256: String,
+        size_bytes: i64,
+        skip_reason: Option<String>,
+        now: i64,
+    ) -> Result<bool, StorageError> {
+        self.call(move |conn| {
+            let tx = conn.transaction()?;
+            let status = if skip_reason.is_some() { "Skipped" } else { "Waiting" };
+            let added = tx.execute(
+                "INSERT INTO inbox_files (register_id, path, sha256, size_bytes, status, reason, seen_at_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT (register_id, sha256) DO NOTHING",
+                params![register.to_string(), path, sha256, size_bytes, status, skip_reason, now],
+            )?;
+            if added == 1 {
+                insert_event(&tx, "InboxFileSeen", &register.to_string(), 1, json!({"status": status}), now)?;
+            }
+            tx.commit()?;
+            Ok(added == 1)
+        })
+        .await
+    }
+
+    /// The oldest file waiting for its turn.
+    pub async fn next_inbox_file(
+        &self,
+        register: RegisterId,
+    ) -> Result<Option<InboxFileRow>, StorageError> {
+        self.call(move |conn| {
+            conn.query_row(
+                &format!(
+                    "SELECT {FILE_COLUMNS} FROM inbox_files WHERE register_id = ?1 AND status = 'Waiting'
+                     ORDER BY id LIMIT 1"
+                ),
+                [register.to_string()],
+                raw_file,
+            )
+            .optional()?
+            .map(parse_file)
+            .transpose()
+        })
+        .await
+    }
+
+    pub async fn inbox_waiting(&self, register: RegisterId) -> Result<u32, StorageError> {
+        self.call(move |conn| {
+            let n: i64 = conn.query_row(
+                "SELECT count(*) FROM inbox_files WHERE register_id = ?1 AND status = 'Waiting'",
+                [register.to_string()],
+                |r| r.get(0),
+            )?;
+            Ok(u32::try_from(n).unwrap_or(u32::MAX))
+        })
+        .await
+    }
+
+    /// What came of a file's turn: its task, or why none was started.
+    pub async fn inbox_outcome(
+        &self,
+        file_id: i64,
+        conversation: Option<ConversationId>,
+        failure: Option<String>,
+        now: i64,
+    ) -> Result<(), StorageError> {
+        self.call(move |conn| {
+            let tx = conn.transaction()?;
+            let register: String = tx
+                .query_row("SELECT register_id FROM inbox_files WHERE id = ?1", [file_id], |r| r.get(0))
+                .optional()?
+                .ok_or(StorageError::NotFound("inbox file"))?;
+            let (status, reason) = match (&conversation, failure) {
+                (Some(_), _) => ("Started", None),
+                (None, reason) => ("Failed", reason.map(|r| r.chars().take(MAX_REASON_CHARS).collect::<String>())),
+            };
+            tx.execute(
+                "UPDATE inbox_files SET status = ?1, reason = ?2, conversation_id = ?3, started_at_ms = ?4 WHERE id = ?5",
+                params![status, reason, conversation.map(|c| c.to_string()), now, file_id],
+            )?;
+            insert_event(&tx, "InboxFileHandled", &register, 1, json!({"status": status}), now)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// A file that could not be started goes back in line.
+    pub async fn retry_inbox_file(
+        &self,
+        register: RegisterId,
+        file_id: i64,
+        now: i64,
+    ) -> Result<(), StorageError> {
+        self.call(move |conn| {
+            let tx = conn.transaction()?;
+            let changed = tx.execute(
+                "UPDATE inbox_files SET status = 'Waiting', reason = NULL WHERE id = ?1 AND register_id = ?2
+                 AND status = 'Failed'",
+                params![file_id, register.to_string()],
+            )?;
+            if changed == 0 {
+                return Err(StorageError::NotFound("failed inbox file"));
+            }
+            insert_event(&tx, "InboxFileRetried", &register.to_string(), 1, json!({}), now)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// SHA-256 of every document Nexus itself wrote (approved document
+    /// runs): an inbox never treats them as new ads.
+    pub async fn written_document_hashes(&self) -> Result<Vec<String>, StorageError> {
+        self.call(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT json_extract(outcome_json, '$.sha256') FROM runs
+                 WHERE outcome_json IS NOT NULL AND json_extract(outcome_json, '$.sha256') IS NOT NULL",
+            )?;
+            let shas = stmt
+                .query_map([], |r| r.get(0))?
+                .collect::<Result<Vec<String>, _>>()?;
+            Ok(shas)
+        })
+        .await
+    }
+}

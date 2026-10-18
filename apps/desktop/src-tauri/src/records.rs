@@ -3,7 +3,8 @@
 //! shows what it returns.
 
 use nexus_protocol::{
-    RecordDetailView, RecordId, RecordQuery, RecordView, RegisterView, SaveRecordRequest,
+    FolderId, InboxView, RecordDetailView, RecordId, RecordQuery, RecordView, RegisterId,
+    RegisterView, SaveRecordRequest,
 };
 
 use crate::host::{BridgeError, HostConnection};
@@ -54,5 +55,40 @@ pub async fn delete_record(connection: State<'_>, record_id: RecordId) -> Result
 pub async fn undo_record_change(connection: State<'_>, change_id: i64) -> Result<(), BridgeError> {
     connection
         .call(async |c| c.undo_record_change(change_id).await)
+        .await
+}
+
+#[tauri::command]
+pub async fn get_inbox(
+    connection: State<'_>,
+    register_id: RegisterId,
+) -> Result<InboxView, BridgeError> {
+    connection.call(async |c| c.inbox(register_id).await).await
+}
+
+#[tauri::command]
+pub async fn save_inbox(
+    connection: State<'_>,
+    register_id: RegisterId,
+    revision: i64,
+    folder_id: Option<FolderId>,
+    enabled: bool,
+) -> Result<InboxView, BridgeError> {
+    connection
+        .call(async |c| {
+            c.save_inbox(register_id, revision, folder_id, enabled)
+                .await
+        })
+        .await
+}
+
+#[tauri::command]
+pub async fn retry_inbox_file(
+    connection: State<'_>,
+    register_id: RegisterId,
+    file_id: i64,
+) -> Result<InboxView, BridgeError> {
+    connection
+        .call(async |c| c.retry_inbox_file(register_id, file_id).await)
         .await
 }

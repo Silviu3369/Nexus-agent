@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::StorageError;
 
-pub const SUPPORTED_VERSION: i64 = 12;
+pub const SUPPORTED_VERSION: i64 = 13;
 
 /// Version 1: everything M1 persists. State columns are closed lists that a
 /// test keeps identical to the `nexus-core` enums. Times are UTC unix ms.
@@ -580,6 +580,38 @@ CREATE INDEX agent_steps_by_start ON agent_steps (started_at_ms);
 CREATE INDEX agent_steps_by_status ON agent_steps (status);
 "#;
 
+/// Version 13: a register's inbox (`PLAN_NEXUS_RO.md` §3a): a shared folder
+/// whose new documents the agent reads and records on its own, and one row
+/// per file content seen there (its SHA-256), so a file is handled once.
+/// Unsharing the folder removes the inbox; deleting a task keeps the row.
+const V13: &str = r#"
+CREATE TABLE register_inboxes (
+    register_id   TEXT    PRIMARY KEY REFERENCES registers (id) ON DELETE CASCADE,
+    folder_id     TEXT    REFERENCES folders (id) ON DELETE SET NULL,
+    enabled       INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+    revision      INTEGER NOT NULL CHECK (revision >= 1),
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE inbox_files (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    register_id     TEXT    NOT NULL REFERENCES registers (id) ON DELETE CASCADE,
+    path            TEXT    NOT NULL CHECK (length(path) BETWEEN 1 AND 400),
+    sha256          TEXT    NOT NULL CHECK (length(sha256) = 64),
+    size_bytes      INTEGER NOT NULL CHECK (size_bytes >= 0),
+    status          TEXT    NOT NULL CHECK (status IN ('Waiting', 'Started', 'Failed', 'Skipped')),
+    reason          TEXT    CHECK (reason IS NULL OR length(reason) <= 300),
+    conversation_id TEXT    REFERENCES conversations (id) ON DELETE SET NULL,
+    seen_at_ms      INTEGER NOT NULL,
+    started_at_ms   INTEGER,
+    UNIQUE (register_id, sha256)
+) STRICT;
+
+CREATE INDEX inbox_files_waiting ON inbox_files (register_id, status, id);
+CREATE INDEX inbox_files_by_conversation ON inbox_files (conversation_id);
+"#;
+
 struct Migration {
     sql: &'static str,
     /// Rebuilds a table other tables refer to (see [`V5`]).
@@ -633,6 +665,10 @@ const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         sql: V12,
+        rebuilds_parent_table: false,
+    },
+    Migration {
+        sql: V13,
         rebuilds_parent_table: false,
     },
 ];

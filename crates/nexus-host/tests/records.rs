@@ -456,3 +456,46 @@ async fn a_bad_value_a_duplicate_and_a_flood_of_writes_are_refused() {
     assert_eq!(client.records(all(&register)).await.unwrap().len(), 9);
     host.shutdown().await;
 }
+
+#[tokio::test]
+async fn the_same_reference_number_is_the_same_application() {
+    let fake = FakeGemini::start(KEY).await;
+    let host = TestHost::start_with(TOKEN, config(&fake)).await;
+    let client = host.client().await;
+    connect(&client).await;
+    let register = jobs(&client).await;
+    client
+        .save_record(SaveRecordRequest {
+            register_id: register.register_id,
+            record_id: None,
+            revision: 0,
+            values: values(&[
+                ("company", "Acme NV"),
+                ("role", "Service Desk"),
+                ("reference", "TopJobs-70123456"),
+            ]),
+        })
+        .await
+        .unwrap();
+    // Written differently, but the reference names the same job.
+    fake.push(Reply::calls(&[(
+        "add_record",
+        json!({"register": "job_applications", "values": {
+            "company": "ACME", "role": "Service Desk Agent", "reference": "topjobs-70123456"}}),
+    )]));
+    fake.push(Reply::text(&["It is already there."]));
+    let sent = send(&client, None, "ref1", "Add this ad").await;
+    settled(&client, &sent).await;
+    let body = fake.generations()[1].json();
+    let refused = answers(&body, "add_record")[0]["error"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        refused.contains("reference topjobs-70123456 is already in the register"),
+        "{refused}"
+    );
+    assert!(refused.contains("Acme NV · Service Desk"));
+    assert_eq!(client.records(all(&register)).await.unwrap().len(), 1);
+    host.shutdown().await;
+}

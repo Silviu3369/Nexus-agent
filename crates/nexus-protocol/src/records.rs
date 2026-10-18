@@ -188,3 +188,42 @@ pub struct ImportResultView {
     pub adjusted: u32,
     pub skipped: Vec<ImportSkipView>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub enum InboxFileStatus {
+    /// Seen; it is read and added once it stops changing and its turn comes.
+    Waiting,
+    /// Sent to the agent as a task (its outcome is in that task).
+    Started,
+    /// The task could not be started (no model, budget used up, …).
+    Failed,
+    /// Not a job ad to read (a file Nexus wrote itself, or unreadable).
+    Skipped,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct InboxFileView {
+    pub file_id: i64,
+    /// Relative to the inbox folder.
+    pub path: String,
+    pub status: InboxFileStatus,
+    pub reason: Option<String>,
+    pub conversation_id: Option<ConversationId>,
+    pub seen_at_ms: i64,
+    pub started_at_ms: Option<i64>,
+}
+
+/// A register's inbox: a shared folder whose new documents the agent reads
+/// and records on its own, one task per file.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct InboxView {
+    pub register_id: RegisterId,
+    pub folder_id: Option<FolderId>,
+    pub folder_label: Option<String>,
+    pub enabled: bool,
+    pub revision: i64,
+    /// Files waiting for their turn.
+    pub waiting: u32,
+    /// Newest first.
+    pub files: Vec<InboxFileView>,
+}

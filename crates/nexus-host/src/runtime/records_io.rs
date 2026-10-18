@@ -49,6 +49,21 @@ fn squash(text: &str) -> String {
 /// French), compared squashed.
 fn synonyms(key: &str) -> &'static [&'static str] {
     match key {
+        "reference" => &[
+            "reference",
+            "referenceno",
+            "referentie",
+            "referentienummer",
+            "vacaturenummer",
+            "vacancynumber",
+            "jobid",
+            "id",
+            "referinta",
+            "nrreferinta",
+            "numar",
+            "ref",
+        ],
+        "ad_file" => &["adfile", "file", "fisier", "bestand"],
         "company" => &[
             "company",
             "companie",
@@ -414,6 +429,12 @@ impl Runtime {
             .iter()
             .map(|r| register.schema.title(&r.values).to_lowercase())
             .collect();
+        let key = register.schema.key_field.clone();
+        let mut references: HashSet<String> = existing
+            .iter()
+            .filter_map(|r| key.as_ref().and_then(|k| r.values.get(k)))
+            .map(|v| v.to_lowercase())
+            .collect();
         let mut adds = Vec::new();
         let mut skipped = Vec::new();
         let mut adjusted = 0u32;
@@ -425,6 +446,18 @@ impl Runtime {
                     reason,
                 }),
                 Ok((values, changed)) => {
+                    if let Some(reference) = key.as_ref().and_then(|k| values.get(k))
+                        && !references.insert(reference.to_lowercase())
+                    {
+                        skipped.push(ImportSkipView {
+                            row: number,
+                            reason: format!(
+                                "reference {reference} is already in {}",
+                                register.row.name
+                            ),
+                        });
+                        continue;
+                    }
                     let title = register.schema.title(&values).to_lowercase();
                     if !titles.insert(title) {
                         skipped.push(ImportSkipView {

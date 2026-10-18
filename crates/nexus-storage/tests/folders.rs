@@ -120,7 +120,7 @@ async fn migrating_to_v12_keeps_every_step_and_accepts_the_new_ones() {
     s.call(|c| {
         c.execute_batch(
             "PRAGMA foreign_keys = OFF;
-             DROP TABLE folders;
+             DROP TABLE inbox_files; DROP TABLE register_inboxes; DROP TABLE folders;
              CREATE TABLE agent_steps_v11 (
                  id TEXT PRIMARY KEY, message_id TEXT NOT NULL REFERENCES messages (id),
                  seq INTEGER NOT NULL CHECK (seq >= 1),

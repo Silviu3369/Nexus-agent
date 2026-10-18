@@ -11,13 +11,13 @@ use nexus_protocol::{
     ConversationSummary, ConversationView, DecideApprovalRequest, DeletedView, ErrorCode,
     EventsPage, ExportView, FolderEntryView, FolderId, FolderView, GetHealthResponse,
     HandshakeRequest, HandshakeResponse, HealthStatus, ImportPreviewView, ImportRequest,
-    ImportResultView, McpServerId, McpServerView, MemoryContextView, MemoryId, MemoryItemView,
-    MemoryQuery, MessageId, ModelPrice, ModelView, NexusError, PROTOCOL_VERSION, PersonaView,
-    ProjectId, ProjectView, RecordDetailView, RecordId, RecordQuery, RecordView, RegisterId,
-    RegisterView, RunId, RunView, SaveAutomationRequest, SaveConnectionRequest, SaveFolderRequest,
-    SaveMcpServerRequest, SavePersonaRequest, SaveProjectRequest, SaveRecordRequest,
-    SendMessageRequest, SendMessageResponse, Snapshot, SubmitNoteRequest, SubmitNoteResponse,
-    SystemStatusView, ThinkingLevel, UsageView,
+    ImportResultView, InboxView, McpServerId, McpServerView, MemoryContextView, MemoryId,
+    MemoryItemView, MemoryQuery, MessageId, ModelPrice, ModelView, NexusError, PROTOCOL_VERSION,
+    PersonaView, ProjectId, ProjectView, RecordDetailView, RecordId, RecordQuery, RecordView,
+    RegisterId, RegisterView, RunId, RunView, SaveAutomationRequest, SaveConnectionRequest,
+    SaveFolderRequest, SaveMcpServerRequest, SavePersonaRequest, SaveProjectRequest,
+    SaveRecordRequest, SendMessageRequest, SendMessageResponse, Snapshot, SubmitNoteRequest,
+    SubmitNoteResponse, SystemStatusView, ThinkingLevel, UsageView,
 };
 use tarpc::context::Context;
 use tarpc::server::{BaseChannel, Channel};
@@ -466,6 +466,39 @@ impl NexusService for HostServer {
     ) -> Result<ImportResultView, NexusError> {
         self.require_session()?;
         self.runtime.import_records(request).await
+    }
+
+    async fn get_inbox(
+        self,
+        _ctx: Context,
+        register_id: RegisterId,
+    ) -> Result<InboxView, NexusError> {
+        self.require_session()?;
+        self.runtime.get_inbox(register_id).await
+    }
+
+    async fn save_inbox(
+        self,
+        _ctx: Context,
+        register_id: RegisterId,
+        revision: i64,
+        folder_id: Option<FolderId>,
+        enabled: bool,
+    ) -> Result<InboxView, NexusError> {
+        self.require_session()?;
+        self.runtime
+            .save_inbox(register_id, revision, folder_id, enabled)
+            .await
+    }
+
+    async fn retry_inbox_file(
+        self,
+        _ctx: Context,
+        register_id: RegisterId,
+        file_id: i64,
+    ) -> Result<InboxView, NexusError> {
+        self.require_session()?;
+        self.runtime.retry_inbox_file(register_id, file_id).await
     }
 
     async fn list_folders(self, _ctx: Context) -> Result<Vec<FolderView>, NexusError> {

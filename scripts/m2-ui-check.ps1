@@ -241,6 +241,8 @@ try {
   if (-not $baseUrl -or -not $baseUrl.StartsWith("http://127.0.0.1:")) { throw "the test fake did not start" }
   if (-not $mcpUrl -or -not $mcpUrl.StartsWith("http://127.0.0.1:")) { throw "the MCP test fake did not start" }
   $env:NEXUS_GEMINI_BASE_URL = $baseUrl
+  # Debug hosts only: look at an inbox folder every second.
+  $env:NEXUS_INBOX_INTERVAL_MS = "1000"
   $env:NEXUS_ALLOW_LOOPBACK_MCP = "1"
   $hostProc = Start-Process $hostExe -WindowStyle Hidden -PassThru
   Remove-Item Env:NEXUS_GEMINI_BASE_URL
@@ -615,12 +617,33 @@ try {
   Click-Button $win "Export to Excel"
   Check ($null -ne (Wait-Contains $win "Saved 2 applications to")) "Jobs exports to an Excel file in the shared folder"
   Check (@(Get-ChildItem -Path $shareDir -Filter "Job applications *.xlsx").Count -eq 1) "the Excel file is on disk"
+  # --- the job ads inbox: an ad put in the folder becomes an application on its own ---
+  $adsDir = Join-Path $shareDir "Inbox"
+  New-Item -ItemType Directory $adsDir | Out-Null
+  Click-Button $win "Tools"
+  $docsRow = Wait-Like $win "Documents · shared folders"
+  if ($docsRow) { Invoke-Element $docsRow }
+  Set-Field $win "Folder path" $adsDir
+  Set-Field $win "Name" "Ads"
+  Click-Button $win "Share folder"
+  Check ($null -ne (Wait-Contains $win "Ads")) "a folder for job ads is shared"
+  Click-Button $win "Jobs"
+  Click-Button $win "Inbox"
+  Click-Button $win "Turn inbox on"
+  Check ($null -ne (Wait-Contains $win "On · reading")) "the inbox is on"
+  Set-Content -Path (Join-Path $adsDir "TopJobs vacature.txt") -Value "Vacature 70123456 - Service Desk Agent bij Acme NV, Springfield" -Encoding utf8
+  Check ($null -ne (Wait-Like $win "Acme NV · Service Desk Agent" 40)) "the ad becomes an application on its own"
+  Check ($null -ne (Wait-Contains $win "Ref 70123456")) "with the ad's reference number"
+  Check ($null -ne (Wait-Contains $win "Sent to the agent")) "the inbox lists the file as sent to the agent"
   Click-Button $win "Tools"
   $docsRow = Wait-Like $win "Documents · shared folders"
   if ($docsRow) { Invoke-Element $docsRow }
   Click-Button $win "Stop sharing"
   Click-Button $win "Stop sharing now"
-  Check ($null -ne (Wait-Contains $win "No folder is shared yet")) "the folder is no longer shared"
+  Start-Sleep -Milliseconds 800
+  Click-Button $win "Stop sharing"
+  Click-Button $win "Stop sharing now"
+  Check ($null -ne (Wait-Contains $win "No folder is shared yet")) "the folders are no longer shared"
   Check (Test-Path $letter) "unsharing touches nothing in the folder"
 
   # --- removing the connection removes its key ---
@@ -644,6 +667,7 @@ finally {
   Remove-Item Env:NEXUS_PROFILE_DIR -ErrorAction SilentlyContinue
   Remove-Item Env:NEXUS_GEMINI_BASE_URL -ErrorAction SilentlyContinue
   Remove-Item Env:NEXUS_ALLOW_LOOPBACK_MCP -ErrorAction SilentlyContinue
+  Remove-Item Env:NEXUS_INBOX_INTERVAL_MS -ErrorAction SilentlyContinue
 }
 
 if ($failures -gt 0) { Write-Output "$failures check(s) failed"; exit 1 }

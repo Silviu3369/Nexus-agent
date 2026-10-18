@@ -602,12 +602,12 @@ async fn a_register_goes_to_excel_and_an_existing_list_comes_in() {
     assert_eq!(exported.rows, 1);
     let table = documents::extract_table(Path::new(&exported.path), 100).unwrap();
     assert_eq!(
-        table.rows[0][..4],
-        ["Company", "Role", "Status", "Applied on"]
+        table.rows[0][..5],
+        ["Company", "Role", "Reference no.", "Status", "Applied on"]
     );
     assert_eq!(
-        table.rows[1][..4],
-        ["Acme", "Service Desk", "Applied", "2026-10-18"]
+        table.rows[1][..5],
+        ["Acme", "Service Desk", "", "Applied", "2026-10-18"]
     );
     let second = client
         .export_register(register.register_id, writable.folder_id)

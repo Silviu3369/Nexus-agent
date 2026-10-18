@@ -30,6 +30,7 @@ mod automation;
 mod chat;
 mod document_run;
 mod files;
+mod inbox;
 mod mcp;
 mod memory;
 mod records;
@@ -105,6 +106,8 @@ pub struct Runtime {
     answers: remote_call::Answers,
     /// The document reader program (`None`: this executable).
     extractor_exe: Option<PathBuf>,
+    inbox_interval: Duration,
+    inbox_state: inbox::InboxState,
 }
 
 #[derive(Debug, Clone)]
@@ -128,6 +131,8 @@ pub struct RuntimeConfig {
     /// is this executable. Tests running the Host in-process name the built
     /// `nexus-host.exe`.
     pub extractor_exe: Option<PathBuf>,
+    /// How often an inbox folder is looked at.
+    pub inbox_interval: Duration,
 }
 
 impl Default for RuntimeConfig {
@@ -143,6 +148,7 @@ impl Default for RuntimeConfig {
             retry_waits: vec![Duration::from_secs(2), Duration::from_secs(5)],
             allow_loopback_mcp: false,
             extractor_exe: None,
+            inbox_interval: inbox::DEFAULT_INBOX_INTERVAL,
         }
     }
 }
@@ -187,6 +193,8 @@ impl Runtime {
             mcp_clients: mcp::McpClients::default(),
             answers: remote_call::Answers::default(),
             extractor_exe: config.extractor_exe,
+            inbox_interval: config.inbox_interval,
+            inbox_state: inbox::InboxState::default(),
         });
         runtime.ensure_registers().await?;
         if paused {
@@ -243,6 +251,7 @@ impl Runtime {
             // Tasks whose proposal the user has decided go on from there.
             self.continue_waiting_replies().await;
             self.run_due_automations().await;
+            self.run_inboxes().await;
             match self.step().await {
                 Ok(true) => continue,
                 Ok(false) => {}

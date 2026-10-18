@@ -64,6 +64,12 @@ fn runtime_config() -> nexus_host::RuntimeConfig {
         set("NEXUS_DEEPSEEK_BASE_URL", &mut config.deepseek_base_url);
         config.allow_loopback_mcp =
             std::env::var("NEXUS_ALLOW_LOOPBACK_MCP").is_ok_and(|v| v == "1");
+        if let Some(ms) = std::env::var("NEXUS_INBOX_INTERVAL_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+        {
+            config.inbox_interval = std::time::Duration::from_millis(ms);
+        }
     }
     config
 }

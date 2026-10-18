@@ -37,7 +37,7 @@ const FIND_DEFAULT: u32 = 20;
 const FIND_MAX: u32 = 50;
 const LIST_DEFAULT: u32 = 200;
 const LIST_MAX: u32 = 500;
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 pub const JOB_APPLICATIONS: &str = "job_applications";
 
 /// A register's fields and rules, kept with it in the database (the
@@ -54,6 +54,10 @@ pub(super) struct RegisterSchema {
     pub(super) closed_statuses: Vec<String>,
     pub(super) follow_up_field: Option<String>,
     pub(super) title_fields: Vec<String>,
+    /// A field whose value names one record on its own (an ad's reference
+    /// number): the same value is the same record.
+    #[serde(default)]
+    pub(super) key_field: Option<String>,
 }
 
 pub(super) struct Register {
@@ -115,6 +119,13 @@ fn job_applications() -> (&'static str, &'static str, RegisterSchema) {
                 200,
                 "The job title as the ad names it",
             )),
+            field(
+                "reference",
+                "Reference no.",
+                Text,
+                100,
+                "The ad's own reference or vacancy number (for example TopJobs's vacature number), if it shows one",
+            ),
             required(choice(
                 "status",
                 "Status",
@@ -145,11 +156,18 @@ fn job_applications() -> (&'static str, &'static str, RegisterSchema) {
             ),
             field("link", "Link", Url, 2000, "The job ad's address"),
             field(
+                "ad_file",
+                "Ad file",
+                Text,
+                400,
+                "The job ad saved in a shared folder, as folder/path",
+            ),
+            field(
                 "source",
                 "Source",
                 Text,
                 100,
-                "Where it was found or sent: LinkedIn, the company site, an agency, a recruiter…",
+                "Where it was found or sent: TopJobs, LinkedIn, Indeed, the company site, an agency, a recruiter…",
             ),
             field("location", "Location", Text, 200, "City or region"),
             choice(
@@ -200,6 +218,7 @@ fn job_applications() -> (&'static str, &'static str, RegisterSchema) {
         closed_statuses: vec!["Rejected".to_string(), "Withdrawn".to_string()],
         follow_up_field: Some("follow_up_on".to_string()),
         title_fields: vec!["company".to_string(), "role".to_string()],
+        key_field: Some("reference".to_string()),
     };
     (JOB_APPLICATIONS, "Job applications", schema)
 }
@@ -871,8 +890,36 @@ impl Runtime {
     ) -> Result<Written, String> {
         let schema = &register.schema;
         let values = schema.apply(Values::new(), agent_changes(arguments)?)?;
-        // One record per job: an existing one is updated, not repeated.
+        // One record per job: an existing one is updated, not repeated. An
+        // ad's reference number names it; otherwise company and role do.
         let title = schema.title(&values);
+        if let Some(key) = &schema.key_field
+            && let Some(reference) = values.get(key)
+        {
+            let (same, _) = self
+                .store
+                .records(
+                    register.row.id,
+                    RecordFilter {
+                        text: Some(reference.clone()),
+                        limit: LIST_MAX,
+                        ..RecordFilter::default()
+                    },
+                )
+                .await
+                .map_err(|_| "the register could not be read".to_string())?;
+            if let Some(existing) = same.iter().find(|r| {
+                r.values
+                    .get(key)
+                    .is_some_and(|v| v.eq_ignore_ascii_case(reference))
+            }) {
+                return Err(format!(
+                    "reference {reference} is already in the register ({}, id {}); use update_record to change it",
+                    schema.title(&existing.values),
+                    existing.id
+                ));
+            }
+        }
         if let Some(first) = schema.title_fields.first().and_then(|k| values.get(k)) {
             let (same, _) = self
                 .store

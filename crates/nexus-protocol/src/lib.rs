@@ -48,8 +48,9 @@ pub use memory::{
 };
 pub use records::{
     ExportView, FieldChange, FieldDef, FieldKind, ImportPreviewView, ImportRequest,
-    ImportResultView, ImportSkipView, RecordActor, RecordChangeKind, RecordChangeView,
-    RecordDetailView, RecordQuery, RecordView, RegisterView, SaveRecordRequest,
+    ImportResultView, ImportSkipView, InboxFileStatus, InboxFileView, InboxView, RecordActor,
+    RecordChangeKind, RecordChangeView, RecordDetailView, RecordQuery, RecordView, RegisterView,
+    SaveRecordRequest,
 };
 pub use service::{NexusService, NexusServiceClient};
 pub use usage::{ModelPrice, ModelUsageView, UsageView};

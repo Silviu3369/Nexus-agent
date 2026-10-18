@@ -24,6 +24,7 @@ import type {
   ImportPreviewView,
   ImportRequest,
   ImportResultView,
+  InboxView,
   HostStatus,
   MemoryContextView,
   MemoryId,
@@ -165,6 +166,12 @@ export const api = {
   importPreview: (registerId: string, folderId: string, path: string) =>
     invoke<ImportPreviewView>("import_preview", { registerId, folderId, path }),
   importRecords: (request: ImportRequest) => invoke<ImportResultView>("import_records", { request }),
+  /** A register's inbox folder: new documents there are read and recorded on their own. */
+  getInbox: (registerId: string) => invoke<InboxView>("get_inbox", { registerId }),
+  saveInbox: (registerId: string, revision: number, folderId: string | null, enabled: boolean) =>
+    invoke<InboxView>("save_inbox", { registerId, revision, folderId, enabled }),
+  retryInboxFile: (registerId: string, fileId: number) =>
+    invoke<InboxView>("retry_inbox_file", { registerId, fileId }),
   listRegisters: () => invoke<RegisterView[]>("list_registers"),
   listRecords: (query: RecordQuery) => invoke<RecordView[]>("list_records", { query }),
   recordDetail: (recordId: string) => invoke<RecordDetailView>("record_detail", { recordId }),

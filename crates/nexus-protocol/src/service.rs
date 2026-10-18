@@ -21,8 +21,8 @@ use crate::memory::{
     SaveProjectRequest,
 };
 use crate::records::{
-    ExportView, ImportPreviewView, ImportRequest, ImportResultView, RecordDetailView, RecordQuery,
-    RecordView, RegisterView, SaveRecordRequest,
+    ExportView, ImportPreviewView, ImportRequest, ImportResultView, InboxView, RecordDetailView,
+    RecordQuery, RecordView, RegisterView, SaveRecordRequest,
 };
 use crate::runs::{
     BackupSummary, DecideApprovalRequest, EventsPage, RunView, Snapshot, SubmitNoteRequest,
@@ -181,6 +181,23 @@ pub trait NexusService {
     /// Adds the file's rows as the user's records, with the mapping the
     /// user confirmed; rows that cannot be used are listed, not guessed.
     async fn import_records(request: ImportRequest) -> Result<ImportResultView, NexusError>;
+
+    /// A register's inbox folder and what came through it.
+    async fn get_inbox(register_id: RegisterId) -> Result<InboxView, NexusError>;
+
+    /// Chooses the inbox folder (`None`: no inbox) and turns it on or off.
+    async fn save_inbox(
+        register_id: RegisterId,
+        revision: i64,
+        folder_id: Option<FolderId>,
+        enabled: bool,
+    ) -> Result<InboxView, NexusError>;
+
+    /// Puts a file that could not be started back in line.
+    async fn retry_inbox_file(
+        register_id: RegisterId,
+        file_id: i64,
+    ) -> Result<InboxView, NexusError>;
 
     /// Folders the user shared with Nexus.
     async fn list_folders() -> Result<Vec<FolderView>, NexusError>;

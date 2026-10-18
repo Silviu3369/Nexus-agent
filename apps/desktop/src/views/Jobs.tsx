@@ -10,6 +10,7 @@ import type {
   FolderEntryView,
   ImportPreviewView,
   ImportResultView,
+  InboxView,
   RecordDetailView,
   RecordView,
   RegisterView,
@@ -53,7 +54,7 @@ function RegisterScreen({ register, initialRecordId }: { register: RegisterView;
   const [filter, setFilter] = useState<RecordFilterState>({ status: null, dueOnly: false, text: "" });
   const [selected, setSelected] = useState<string | null>(initialRecordId);
   const [adding, setAdding] = useState(false);
-  const [side, setSide] = useState<"import" | "export" | null>(null);
+  const [side, setSide] = useState<"import" | "export" | "inbox" | null>(null);
   const deselect = useCallback(() => setSelected(null), []);
 
   useEffect(() => {
@@ -84,6 +85,9 @@ function RegisterScreen({ register, initialRecordId }: { register: RegisterView;
         id="register"
         actions={
           <>
+            <button type="button" className="ghost" aria-pressed={side === "inbox"} onClick={() => setSide(side === "inbox" ? null : "inbox")}>
+              Inbox
+            </button>
             <button type="button" className="ghost" aria-pressed={side === "import"} onClick={() => setSide(side === "import" ? null : "import")}>
               Import
             </button>
@@ -94,13 +98,14 @@ function RegisterScreen({ register, initialRecordId }: { register: RegisterView;
               type="button"
               className="ghost"
               disabled={adding}
+              aria-label={`New ${item}`}
               onClick={() => {
                 setAdding(true);
                 setSelected(null);
                 setSide(null);
               }}
             >
-              <PlusIcon size={14} /> New {item}
+              <PlusIcon size={14} /> New
             </button>
           </>
         }
@@ -178,6 +183,7 @@ function RegisterScreen({ register, initialRecordId }: { register: RegisterView;
         </p>
       </Panel>
       <div className="records-side">
+        {side === "inbox" && <InboxPanel register={register} onClose={() => setSide(null)} />}
         {side === "export" && <ExportPanel register={register} onClose={() => setSide(null)} />}
         {side === "import" && <ImportPanel register={register} onClose={() => setSide(null)} />}
         {adding ? (
@@ -223,7 +229,12 @@ function RecordRow({
   const title = recordTitle(register, record.values);
   const applied = record.values.applied_on;
   const followUp = register.follow_up_field ? record.values[register.follow_up_field] : undefined;
-  const meta = [applied ? `Applied ${dateText(applied)}` : null, record.values.source ?? null, record.values.location ?? null]
+  const meta = [
+    applied ? `Applied ${dateText(applied)}` : null,
+    record.values.reference ? `Ref ${record.values.reference}` : null,
+    record.values.source ?? null,
+    record.values.location ?? null,
+  ]
     .filter(Boolean)
     .join(" · ");
   return (
@@ -747,6 +758,158 @@ function ImportPanel({ register, onClose }: { register: RegisterView; onClose: (
                 </ul>
               )}
             </div>
+          )}
+          <ErrorLine error={error} />
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+const INBOX_LABEL: Record<InboxView["files"][number]["status"], string> = {
+  Waiting: "Waiting",
+  Started: "Sent to the agent",
+  Failed: "Not started",
+  Skipped: "Skipped",
+};
+
+const INBOX_PILL: Record<InboxView["files"][number]["status"], "queued" | "completed" | "failed" | "cancelled"> = {
+  Waiting: "queued",
+  Started: "completed",
+  Failed: "failed",
+  Skipped: "cancelled",
+};
+
+/** The register's inbox: a shared folder whose new job ads the agent reads
+ *  and records on its own, one task per file. */
+function InboxPanel({ register, onClose }: { register: RegisterView; onClose: () => void }) {
+  const d = useNexus();
+  const goTo = useGoTo();
+  const folders = (d.folders ?? []).filter((f) => f.available);
+  const [inbox, setInbox] = useState<InboxView | null>(null);
+  const [folder, setFolder] = useState<string>("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .getInbox(register.register_id)
+      .then((v) => {
+        if (!alive) return;
+        setInbox(v);
+        setError(null);
+      })
+      .catch((err) => alive && setError(describeError(err)));
+    return () => {
+      alive = false;
+    };
+  }, [register.register_id, d.recordsRev]);
+
+  const chosen = folder || inbox?.folder_id || folders[0]?.folder_id || "";
+
+  async function save(enabled: boolean) {
+    if (!inbox) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setInbox(await api.saveInbox(register.register_id, inbox.revision, chosen || null, enabled));
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function retry(fileId: number) {
+    setBusy(true);
+    setError(null);
+    try {
+      setInbox(await api.retryInboxFile(register.register_id, fileId));
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Panel title="Job ads inbox" icon={<FolderIcon size={15} />} id="record-inbox">
+      {folders.length === 0 ? (
+        <NoFolder text="The inbox reads a folder you shared. None is shared yet." />
+      ) : inbox === null ? (
+        error ? <ErrorLine error={error} /> : <Empty>Loading…</Empty>
+      ) : (
+        <div className="stack">
+          <p className="muted">
+            Put job ads (PDF, Word or text) in this folder. Each new one is read by Nexus and added as an application — with
+            its reference number, platform and the rest — while Nexus.Host is running. Each file becomes a task you can
+            open and undo; a file is read once; nothing in the folder is moved or changed. Best a folder of its own: every
+            document in it is treated as an ad.
+          </p>
+          <label>
+            Folder
+            <select value={chosen} disabled={busy} onChange={(e) => setFolder(e.currentTarget.value)}>
+              {folders.map((f) => (
+                <option key={f.folder_id} value={f.folder_id}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="actions">
+            {inbox.enabled ? (
+              <>
+                <button type="button" className="secondary" disabled={busy} onClick={() => void save(false)}>
+                  Turn inbox off
+                </button>
+                {chosen !== inbox.folder_id && (
+                  <button type="button" className="primary" disabled={busy} onClick={() => void save(true)}>
+                    Use this folder
+                  </button>
+                )}
+              </>
+            ) : (
+              <button type="button" className="primary" disabled={busy || !chosen} onClick={() => void save(true)}>
+                Turn inbox on
+              </button>
+            )}
+            <button type="button" className="ghost" onClick={onClose}>
+              Close
+            </button>
+          </div>
+          <p className={inbox.enabled ? "record-done" : "muted"} role="status">
+            {inbox.enabled
+              ? `On · reading “${inbox.folder_label ?? "?"}”${inbox.waiting > 0 ? ` · ${inbox.waiting} waiting` : ""}`
+              : "Off: new files are not read"}
+          </p>
+          {inbox.files.length > 0 && (
+            <ol className="automation-history" aria-label="Inbox files">
+              <li className="automation-history-head">Files, newest first</li>
+              {inbox.files.map((f) => (
+                <li key={f.file_id}>
+                  <span className="automation-run">
+                    <StatusPill status={INBOX_PILL[f.status]} label={INBOX_LABEL[f.status]} />
+                    <span className="mono">{f.path}</span>
+                    {f.reason && <span className="muted">{f.reason}</span>}
+                    {f.conversation_id && (
+                      <button
+                        type="button"
+                        className="link"
+                        onClick={() => goTo({ section: "tasks", taskId: f.conversation_id })}
+                      >
+                        Open task
+                      </button>
+                    )}
+                    {f.status === "Failed" && (
+                      <button type="button" className="link" disabled={busy} onClick={() => void retry(f.file_id)}>
+                        Retry
+                      </button>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ol>
           )}
           <ErrorLine error={error} />
         </div>

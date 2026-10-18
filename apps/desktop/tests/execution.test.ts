@@ -723,3 +723,10 @@ test("folder and document events refresh what they describe", () => {
   assert.deepEqual([...invalidatedBy([ev("DocumentCreated")])].sort(), ["focus", "runs"]);
   assert.deepEqual([...invalidatedBy([ev("RecordsImported")])], ["registers"]);
 });
+
+test("inbox events refresh the registers, so the inbox panel reads again", () => {
+  const ev = (kind: string) => ({ seq: 1, kind, entity_id: "x", created_at_ms: T0 });
+  for (const kind of ["InboxUpdated", "InboxFileSeen", "InboxFileHandled", "InboxFileRetried"]) {
+    assert.deepEqual([...invalidatedBy([ev(kind)])], ["registers"], kind);
+  }
+});

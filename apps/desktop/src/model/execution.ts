@@ -1112,6 +1112,10 @@ const EVENT_TEXT: Record<string, { title: string; tool: ActivityTool; status?: E
   FolderUnshared: { title: "Folder no longer shared", tool: "Documents" },
   DocumentCreated: { title: "Approved file written and verified", tool: "Documents", status: "completed" },
   RecordsImported: { title: "Records imported from a file", tool: "Records", status: "completed" },
+  InboxUpdated: { title: "Inbox folder changed", tool: "Records" },
+  InboxFileSeen: { title: "New file seen in the inbox", tool: "Records" },
+  InboxFileHandled: { title: "Inbox file sent to the agent", tool: "Records" },
+  InboxFileRetried: { title: "Inbox file put back in line", tool: "Records" },
   RecordAdded: { title: "Record added", tool: "Records" },
   RecordUpdated: { title: "Record changed", tool: "Records" },
   RecordDeleted: { title: "Record deleted with its history", tool: "Records" },
@@ -1287,6 +1291,8 @@ export function invalidatedBy(events: EventView[]): Set<Collection> {
     } else if (k === "DocumentCreated") {
       out.add("runs");
       out.add("focus");
+    } else if (k.startsWith("Inbox")) {
+      out.add("registers");
     } else if (k.startsWith("Record")) {
       out.add("registers");
       // An undone change shows on the agent's step in its task.

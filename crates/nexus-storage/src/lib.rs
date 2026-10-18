@@ -5,6 +5,7 @@
 mod automation;
 mod chat;
 mod folders;
+mod inbox;
 mod mcp;
 mod memory;
 mod records;
@@ -19,6 +20,7 @@ pub use chat::{
     MessageRow, NewExchange, Pause, PersonaRow, Settlement,
 };
 pub use folders::FolderRow;
+pub use inbox::{InboxFileRow, InboxRow};
 pub use mcp::{McpServerRow, McpToolRow, NewMcpTool};
 pub use memory::{MemoryFilter, MemoryRow, NewMemory, ProjectRow};
 pub use records::{

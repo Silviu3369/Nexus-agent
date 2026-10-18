@@ -425,6 +425,40 @@ impl NexusClient {
             .await??)
     }
 
+    pub async fn inbox(
+        &self,
+        register: nexus_protocol::RegisterId,
+    ) -> Result<nexus_protocol::InboxView, CallError> {
+        Ok(self
+            .client
+            .get_inbox(context::current(), register)
+            .await??)
+    }
+
+    pub async fn save_inbox(
+        &self,
+        register: nexus_protocol::RegisterId,
+        revision: i64,
+        folder: Option<nexus_protocol::FolderId>,
+        enabled: bool,
+    ) -> Result<nexus_protocol::InboxView, CallError> {
+        Ok(self
+            .client
+            .save_inbox(context::current(), register, revision, folder, enabled)
+            .await??)
+    }
+
+    pub async fn retry_inbox_file(
+        &self,
+        register: nexus_protocol::RegisterId,
+        file_id: i64,
+    ) -> Result<nexus_protocol::InboxView, CallError> {
+        Ok(self
+            .client
+            .retry_inbox_file(context::current(), register, file_id)
+            .await??)
+    }
+
     pub async fn folders(&self) -> Result<Vec<nexus_protocol::FolderView>, CallError> {
         Ok(self.client.list_folders(context::current()).await??)
     }

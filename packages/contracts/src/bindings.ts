@@ -244,6 +244,16 @@ export type ImportSkipView = { row: number; reason: string }
 
 export type ImportResultView = { added: number; adjusted: number; skipped: ImportSkipView[] }
 
+export type InboxFileStatus = "Waiting" | "Started" | "Failed" | "Skipped"
+
+export type InboxFileView = { file_id: number; path: string; status: InboxFileStatus; reason: string | null; conversation_id: ConversationId | null; seen_at_ms: number; started_at_ms: number | null }
+
+/**
+ * A register's inbox: a shared folder whose new documents the agent reads
+ * and records on its own, one task per file.
+ */
+export type InboxView = { register_id: RegisterId; folder_id: FolderId | null; folder_label: string | null; enabled: boolean; revision: number; waiting: number; files: InboxFileView[] }
+
 /**
  * When an automation runs, in this PC's local time.
  */

@@ -122,6 +122,22 @@ async fn main() {
         }),
     )]));
     fake.push(Reply::text(&["The letter is saved in Jobs."]));
+    // The job ads inbox: a new ad in the inbox folder is read and recorded
+    // with its reference number, as a task of its own.
+    fake.push(Reply::calls(&[(
+        "read_document",
+        serde_json::json!({"folder": "Ads", "path": "TopJobs vacature.txt"}),
+    )]));
+    fake.push(Reply::calls(&[(
+        "add_record",
+        serde_json::json!({"register": "job_applications", "values": {
+            "company": "Acme NV", "role": "Service Desk Agent", "status": "To apply",
+            "reference": "70123456", "source": "TopJobs", "ad_file": "Ads/TopJobs vacature.txt"
+        }}),
+    )]));
+    fake.push(Reply::text(&[
+        "Saved Acme NV, Service Desk Agent (TopJobs 70123456).",
+    ]));
     println!("{}", fake.base_url);
     println!("{}", mcp.url);
     std::io::stdout().flush().expect("stdout");
