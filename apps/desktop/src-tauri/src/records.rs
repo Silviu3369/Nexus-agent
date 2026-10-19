@@ -3,8 +3,8 @@
 //! shows what it returns.
 
 use nexus_protocol::{
-    InboxView, RecordDetailView, RecordId, RecordQuery, RecordView, RegisterId, RegisterView,
-    SaveInboxRequest, SaveRecordRequest,
+    InboxView, JobResultsView, RecordDetailView, RecordId, RecordQuery, RecordView, RegisterId,
+    RegisterView, SaveInboxRequest, SaveRecordRequest,
 };
 
 use crate::host::{BridgeError, HostConnection};
@@ -82,5 +82,15 @@ pub async fn retry_inbox_file(
 ) -> Result<InboxView, BridgeError> {
     connection
         .call(async |c| c.retry_inbox_file(register_id, file_id).await)
+        .await
+}
+
+#[tauri::command]
+pub async fn job_results(
+    connection: State<'_>,
+    register_id: RegisterId,
+) -> Result<JobResultsView, BridgeError> {
+    connection
+        .call(async |c| c.job_results(register_id).await)
         .await
 }

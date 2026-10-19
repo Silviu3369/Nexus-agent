@@ -2,7 +2,14 @@
 // named, counted, filtered and how its history reads. The Host checks and
 // stores every value; these only present what it returned.
 
-import type { FieldDef, RecordChangeView, RecordView, RegisterView } from "@nexus/contracts";
+import type {
+  FieldDef,
+  GroupCountView,
+  RecordChangeView,
+  RecordView,
+  RegisterView,
+  ScoreBand,
+} from "@nexus/contracts";
 
 /** "Acme · Service Desk Analyst". */
 export function recordTitle(register: RegisterView, values: Record<string, string>): string {
@@ -127,4 +134,30 @@ export function sortRecords(register: RegisterView, records: RecordView[], sort:
 export function matchText(record: RecordView): string | null {
   const v = record.values.match_score;
   return v === undefined ? null : `Match ${v}`;
+}
+
+/** "42%" of a whole; "—" when there is nothing to divide. */
+export function percentText(part: number, whole: number): string {
+  return whole > 0 ? `${Math.round((part * 100) / whole)}%` : "—";
+}
+
+/** "19 Oct" for a week's Monday. */
+export function weekText(weekStart: string): string {
+  return dateText(weekStart).replace(/ \d{4}$/, "");
+}
+
+const BAND_TEXT: Record<ScoreBand, string> = {
+  High: "Match 70 or more",
+  Low: "Match below 70",
+  Unscored: "No match score",
+};
+
+export function bandText(band: ScoreBand): string {
+  return BAND_TEXT[band];
+}
+
+/** "3 sent · 1 interview (33%)". */
+export function groupText(c: GroupCountView): string {
+  const interviews = `${c.interviews} ${c.interviews === 1 ? "interview" : "interviews"}`;
+  return `${c.sent} sent · ${interviews}${c.sent > 0 ? ` (${percentText(c.interviews, c.sent)})` : ""}`;
 }

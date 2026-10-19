@@ -25,6 +25,7 @@ import type {
   ImportRequest,
   ImportResultView,
   InboxView,
+  JobResultsView,
   HostStatus,
   MemoryContextView,
   MemoryId,
@@ -172,6 +173,7 @@ export const api = {
   saveInbox: (request: SaveInboxRequest) => invoke<InboxView>("save_inbox", { request }),
   retryInboxFile: (registerId: string, fileId: number) =>
     invoke<InboxView>("retry_inbox_file", { registerId, fileId }),
+  jobResults: (registerId: string) => invoke<JobResultsView>("job_results", { registerId }),
   listRegisters: () => invoke<RegisterView[]>("list_registers"),
   listRecords: (query: RecordQuery) => invoke<RecordView[]>("list_records", { query }),
   recordDetail: (recordId: string) => invoke<RecordDetailView>("record_detail", { recordId }),

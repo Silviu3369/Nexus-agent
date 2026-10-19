@@ -11,13 +11,14 @@ use nexus_protocol::{
     ConversationSummary, ConversationView, DecideApprovalRequest, DeletedView, ErrorCode,
     EventsPage, ExportView, FolderEntryView, FolderId, FolderView, GetHealthResponse,
     HandshakeRequest, HandshakeResponse, HealthStatus, ImportPreviewView, ImportRequest,
-    ImportResultView, InboxView, McpServerId, McpServerView, MemoryContextView, MemoryId,
-    MemoryItemView, MemoryQuery, MessageId, ModelPrice, ModelView, NexusError, PROTOCOL_VERSION,
-    PersonaView, ProjectId, ProjectView, RecordDetailView, RecordId, RecordQuery, RecordView,
-    RegisterId, RegisterView, RunId, RunView, SaveAutomationRequest, SaveConnectionRequest,
-    SaveFolderRequest, SaveInboxRequest, SaveMcpServerRequest, SavePersonaRequest,
-    SaveProjectRequest, SaveRecordRequest, SendMessageRequest, SendMessageResponse, Snapshot,
-    SubmitNoteRequest, SubmitNoteResponse, SystemStatusView, ThinkingLevel, UsageView,
+    ImportResultView, InboxView, JobResultsView, McpServerId, McpServerView, MemoryContextView,
+    MemoryId, MemoryItemView, MemoryQuery, MessageId, ModelPrice, ModelView, NexusError,
+    PROTOCOL_VERSION, PersonaView, ProjectId, ProjectView, RecordDetailView, RecordId, RecordQuery,
+    RecordView, RegisterId, RegisterView, RunId, RunView, SaveAutomationRequest,
+    SaveConnectionRequest, SaveFolderRequest, SaveInboxRequest, SaveMcpServerRequest,
+    SavePersonaRequest, SaveProjectRequest, SaveRecordRequest, SendMessageRequest,
+    SendMessageResponse, Snapshot, SubmitNoteRequest, SubmitNoteResponse, SystemStatusView,
+    ThinkingLevel, UsageView,
 };
 use tarpc::context::Context;
 use tarpc::server::{BaseChannel, Channel};
@@ -494,6 +495,15 @@ impl NexusService for HostServer {
     ) -> Result<InboxView, NexusError> {
         self.require_session()?;
         self.runtime.retry_inbox_file(register_id, file_id).await
+    }
+
+    async fn job_results(
+        self,
+        _ctx: Context,
+        register_id: RegisterId,
+    ) -> Result<JobResultsView, NexusError> {
+        self.require_session()?;
+        self.runtime.job_results(register_id).await
     }
 
     async fn list_folders(self, _ctx: Context) -> Result<Vec<FolderView>, NexusError> {

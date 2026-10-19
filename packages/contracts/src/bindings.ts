@@ -254,6 +254,32 @@ export type InboxFileView = { file_id: number; path: string; status: InboxFileSt
  */
 export type InboxView = { register_id: RegisterId; folder_id: FolderId | null; folder_label: string | null; enabled: boolean; revision: number; cv_folder_id: FolderId | null; cv_folder_label: string | null; cv_path: string | null; waiting: number; files: InboxFileView[] }
 
+/**
+ * Applications sent in one week (Monday first, local time).
+ */
+export type WeekCountView = { week_start: string; sent: number }
+
+export type ScoreBand = "High" | "Low" | "Unscored"
+
+/**
+ * Sent applications in one group, and how many of them reached an
+ * interview.
+ */
+export type GroupCountView = { sent: number; interviews: number }
+
+export type ScoreBandView = { band: ScoreBand; counts: GroupCountView }
+
+export type SourceCountView = { source: string; counts: GroupCountView }
+
+/**
+ * What the job applications led to (`PLAN_NEXUS_RO.md` §3a), counted from
+ * the applications and their history; nothing is estimated. "Sent" is an
+ * application that was applied for (Applied, Interviewing, Offer,
+ * Rejected, or withdrawn after applying); a stage counts once it was
+ * reached, even if the status moved on, unless the user undid it.
+ */
+export type JobResultsView = { sent: number; to_apply: number; answered: number; interviews: number; offers: number; waiting: number; waiting_long: number; median_days_to_answer: number | null; weeks: WeekCountView[]; undated: number; by_score: ScoreBandView[]; by_source: SourceCountView[]; added_by_nexus: number; ads_read: number; nexus_changes: number; undone_changes: number; partial: boolean }
+
 export type SaveInboxRequest = { register_id: RegisterId; revision: number; folder_id: FolderId | null; enabled: boolean; cv_folder_id: FolderId | null; cv_path: string | null }
 
 /**

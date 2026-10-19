@@ -225,6 +225,19 @@ impl Store {
         .await
     }
 
+    /// How many of the register's inbox files the agent finished with.
+    pub async fn inbox_done_count(&self, register: RegisterId) -> Result<u32, StorageError> {
+        self.call(move |conn| {
+            let n: i64 = conn.query_row(
+                "SELECT count(*) FROM inbox_files WHERE register_id = ?1 AND status = 'Done'",
+                [register.to_string()],
+                |r| r.get(0),
+            )?;
+            Ok(u32::try_from(n).unwrap_or(u32::MAX))
+        })
+        .await
+    }
+
     /// Records a newly seen file (once per content). Returns false when the
     /// same content was seen before.
     pub async fn inbox_seen(

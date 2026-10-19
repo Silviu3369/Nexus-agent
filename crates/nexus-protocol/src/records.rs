@@ -253,3 +253,81 @@ pub struct SaveInboxRequest {
     pub cv_folder_id: Option<FolderId>,
     pub cv_path: Option<String>,
 }
+
+/// Applications sent in one week (Monday first, local time).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct WeekCountView {
+    /// The week's Monday, `YYYY-MM-DD`.
+    pub week_start: String,
+    pub sent: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub enum ScoreBand {
+    /// A match score of 70 or more.
+    High,
+    /// Below 70.
+    Low,
+    /// No match score.
+    Unscored,
+}
+
+/// Sent applications in one group, and how many of them reached an
+/// interview.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct GroupCountView {
+    pub sent: u32,
+    pub interviews: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct ScoreBandView {
+    pub band: ScoreBand,
+    pub counts: GroupCountView,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SourceCountView {
+    /// The source as written (platform, site); "Not set" when empty and
+    /// "Other" for the rest after the largest ones.
+    pub source: String,
+    pub counts: GroupCountView,
+}
+
+/// What the job applications led to (`PLAN_NEXUS_RO.md` §3a), counted from
+/// the applications and their history; nothing is estimated. "Sent" is an
+/// application that was applied for (Applied, Interviewing, Offer,
+/// Rejected, or withdrawn after applying); a stage counts once it was
+/// reached, even if the status moved on, unless the user undid it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct JobResultsView {
+    pub sent: u32,
+    pub to_apply: u32,
+    /// Sent applications that got an answer: an interview, an offer or a
+    /// rejection.
+    pub answered: u32,
+    pub interviews: u32,
+    pub offers: u32,
+    /// Sent and still waiting for an answer; of those, sent more than 14
+    /// days ago.
+    pub waiting: u32,
+    pub waiting_long: u32,
+    /// Days from applying to the first answer (median), when known.
+    pub median_days_to_answer: Option<u32>,
+    /// The last 8 weeks, oldest first; the last one is this week.
+    pub weeks: Vec<WeekCountView>,
+    /// Sent applications whose date is unknown (not in `weeks`).
+    pub undated: u32,
+    pub by_score: Vec<ScoreBandView>,
+    /// Most sent first.
+    pub by_source: Vec<SourceCountView>,
+    /// Applications Nexus added, job ads it read from the inbox, and its
+    /// changes to applications, of which the user undid how many (an
+    /// undone addition removes the application and is not counted).
+    pub added_by_nexus: u32,
+    pub ads_read: u32,
+    pub nexus_changes: u32,
+    pub undone_changes: u32,
+    /// Only the newest applications were counted (a very large register).
+    pub partial: bool,
+}

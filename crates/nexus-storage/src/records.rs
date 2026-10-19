@@ -403,6 +403,48 @@ impl Store {
         .await
     }
 
+    /// A register's records (at most `max_records`, the newest) and every
+    /// change to them, oldest first, read together for its results; plus
+    /// whether some records were left out.
+    pub async fn register_activity(
+        &self,
+        register_id: RegisterId,
+        max_records: u32,
+    ) -> Result<(Vec<RecordRow>, Vec<RecordChangeRow>, bool), StorageError> {
+        self.call(move |conn| {
+            let tx = conn.transaction()?;
+            let total: i64 = tx.query_row(
+                "SELECT count(*) FROM records WHERE register_id = ?1",
+                [register_id.to_string()],
+                |r| r.get(0),
+            )?;
+            let mut stmt = tx.prepare(&format!(
+                "SELECT {RECORD_COLUMNS} FROM records WHERE register_id = ?1
+                 ORDER BY created_at_ms DESC, id LIMIT ?2"
+            ))?;
+            let records = stmt
+                .query_map(params![register_id.to_string(), max_records], raw_record)?
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .map(RawRecord::parse)
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut stmt = tx.prepare(&format!(
+                "SELECT {CHANGE_COLUMNS} FROM record_changes
+                 WHERE record_id IN (SELECT id FROM records WHERE register_id = ?1)
+                 ORDER BY id"
+            ))?;
+            let changes = stmt
+                .query_map([register_id.to_string()], raw_change)?
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .map(RawChange::parse)
+                .collect::<Result<Vec<_>, _>>()?;
+            drop(stmt);
+            Ok((records, changes, total > i64::from(max_records)))
+        })
+        .await
+    }
+
     /// Reverses a record's latest change. Undoing its addition removes the
     /// record (returns `None`); undoing an update puts the earlier values
     /// back as a new revision. The agent step that made the change is marked

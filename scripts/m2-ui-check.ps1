@@ -681,6 +681,10 @@ try {
   Check ($null -ne (Wait-Contains $win "Ref 70123456")) "with the ad's reference number"
   Check ($null -ne (Wait-Contains $win "Match 82")) "the ad is scored against the CV"
   Check (Wait-InList $win "Inbox files" "Done*TopJobs vacature.txt*" 20) "the inbox lists the ad as done once the agent finished"
+  Click-Button $win "Results"
+  Check ($null -ne (Wait-Contains $win "Counted from your applications and their history")) "Jobs shows its results, counted from the history"
+  Check ($null -ne (Wait-Match $win "^This week: \d+ sent$")) "the weekly chart names each week's count"
+  Check ($null -ne (Wait-Contains $win "Job ads it read from the inbox")) "the results say what Nexus did"
   Click-Button $win "Tools"
   $docsRow = Wait-Like $win "Documents · shared folders"
   if ($docsRow) { Invoke-Element $docsRow }

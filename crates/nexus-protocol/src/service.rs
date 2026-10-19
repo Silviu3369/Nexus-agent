@@ -21,8 +21,8 @@ use crate::memory::{
     SaveProjectRequest,
 };
 use crate::records::{
-    ExportView, ImportPreviewView, ImportRequest, ImportResultView, InboxView, RecordDetailView,
-    RecordQuery, RecordView, RegisterView, SaveInboxRequest, SaveRecordRequest,
+    ExportView, ImportPreviewView, ImportRequest, ImportResultView, InboxView, JobResultsView,
+    RecordDetailView, RecordQuery, RecordView, RegisterView, SaveInboxRequest, SaveRecordRequest,
 };
 use crate::runs::{
     BackupSummary, DecideApprovalRequest, EventsPage, RunView, Snapshot, SubmitNoteRequest,
@@ -194,6 +194,10 @@ pub trait NexusService {
         register_id: RegisterId,
         file_id: i64,
     ) -> Result<InboxView, NexusError>;
+
+    /// What the job applications led to, counted from them and their
+    /// history (the job applications register only).
+    async fn job_results(register_id: RegisterId) -> Result<JobResultsView, NexusError>;
 
     /// Folders the user shared with Nexus.
     async fn list_folders() -> Result<Vec<FolderView>, NexusError>;

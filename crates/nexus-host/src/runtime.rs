@@ -31,6 +31,7 @@ mod chat;
 mod document_run;
 mod files;
 mod inbox;
+mod job_results;
 mod mcp;
 mod memory;
 mod records;

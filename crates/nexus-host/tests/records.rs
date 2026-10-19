@@ -384,6 +384,12 @@ async fn an_update_by_the_agent_is_undone_and_the_earlier_values_return() {
     );
     assert_eq!(detail.history[0].actor, RecordActor::Agent);
     assert!(detail.history[0].can_undo);
+    let results = client.job_results(register.register_id).await.unwrap();
+    assert_eq!(
+        (results.sent, results.interviews, results.waiting),
+        (1, 1, 0)
+    );
+    assert_eq!((results.nexus_changes, results.undone_changes), (1, 0));
 
     client.undo_record_change(change_id.unwrap()).await.unwrap();
     let detail = client.record_detail(mine.record_id).await.unwrap();
@@ -391,6 +397,87 @@ async fn an_update_by_the_agent_is_undone_and_the_earlier_values_return() {
     assert!(!detail.record.values.contains_key("next_step"));
     assert_eq!(detail.history[0].kind, RecordChangeKind::Undo);
     assert!(detail.history[1].undone);
+    let results = client.job_results(register.register_id).await.unwrap();
+    assert_eq!(
+        (results.sent, results.interviews, results.waiting),
+        (1, 0, 1),
+        "an undone interview does not count"
+    );
+    assert_eq!((results.nexus_changes, results.undone_changes), (1, 1));
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn results_count_the_applications_sent_answered_and_by_score() {
+    let host = TestHost::start(TOKEN).await;
+    let client = host.client().await;
+    let register = jobs(&client).await;
+    let empty = client.job_results(register.register_id).await.unwrap();
+    assert_eq!((empty.sent, empty.to_apply, empty.weeks.len()), (0, 0, 8));
+
+    let save = |values: BTreeMap<String, String>| SaveRecordRequest {
+        register_id: register.register_id,
+        record_id: None,
+        revision: 0,
+        values,
+    };
+    let acme = client
+        .save_record(save(values(&[
+            ("company", "Acme"),
+            ("role", "Service Desk Analyst"),
+            ("status", "Applied"),
+            ("applied_on", &today()),
+            ("match_score", "80"),
+            ("source", "TopJobs"),
+        ])))
+        .await
+        .unwrap();
+    client
+        .save_record(save(values(&[
+            ("company", "Beta"),
+            ("role", "IT Support"),
+            ("match_score", "55"),
+        ])))
+        .await
+        .unwrap();
+    client
+        .save_record(SaveRecordRequest {
+            record_id: Some(acme.record_id),
+            revision: acme.revision,
+            ..save(values(&[
+                ("company", "Acme"),
+                ("role", "Service Desk Analyst"),
+                ("status", "Interviewing"),
+                ("applied_on", &today()),
+                ("match_score", "80"),
+                ("source", "TopJobs"),
+            ]))
+        })
+        .await
+        .unwrap();
+
+    let r = client.job_results(register.register_id).await.unwrap();
+    assert_eq!((r.sent, r.to_apply), (1, 1));
+    assert_eq!(
+        (r.answered, r.interviews, r.offers, r.waiting),
+        (1, 1, 0, 0)
+    );
+    assert_eq!(r.median_days_to_answer, Some(0));
+    assert_eq!(r.weeks.last().unwrap().sent, 1, "sent this week");
+    assert_eq!(r.undated, 0);
+    let high = &r.by_score[0];
+    assert_eq!(
+        (high.band, high.counts.sent, high.counts.interviews),
+        (nexus_protocol::ScoreBand::High, 1, 1)
+    );
+    assert_eq!(r.by_source[0].source, "TopJobs");
+    assert_eq!((r.added_by_nexus, r.nexus_changes, r.ads_read), (0, 0, 0));
+
+    let unknown = client
+        .job_results(nexus_protocol::RegisterId::new())
+        .await
+        .unwrap_err();
+    assert_eq!(unknown.code(), Some(ErrorCode::NotFound));
     host.shutdown().await;
 }
 

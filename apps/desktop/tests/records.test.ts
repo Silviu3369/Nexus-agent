@@ -2,17 +2,21 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { FieldDef, RecordChangeView, RecordView, RegisterView } from "@nexus/contracts";
 import {
+  bandText,
   changeLines,
   changeText,
   dateText,
   filterRecords,
   formValues,
+  groupText,
   matchText,
   missingRequired,
+  percentText,
   recordTitle,
   sortRecords,
   statusCounts,
   statusTone,
+  weekText,
 } from "../src/model/records.ts";
 
 const field = (key: string, label: string, kind: FieldDef["kind"], extra: Partial<FieldDef> = {}): FieldDef => ({
@@ -130,4 +134,14 @@ test("records sort by last change, best match or the nearest follow-up", () => {
   assert.deepEqual(order("follow_up"), ["c", "a", "b"], "no date last");
   assert.equal(matchText(all[1]), "Match 90");
   assert.equal(matchText(all[2]), null);
+});
+
+test("results read as plain numbers, with no percentage of nothing", () => {
+  assert.equal(percentText(1, 3), "33%");
+  assert.equal(percentText(0, 0), "—");
+  assert.equal(weekText("2026-10-19"), "19 Oct");
+  assert.equal(bandText("High"), "Match 70 or more");
+  assert.equal(groupText({ sent: 3, interviews: 1 }), "3 sent · 1 interview (33%)");
+  assert.equal(groupText({ sent: 2, interviews: 0 }), "2 sent · 0 interviews (0%)");
+  assert.equal(groupText({ sent: 0, interviews: 0 }), "0 sent · 0 interviews");
 });

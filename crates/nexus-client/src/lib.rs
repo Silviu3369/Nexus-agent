@@ -456,6 +456,16 @@ impl NexusClient {
             .await??)
     }
 
+    pub async fn job_results(
+        &self,
+        register: nexus_protocol::RegisterId,
+    ) -> Result<nexus_protocol::JobResultsView, CallError> {
+        Ok(self
+            .client
+            .job_results(context::current(), register)
+            .await??)
+    }
+
     pub async fn folders(&self) -> Result<Vec<nexus_protocol::FolderView>, CallError> {
         Ok(self.client.list_folders(context::current()).await??)
     }

@@ -11,32 +11,38 @@ import type {
   ImportPreviewView,
   ImportResultView,
   InboxView,
+  JobResultsView,
   RecordDetailView,
   RecordView,
   RegisterView,
+  WeekCountView,
 } from "@nexus/contracts";
 import { api, describeError, errorCode } from "../api";
 import { dateTimeText } from "../model/automation.ts";
 import {
+  bandText,
   changeLines,
   changeText,
   dateText,
   filterRecords,
   formValues,
+  groupText,
   matchText,
   missingRequired,
+  percentText,
   recordTitle,
   statusCounts,
   statusOf,
   sortRecords,
   statusTone,
   valueText,
+  weekText,
 } from "../model/records.ts";
 import type { RecordFilterState, RecordSort } from "../model/records.ts";
 import { useGoTo } from "../shell/nav";
 import { useDerived, useNexus, useNexusActions } from "../state/store";
 import { Empty, ErrorLine, Panel, StatusPill } from "../ui";
-import { BriefcaseIcon, FolderIcon, PlusIcon } from "../icons";
+import { BriefcaseIcon, FolderIcon, PlusIcon, PulseIcon } from "../icons";
 
 const REGISTER = "job_applications";
 const LIST_LIMIT = 500;
@@ -57,7 +63,7 @@ function RegisterScreen({ register, initialRecordId }: { register: RegisterView;
   const [sort, setSort] = useState<RecordSort>("changed");
   const [selected, setSelected] = useState<string | null>(initialRecordId);
   const [adding, setAdding] = useState(false);
-  const [side, setSide] = useState<"import" | "export" | "inbox" | null>(null);
+  const [side, setSide] = useState<"results" | "import" | "export" | "inbox" | null>(null);
   const deselect = useCallback(() => setSelected(null), []);
 
   useEffect(() => {
@@ -91,6 +97,9 @@ function RegisterScreen({ register, initialRecordId }: { register: RegisterView;
         id="register"
         actions={
           <>
+            <button type="button" className="ghost" aria-pressed={side === "results"} onClick={() => setSide(side === "results" ? null : "results")}>
+              Results
+            </button>
             <button type="button" className="ghost" aria-pressed={side === "inbox"} onClick={() => setSide(side === "inbox" ? null : "inbox")}>
               Inbox
             </button>
@@ -194,6 +203,7 @@ function RegisterScreen({ register, initialRecordId }: { register: RegisterView;
         </p>
       </Panel>
       <div className="records-side">
+        {side === "results" && <ResultsPanel register={register} onClose={() => setSide(null)} />}
         {side === "inbox" && <InboxPanel register={register} onClose={() => setSide(null)} />}
         {side === "export" && <ExportPanel register={register} onClose={() => setSide(null)} />}
         {side === "import" && <ImportPanel register={register} onClose={() => setSide(null)} />}
@@ -1003,5 +1013,179 @@ function InboxPanel({ register, onClose }: { register: RegisterView; onClose: ()
         </div>
       )}
     </Panel>
+  );
+}
+
+/** What the applications led to, counted by the Host from them and their
+ *  history; nothing here is estimated. */
+function ResultsPanel({ register, onClose }: { register: RegisterView; onClose: () => void }) {
+  const d = useNexus();
+  const [results, setResults] = useState<JobResultsView | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .jobResults(register.register_id)
+      .then((v) => {
+        if (!alive) return;
+        setResults(v);
+        setError(null);
+      })
+      .catch((err) => alive && setError(describeError(err)));
+    return () => {
+      alive = false;
+    };
+  }, [register.register_id, d.recordsRev]);
+
+  const r = results;
+  return (
+    <Panel title="Results" icon={<PulseIcon size={15} />} id="record-results">
+      {r === null ? (
+        error ? <ErrorLine error={error} /> : <Empty>Loading…</Empty>
+      ) : (
+        <div className="stack">
+          <p className="muted">Counted from your applications and their history; nothing is estimated.</p>
+          <dl className="results-tiles">
+            <div>
+              <dt>Sent</dt>
+              <dd>{r.sent}</dd>
+            </div>
+            <div>
+              <dt>Answered</dt>
+              <dd>
+                {r.answered}
+                <small>{percentText(r.answered, r.sent)}</small>
+              </dd>
+            </div>
+            <div>
+              <dt>Interviews</dt>
+              <dd>
+                {r.interviews}
+                <small>{percentText(r.interviews, r.sent)}</small>
+              </dd>
+            </div>
+            <div>
+              <dt>Offers</dt>
+              <dd>{r.offers}</dd>
+            </div>
+          </dl>
+          <p>
+            {`Waiting for an answer: ${r.waiting}`}
+            {r.waiting_long > 0 && ` · ${r.waiting_long} for more than 14 days`}
+            {r.median_days_to_answer !== null &&
+              ` · usually answered in ${r.median_days_to_answer} ${r.median_days_to_answer === 1 ? "day" : "days"}`}
+          </p>
+          <WeeksChart weeks={r.weeks} undated={r.undated} />
+          {r.sent > 0 && (
+            <>
+              <h3 className="record-history-head">Interviews by match score</h3>
+              <table className="results-table">
+                <tbody>
+                  {r.by_score
+                    .filter((b) => b.counts.sent > 0)
+                    .map((b) => (
+                      <tr key={b.band}>
+                        <th scope="row">{bandText(b.band)}</th>
+                        <td>{groupText(b.counts)}</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+              <h3 className="record-history-head">By source</h3>
+              <table className="results-table">
+                <tbody>
+                  {r.by_source.map((s) => (
+                    <tr key={s.source}>
+                      <th scope="row">{s.source}</th>
+                      <td>{groupText(s.counts)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+          <h3 className="record-history-head">What Nexus did</h3>
+          <table className="results-table">
+            <tbody>
+              <tr>
+                <th scope="row">Applications it added</th>
+                <td>{r.added_by_nexus}</td>
+              </tr>
+              <tr>
+                <th scope="row">Job ads it read from the inbox</th>
+                <td>{r.ads_read}</td>
+              </tr>
+              <tr>
+                <th scope="row">Changes it made</th>
+                <td>
+                  {r.nexus_changes > 0
+                    ? `${r.nexus_changes} · you undid ${r.undone_changes} (${percentText(r.undone_changes, r.nexus_changes)})`
+                    : "0"}
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">Still to apply</th>
+                <td>{r.to_apply}</td>
+              </tr>
+            </tbody>
+          </table>
+          {r.partial && <p className="muted">Only the newest 20,000 applications were counted.</p>}
+          <div className="actions">
+            <button type="button" className="ghost" onClick={onClose}>
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+const CHART_HEIGHT = 80;
+
+/** Applications sent in each of the last 8 weeks; a bar's value shows on
+ *  hover and keyboard focus, and the busiest and current weeks carry it on
+ *  their cap. */
+function WeeksChart({ weeks, undated }: { weeks: WeekCountView[]; undated: number }) {
+  const [hover, setHover] = useState<number | null>(null);
+  if (weeks.length === 0) return null;
+  const last = weeks.length - 1;
+  const max = Math.max(1, ...weeks.map((w) => w.sent));
+  const peak = weeks.reduce((best, w, i) => (w.sent > weeks[best].sent ? i : best), 0);
+  const label = (i: number) =>
+    `${i === last ? "This week" : `Week of ${weekText(weeks[i].week_start)}`}: ${weeks[i].sent} sent`;
+  return (
+    <figure className="results-chart">
+      <figcaption className="record-history-head">Sent per week</figcaption>
+      <ol className="results-weeks" aria-label="Applications sent per week" onMouseLeave={() => setHover(null)}>
+        {weeks.map((w, i) => (
+          <li
+            key={w.week_start}
+            tabIndex={0}
+            aria-label={label(i)}
+            className={hover === i ? "active" : undefined}
+            onMouseEnter={() => setHover(i)}
+            onFocus={() => setHover(i)}
+            onBlur={() => setHover(null)}
+          >
+            {(i === peak || i === last) && w.sent > 0 && (
+              <span className="results-cap" aria-hidden="true">
+                {w.sent}
+              </span>
+            )}
+            <span className="results-bar" aria-hidden="true" style={{ height: Math.round((CHART_HEIGHT * w.sent) / max) }} />
+          </li>
+        ))}
+      </ol>
+      <div className="results-axis" aria-hidden="true">
+        <span>{weekText(weeks[0].week_start)}</span>
+        <span>This week</span>
+      </div>
+      <p className="results-readout" aria-hidden="true">
+        {label(hover ?? last)}
+      </p>
+      {undated > 0 && <p className="muted">{`${undated} sent without a date ${undated === 1 ? "is" : "are"} not in the weeks.`}</p>}
+    </figure>
   );
 }

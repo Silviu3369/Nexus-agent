@@ -72,6 +72,7 @@ pub fn run() {
             records::get_inbox,
             records::save_inbox,
             records::retry_inbox_file,
+            records::job_results,
             automation::list_automations,
             automation::save_automation,
             automation::delete_automation,
