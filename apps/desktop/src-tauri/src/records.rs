@@ -3,8 +3,8 @@
 //! shows what it returns.
 
 use nexus_protocol::{
-    FolderId, InboxView, RecordDetailView, RecordId, RecordQuery, RecordView, RegisterId,
-    RegisterView, SaveRecordRequest,
+    InboxView, RecordDetailView, RecordId, RecordQuery, RecordView, RegisterId, RegisterView,
+    SaveInboxRequest, SaveRecordRequest,
 };
 
 use crate::host::{BridgeError, HostConnection};
@@ -69,17 +69,9 @@ pub async fn get_inbox(
 #[tauri::command]
 pub async fn save_inbox(
     connection: State<'_>,
-    register_id: RegisterId,
-    revision: i64,
-    folder_id: Option<FolderId>,
-    enabled: bool,
+    request: SaveInboxRequest,
 ) -> Result<InboxView, BridgeError> {
-    connection
-        .call(async |c| {
-            c.save_inbox(register_id, revision, folder_id, enabled)
-                .await
-        })
-        .await
+    connection.call(async |c| c.save_inbox(request).await).await
 }
 
 #[tauri::command]

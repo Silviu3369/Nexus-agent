@@ -1116,6 +1116,7 @@ const EVENT_TEXT: Record<string, { title: string; tool: ActivityTool; status?: E
   InboxFileSeen: { title: "New file seen in the inbox", tool: "Records" },
   InboxFileHandled: { title: "Inbox file sent to the agent", tool: "Records" },
   InboxFileRetried: { title: "Inbox file put back in line", tool: "Records" },
+  InboxFileSettled: { title: "Inbox file's task ended", tool: "Records" },
   RecordAdded: { title: "Record added", tool: "Records" },
   RecordUpdated: { title: "Record changed", tool: "Records" },
   RecordDeleted: { title: "Record deleted with its history", tool: "Records" },

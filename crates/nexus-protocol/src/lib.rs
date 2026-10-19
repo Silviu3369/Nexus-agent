@@ -50,7 +50,7 @@ pub use records::{
     ExportView, FieldChange, FieldDef, FieldKind, ImportPreviewView, ImportRequest,
     ImportResultView, ImportSkipView, InboxFileStatus, InboxFileView, InboxView, RecordActor,
     RecordChangeKind, RecordChangeView, RecordDetailView, RecordQuery, RecordView, RegisterView,
-    SaveRecordRequest,
+    SaveInboxRequest, SaveRecordRequest,
 };
 pub use service::{NexusService, NexusServiceClient};
 pub use usage::{ModelPrice, ModelUsageView, UsageView};

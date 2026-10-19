@@ -15,9 +15,9 @@ use nexus_protocol::{
     MemoryItemView, MemoryQuery, MessageId, ModelPrice, ModelView, NexusError, PROTOCOL_VERSION,
     PersonaView, ProjectId, ProjectView, RecordDetailView, RecordId, RecordQuery, RecordView,
     RegisterId, RegisterView, RunId, RunView, SaveAutomationRequest, SaveConnectionRequest,
-    SaveFolderRequest, SaveMcpServerRequest, SavePersonaRequest, SaveProjectRequest,
-    SaveRecordRequest, SendMessageRequest, SendMessageResponse, Snapshot, SubmitNoteRequest,
-    SubmitNoteResponse, SystemStatusView, ThinkingLevel, UsageView,
+    SaveFolderRequest, SaveInboxRequest, SaveMcpServerRequest, SavePersonaRequest,
+    SaveProjectRequest, SaveRecordRequest, SendMessageRequest, SendMessageResponse, Snapshot,
+    SubmitNoteRequest, SubmitNoteResponse, SystemStatusView, ThinkingLevel, UsageView,
 };
 use tarpc::context::Context;
 use tarpc::server::{BaseChannel, Channel};
@@ -480,15 +480,10 @@ impl NexusService for HostServer {
     async fn save_inbox(
         self,
         _ctx: Context,
-        register_id: RegisterId,
-        revision: i64,
-        folder_id: Option<FolderId>,
-        enabled: bool,
+        request: SaveInboxRequest,
     ) -> Result<InboxView, NexusError> {
         self.require_session()?;
-        self.runtime
-            .save_inbox(register_id, revision, folder_id, enabled)
-            .await
+        self.runtime.save_inbox(request).await
     }
 
     async fn retry_inbox_file(

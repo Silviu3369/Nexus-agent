@@ -47,6 +47,7 @@ import type {
   RegisterView,
   RunView,
   SaveFolderRequest,
+  SaveInboxRequest,
   SaveRecordRequest,
   Schedule,
   SendMessageResponse,
@@ -168,8 +169,7 @@ export const api = {
   importRecords: (request: ImportRequest) => invoke<ImportResultView>("import_records", { request }),
   /** A register's inbox folder: new documents there are read and recorded on their own. */
   getInbox: (registerId: string) => invoke<InboxView>("get_inbox", { registerId }),
-  saveInbox: (registerId: string, revision: number, folderId: string | null, enabled: boolean) =>
-    invoke<InboxView>("save_inbox", { registerId, revision, folderId, enabled }),
+  saveInbox: (request: SaveInboxRequest) => invoke<InboxView>("save_inbox", { request }),
   retryInboxFile: (registerId: string, fileId: number) =>
     invoke<InboxView>("retry_inbox_file", { registerId, fileId }),
   listRegisters: () => invoke<RegisterView[]>("list_registers"),

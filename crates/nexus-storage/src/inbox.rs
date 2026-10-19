@@ -17,6 +17,10 @@ pub struct InboxRow {
     pub folder_id: Option<FolderId>,
     pub enabled: bool,
     pub revision: i64,
+    /// The user's CV each new ad is compared with: a shared folder and a
+    /// path in it.
+    pub cv_folder_id: Option<FolderId>,
+    pub cv_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,39 +34,50 @@ pub struct InboxFileRow {
     pub conversation_id: Option<ConversationId>,
     pub seen_at_ms: i64,
     pub started_at_ms: Option<i64>,
+    /// Times its task was started.
+    pub attempts: i64,
+    /// Waiting to be tried again from then on.
+    pub retry_at_ms: Option<i64>,
+}
+
+/// How a file's task ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InboxSettle {
+    Done,
+    /// Tried again from `at` on its own.
+    RetryAt {
+        at: i64,
+        reason: String,
+    },
+    Failed(String),
 }
 
 const FILE_COLUMNS: &str =
-    "id, path, sha256, status, reason, conversation_id, seen_at_ms, started_at_ms";
+    "id, path, sha256, status, reason, conversation_id, seen_at_ms, started_at_ms,
+    attempts, retry_at_ms";
 const MAX_REASON_CHARS: usize = 300;
 
 /// A row as read, before ids are parsed.
 type RawFile = (
-    i64,
-    String,
-    String,
-    String,
-    Option<String>,
-    Option<String>,
-    i64,
-    Option<i64>,
+    (i64, String, String, String),
+    (Option<String>, Option<String>, i64, Option<i64>),
+    (i64, Option<i64>),
 );
 
 fn raw_file(r: &rusqlite::Row) -> rusqlite::Result<RawFile> {
     Ok((
-        r.get(0)?,
-        r.get(1)?,
-        r.get(2)?,
-        r.get(3)?,
-        r.get(4)?,
-        r.get(5)?,
-        r.get(6)?,
-        r.get(7)?,
+        (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?),
+        (r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?),
+        (r.get(8)?, r.get(9)?),
     ))
 }
 
 fn parse_file(
-    (id, path, sha256, status, reason, conversation, seen_at_ms, started_at_ms): RawFile,
+    (
+        (id, path, sha256, status),
+        (reason, conversation, seen_at_ms, started_at_ms),
+        (attempts, retry_at_ms),
+    ): RawFile,
 ) -> Result<InboxFileRow, StorageError> {
     Ok(InboxFileRow {
         id,
@@ -75,31 +90,40 @@ fn parse_file(
             .transpose()?,
         seen_at_ms,
         started_at_ms,
+        attempts,
+        retry_at_ms,
     })
 }
 
 fn load_inbox(tx: &Transaction, register: RegisterId) -> Result<InboxRow, StorageError> {
-    let row: Option<(Option<String>, bool, i64)> = tx
+    type Raw = (Option<String>, bool, i64, Option<String>, Option<String>);
+    let row: Option<Raw> = tx
         .query_row(
-            "SELECT folder_id, enabled, revision FROM register_inboxes WHERE register_id = ?1",
+            "SELECT folder_id, enabled, revision, cv_folder_id, cv_path FROM register_inboxes WHERE register_id = ?1",
             [register.to_string()],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
         )
         .optional()?;
+    let folder_id = |f: Option<String>| {
+        f.map(|f| Ok::<_, StorageError>(FolderId(parse_uuid(&f)?)))
+            .transpose()
+    };
     Ok(match row {
         None => InboxRow {
             register_id: register,
             folder_id: None,
             enabled: false,
             revision: 0,
+            cv_folder_id: None,
+            cv_path: None,
         },
-        Some((folder, enabled, revision)) => InboxRow {
+        Some((folder, enabled, revision, cv_folder, cv_path)) => InboxRow {
             register_id: register,
-            folder_id: folder
-                .map(|f| Ok::<_, StorageError>(FolderId(parse_uuid(&f)?)))
-                .transpose()?,
+            folder_id: folder_id(folder)?,
             enabled,
             revision,
+            cv_folder_id: folder_id(cv_folder)?,
+            cv_path,
         },
     })
 }
@@ -131,12 +155,15 @@ impl Store {
 
     /// Chooses the folder and turns the inbox on or off; refused if it
     /// changed since `revision` (0 for one never set).
+    #[allow(clippy::too_many_arguments)]
     pub async fn save_inbox(
         &self,
         register: RegisterId,
         revision: i64,
         folder: Option<FolderId>,
         enabled: bool,
+        cv_folder: Option<FolderId>,
+        cv_path: Option<String>,
         now: i64,
     ) -> Result<InboxRow, StorageError> {
         self.call(move |conn| {
@@ -146,11 +173,19 @@ impl Store {
                 return Err(StorageError::RevisionConflict("inbox"));
             }
             tx.execute(
-                "INSERT INTO register_inboxes (register_id, folder_id, enabled, revision, created_at_ms, updated_at_ms)
-                 VALUES (?1, ?2, ?3, 1, ?4, ?4)
+                "INSERT INTO register_inboxes (register_id, folder_id, enabled, revision, created_at_ms, updated_at_ms,
+                     cv_folder_id, cv_path)
+                 VALUES (?1, ?2, ?3, 1, ?4, ?4, ?5, ?6)
                  ON CONFLICT (register_id) DO UPDATE SET folder_id = ?2, enabled = ?3,
-                     revision = revision + 1, updated_at_ms = ?4",
-                params![register.to_string(), folder.map(|f| f.to_string()), enabled, now],
+                     revision = revision + 1, updated_at_ms = ?4, cv_folder_id = ?5, cv_path = ?6",
+                params![
+                    register.to_string(),
+                    folder.map(|f| f.to_string()),
+                    enabled,
+                    now,
+                    cv_folder.map(|f| f.to_string()),
+                    cv_path
+                ],
             )?;
             insert_event(&tx, "InboxUpdated", &register.to_string(), revision + 1, json!({"enabled": enabled}), now)?;
             let row = load_inbox(&tx, register)?;
@@ -218,18 +253,20 @@ impl Store {
         .await
     }
 
-    /// The oldest file waiting for its turn.
+    /// The oldest file waiting for its turn (a file to be tried again only
+    /// once its time has come).
     pub async fn next_inbox_file(
         &self,
         register: RegisterId,
+        now: i64,
     ) -> Result<Option<InboxFileRow>, StorageError> {
         self.call(move |conn| {
             conn.query_row(
                 &format!(
                     "SELECT {FILE_COLUMNS} FROM inbox_files WHERE register_id = ?1 AND status = 'Waiting'
-                     ORDER BY id LIMIT 1"
+                     AND (retry_at_ms IS NULL OR retry_at_ms <= ?2) ORDER BY id LIMIT 1"
                 ),
-                [register.to_string()],
+                params![register.to_string(), now],
                 raw_file,
             )
             .optional()?
@@ -270,7 +307,8 @@ impl Store {
                 (None, reason) => ("Failed", reason.map(|r| r.chars().take(MAX_REASON_CHARS).collect::<String>())),
             };
             tx.execute(
-                "UPDATE inbox_files SET status = ?1, reason = ?2, conversation_id = ?3, started_at_ms = ?4 WHERE id = ?5",
+                "UPDATE inbox_files SET status = ?1, reason = ?2, conversation_id = ?3, started_at_ms = ?4,
+                 retry_at_ms = NULL, attempts = attempts + (?3 IS NOT NULL) WHERE id = ?5",
                 params![status, reason, conversation.map(|c| c.to_string()), now, file_id],
             )?;
             insert_event(&tx, "InboxFileHandled", &register, 1, json!({"status": status}), now)?;
@@ -290,8 +328,8 @@ impl Store {
         self.call(move |conn| {
             let tx = conn.transaction()?;
             let changed = tx.execute(
-                "UPDATE inbox_files SET status = 'Waiting', reason = NULL WHERE id = ?1 AND register_id = ?2
-                 AND status = 'Failed'",
+                "UPDATE inbox_files SET status = 'Waiting', reason = NULL, retry_at_ms = NULL WHERE id = ?1
+                 AND register_id = ?2 AND status = 'Failed'",
                 params![file_id, register.to_string()],
             )?;
             if changed == 0 {
@@ -300,6 +338,82 @@ impl Store {
             insert_event(&tx, "InboxFileRetried", &register.to_string(), 1, json!({}), now)?;
             tx.commit()?;
             Ok(())
+        })
+        .await
+    }
+
+    /// Files whose task was started and is not yet settled.
+    pub async fn inbox_started(
+        &self,
+        register: RegisterId,
+    ) -> Result<Vec<InboxFileRow>, StorageError> {
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {FILE_COLUMNS} FROM inbox_files WHERE register_id = ?1 AND status = 'Started' ORDER BY id"
+            ))?;
+            let raw = stmt
+                .query_map([register.to_string()], raw_file)?
+                .collect::<Result<Vec<_>, _>>()?;
+            raw.into_iter().map(parse_file).collect()
+        })
+        .await
+    }
+
+    /// Records how a started file's task ended.
+    pub async fn settle_inbox_file(
+        &self,
+        file_id: i64,
+        settle: InboxSettle,
+        now: i64,
+    ) -> Result<(), StorageError> {
+        self.call(move |conn| {
+            let tx = conn.transaction()?;
+            let register: String = tx
+                .query_row(
+                    "SELECT register_id FROM inbox_files WHERE id = ?1 AND status IN ('Started', 'Waiting')",
+                    [file_id],
+                    |r| r.get(0),
+                )
+                .optional()?
+                .ok_or(StorageError::NotFound("started inbox file"))?;
+            let clip = |r: String| r.chars().take(MAX_REASON_CHARS).collect::<String>();
+            let (status, reason, retry_at): (&str, Option<String>, Option<i64>) = match settle {
+                InboxSettle::Done => ("Done", None, None),
+                InboxSettle::RetryAt { at, reason } => ("Waiting", Some(clip(reason)), Some(at)),
+                InboxSettle::Failed(reason) => ("Failed", Some(clip(reason)), None),
+            };
+            tx.execute(
+                "UPDATE inbox_files SET status = ?1, reason = ?2, retry_at_ms = ?3 WHERE id = ?4",
+                params![status, reason, retry_at, file_id],
+            )?;
+            insert_event(
+                &tx,
+                "InboxFileSettled",
+                &register,
+                1,
+                json!({"status": status}),
+                now,
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// How a task's latest reply stands: (status, error code, error message).
+    pub async fn last_reply(
+        &self,
+        conversation: ConversationId,
+    ) -> Result<Option<(String, Option<String>, Option<String>)>, StorageError> {
+        self.call(move |conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT status, error_code, error_message FROM messages WHERE conversation_id = ?1 AND role = 'Model'
+                     ORDER BY seq DESC LIMIT 1",
+                    [conversation.to_string()],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .optional()?)
         })
         .await
     }

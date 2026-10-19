@@ -101,3 +101,30 @@ export function formValues(register: RegisterView, record: RecordView | null): R
 export function missingRequired(register: RegisterView, values: Record<string, string>): string[] {
   return register.fields.filter((f) => f.required && (values[f.key] ?? "").trim() === "").map((f) => f.label);
 }
+
+export type RecordSort = "changed" | "match" | "follow_up";
+
+/** The records in the order chosen: last changed, best match, or the
+ *  nearest follow-up date first. Records without the value come last. */
+export function sortRecords(register: RegisterView, records: RecordView[], sort: RecordSort): RecordView[] {
+  const out = [...records];
+  if (sort === "match") {
+    const score = (r: RecordView) => {
+      const n = Number(r.values.match_score);
+      return r.values.match_score !== undefined && Number.isFinite(n) ? n : -1;
+    };
+    out.sort((a, b) => score(b) - score(a));
+  } else if (sort === "follow_up" && register.follow_up_field) {
+    const key = register.follow_up_field;
+    out.sort((a, b) => (a.values[key] ?? "9999").localeCompare(b.values[key] ?? "9999"));
+  } else {
+    out.sort((a, b) => b.updated_at_ms - a.updated_at_ms);
+  }
+  return out;
+}
+
+/** "Match 78" for a scored record. */
+export function matchText(record: RecordView): string | null {
+  const v = record.values.match_score;
+  return v === undefined ? null : `Match ${v}`;
+}

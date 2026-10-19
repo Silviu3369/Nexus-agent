@@ -2746,7 +2746,7 @@ button.ghost.danger-ghost {
 .record-row {
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   gap: 10px;
   align-items: center;
   text-align: left;
@@ -2785,6 +2785,20 @@ button.ghost.danger-ghost {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.record-match {
+  color: var(--text-2);
+  font-size: 0.84rem;
+  white-space: nowrap;
+}
+
+.record-match-good {
+  color: var(--good, var(--accent));
+}
+
+.record-sort {
+  width: auto;
 }
 
 .record-follow {

@@ -25,6 +25,8 @@ pub enum FieldKind {
     Date,
     /// One of `choices`.
     Choice,
+    /// A whole number, within `min`..=`max` when given.
+    Number,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -37,6 +39,11 @@ pub struct FieldDef {
     pub max_chars: u32,
     /// What belongs in it, for the user and the model.
     pub help: String,
+    /// Bounds of a number field.
+    #[serde(default)]
+    pub min: Option<i64>,
+    #[serde(default)]
+    pub max: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -193,8 +200,10 @@ pub struct ImportResultView {
 pub enum InboxFileStatus {
     /// Seen; it is read and added once it stops changing and its turn comes.
     Waiting,
-    /// Sent to the agent as a task (its outcome is in that task).
+    /// Sent to the agent as a task, which is still answering.
     Started,
+    /// Its task finished (what it did is in that task).
+    Done,
     /// The task could not be started (no model, budget used up, …).
     Failed,
     /// Not a job ad to read (a file Nexus wrote itself, or unreadable).
@@ -222,8 +231,25 @@ pub struct InboxView {
     pub folder_label: Option<String>,
     pub enabled: bool,
     pub revision: i64,
+    /// The user's CV each new ad is compared with, if chosen.
+    pub cv_folder_id: Option<FolderId>,
+    pub cv_folder_label: Option<String>,
+    pub cv_path: Option<String>,
     /// Files waiting for their turn.
     pub waiting: u32,
     /// Newest first.
     pub files: Vec<InboxFileView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct SaveInboxRequest {
+    pub register_id: RegisterId,
+    /// The revision being changed (0 for an inbox never set).
+    pub revision: i64,
+    /// The shared folder it reads (`None`: no inbox).
+    pub folder_id: Option<FolderId>,
+    pub enabled: bool,
+    /// The user's CV each new ad is compared with (`None`: no comparison).
+    pub cv_folder_id: Option<FolderId>,
+    pub cv_path: Option<String>,
 }

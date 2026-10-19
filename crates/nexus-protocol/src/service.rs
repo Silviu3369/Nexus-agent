@@ -22,7 +22,7 @@ use crate::memory::{
 };
 use crate::records::{
     ExportView, ImportPreviewView, ImportRequest, ImportResultView, InboxView, RecordDetailView,
-    RecordQuery, RecordView, RegisterView, SaveRecordRequest,
+    RecordQuery, RecordView, RegisterView, SaveInboxRequest, SaveRecordRequest,
 };
 use crate::runs::{
     BackupSummary, DecideApprovalRequest, EventsPage, RunView, Snapshot, SubmitNoteRequest,
@@ -185,13 +185,9 @@ pub trait NexusService {
     /// A register's inbox folder and what came through it.
     async fn get_inbox(register_id: RegisterId) -> Result<InboxView, NexusError>;
 
-    /// Chooses the inbox folder (`None`: no inbox) and turns it on or off.
-    async fn save_inbox(
-        register_id: RegisterId,
-        revision: i64,
-        folder_id: Option<FolderId>,
-        enabled: bool,
-    ) -> Result<InboxView, NexusError>;
+    /// Chooses the inbox folder (`None`: no inbox), turns it on or off, and
+    /// names the CV each new ad is compared with (`None`: no comparison).
+    async fn save_inbox(request: SaveInboxRequest) -> Result<InboxView, NexusError>;
 
     /// Puts a file that could not be started back in line.
     async fn retry_inbox_file(

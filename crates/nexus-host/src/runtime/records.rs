@@ -37,7 +37,7 @@ const FIND_DEFAULT: u32 = 20;
 const FIND_MAX: u32 = 50;
 const LIST_DEFAULT: u32 = 200;
 const LIST_MAX: u32 = 500;
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 pub const JOB_APPLICATIONS: &str = "job_applications";
 
 /// A register's fields and rules, kept with it in the database (the
@@ -74,6 +74,16 @@ fn field(key: &str, label: &str, kind: FieldKind, max_chars: u32, help: &str) ->
         choices: Vec::new(),
         max_chars,
         help: help.to_string(),
+        min: None,
+        max: None,
+    }
+}
+
+fn number(key: &str, label: &str, min: i64, max: i64, help: &str) -> FieldDef {
+    FieldDef {
+        min: Some(min),
+        max: Some(max),
+        ..field(key, label, FieldKind::Number, 10, help)
     }
 }
 
@@ -205,6 +215,20 @@ fn job_applications() -> (&'static str, &'static str, RegisterSchema) {
                 4000,
                 "The main requirements of the ad, in short",
             ),
+            number(
+                "match_score",
+                "Match",
+                0,
+                100,
+                "How well the user's CV fits the ad's requirements, from 0 (not at all) to 100 (fully)",
+            ),
+            field(
+                "match_notes",
+                "Match notes",
+                LongText,
+                1000,
+                "What in the CV fits the ad and what is missing, in two or three short lines",
+            ),
             field(
                 "notes",
                 "Notes",
@@ -309,6 +333,24 @@ fn normalize(field: &FieldDef, value: &str) -> Result<String, String> {
                 return Err(format!("{} must be a date as YYYY-MM-DD", field.label));
             }
             Ok(value.to_string())
+        }
+        FieldKind::Number => {
+            let text = value.trim().trim_end_matches('%').trim().replace(',', ".");
+            let n: f64 = text
+                .parse()
+                .ok()
+                .filter(|n: &f64| n.is_finite())
+                .ok_or_else(|| format!("{} must be a number", field.label))?;
+            let n = n.round() as i64;
+            if field.min.is_some_and(|m| n < m) || field.max.is_some_and(|m| n > m) {
+                return Err(format!(
+                    "{} must be from {} to {}",
+                    field.label,
+                    field.min.map_or("any".to_string(), |m| m.to_string()),
+                    field.max.map_or("any".to_string(), |m| m.to_string())
+                ));
+            }
+            Ok(n.to_string())
         }
         FieldKind::Choice => field
             .choices
@@ -1090,6 +1132,10 @@ pub(super) fn records_note(registers: &[Register], today: &str) -> String {
                 let kind = match f.kind {
                     FieldKind::Choice => format!("one of: {}", f.choices.join(", ")),
                     FieldKind::Date => "date".to_string(),
+                    FieldKind::Number => match (f.min, f.max) {
+                        (Some(lo), Some(hi)) => format!("whole number {lo} to {hi}"),
+                        _ => "whole number".to_string(),
+                    },
                     FieldKind::Url => "web address".to_string(),
                     FieldKind::Text | FieldKind::LongText => "text".to_string(),
                 };
@@ -1137,6 +1183,11 @@ pub(super) fn record_tools(
                     description.push_str(&format!(". One of: {}", f.choices.join(", ")))
                 }
                 FieldKind::Date => description.push_str(". YYYY-MM-DD"),
+                FieldKind::Number => {
+                    if let (Some(lo), Some(hi)) = (f.min, f.max) {
+                        description.push_str(&format!(". A whole number from {lo} to {hi}"));
+                    }
+                }
                 _ => {}
             }
             properties
@@ -1276,6 +1327,31 @@ mod tests {
         let cleared = s.apply(v.clone(), [("link".to_string(), None)]).unwrap();
         assert!(!cleared.contains_key("link"));
         assert!(s.apply(v, [change("role", " ")]).is_err());
+    }
+
+    #[test]
+    fn a_match_score_is_a_whole_number_from_0_to_100() {
+        let s = schema();
+        let base = || {
+            s.apply(Values::new(), [change("company", "A"), change("role", "B")])
+                .unwrap()
+        };
+        for (given, stored) in [
+            ("78", "78"),
+            ("78%", "78"),
+            (" 77.6 ", "78"),
+            ("0", "0"),
+            ("100", "100"),
+        ] {
+            let v = s.apply(base(), [change("match_score", given)]).unwrap();
+            assert_eq!(v["match_score"], stored, "{given}");
+        }
+        for bad in ["150", "-1", "high", "NaN"] {
+            assert!(
+                s.apply(base(), [change("match_score", bad)]).is_err(),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

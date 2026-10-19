@@ -195,9 +195,9 @@ export type RegisterId = string
 
 export type RecordId = string
 
-export type FieldKind = "Text" | "LongText" | "Url" | "Date" | "Choice"
+export type FieldKind = "Text" | "LongText" | "Url" | "Date" | "Choice" | "Number"
 
-export type FieldDef = { key: string; label: string; kind: FieldKind; required: boolean; choices: string[]; max_chars: number; help: string }
+export type FieldDef = { key: string; label: string; kind: FieldKind; required: boolean; choices: string[]; max_chars: number; help: string; min?: number | null; max?: number | null }
 
 export type RegisterView = { register_id: RegisterId; key: string; name: string; item_name: string; fields: FieldDef[]; status_field: string; closed_statuses: string[]; follow_up_field: string | null; title_fields: string[]; record_count: number; follow_ups_due: number }
 
@@ -244,7 +244,7 @@ export type ImportSkipView = { row: number; reason: string }
 
 export type ImportResultView = { added: number; adjusted: number; skipped: ImportSkipView[] }
 
-export type InboxFileStatus = "Waiting" | "Started" | "Failed" | "Skipped"
+export type InboxFileStatus = "Waiting" | "Started" | "Done" | "Failed" | "Skipped"
 
 export type InboxFileView = { file_id: number; path: string; status: InboxFileStatus; reason: string | null; conversation_id: ConversationId | null; seen_at_ms: number; started_at_ms: number | null }
 
@@ -252,7 +252,9 @@ export type InboxFileView = { file_id: number; path: string; status: InboxFileSt
  * A register's inbox: a shared folder whose new documents the agent reads
  * and records on its own, one task per file.
  */
-export type InboxView = { register_id: RegisterId; folder_id: FolderId | null; folder_label: string | null; enabled: boolean; revision: number; waiting: number; files: InboxFileView[] }
+export type InboxView = { register_id: RegisterId; folder_id: FolderId | null; folder_label: string | null; enabled: boolean; revision: number; cv_folder_id: FolderId | null; cv_folder_label: string | null; cv_path: string | null; waiting: number; files: InboxFileView[] }
+
+export type SaveInboxRequest = { register_id: RegisterId; revision: number; folder_id: FolderId | null; enabled: boolean; cv_folder_id: FolderId | null; cv_path: string | null }
 
 /**
  * When an automation runs, in this PC's local time.

@@ -122,17 +122,23 @@ async fn main() {
         }),
     )]));
     fake.push(Reply::text(&["The letter is saved in Jobs."]));
-    // The job ads inbox: a new ad in the inbox folder is read and recorded
-    // with its reference number, as a task of its own.
+    // The job ads inbox: a new ad in the inbox folder is read, compared
+    // with the CV and recorded with its reference number and match score,
+    // as a task of its own.
     fake.push(Reply::calls(&[(
         "read_document",
         serde_json::json!({"folder": "Ads", "path": "TopJobs vacature.txt"}),
     )]));
     fake.push(Reply::calls(&[(
+        "read_document",
+        serde_json::json!({"folder": "Jobs", "path": "CV.txt"}),
+    )]));
+    fake.push(Reply::calls(&[(
         "add_record",
         serde_json::json!({"register": "job_applications", "values": {
             "company": "Acme NV", "role": "Service Desk Agent", "status": "To apply",
-            "reference": "70123456", "source": "TopJobs", "ad_file": "Ads/TopJobs vacature.txt"
+            "reference": "70123456", "source": "TopJobs", "ad_file": "Ads/TopJobs vacature.txt",
+            "match_score": "82", "match_notes": "Fits: service desk work. Missing: Dutch at C1."
         }}),
     )]));
     fake.push(Reply::text(&[

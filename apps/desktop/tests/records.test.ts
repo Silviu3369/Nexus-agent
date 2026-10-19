@@ -7,8 +7,10 @@ import {
   dateText,
   filterRecords,
   formValues,
+  matchText,
   missingRequired,
   recordTitle,
+  sortRecords,
   statusCounts,
   statusTone,
 } from "../src/model/records.ts";
@@ -110,4 +112,22 @@ test("a new record starts at the first status and the form names what is missing
   assert.equal(values.company, "");
   assert.deepEqual(missingRequired(register, values), ["Company", "Role"]);
   assert.deepEqual(missingRequired(register, { ...values, company: "Acme", role: "IT" }), []);
+});
+
+test("records sort by last change, best match or the nearest follow-up", () => {
+  const r = (id: string, values: Record<string, string>, updated: number): RecordView => ({
+    ...record(id, values),
+    updated_at_ms: updated,
+  });
+  const all = [
+    r("a", { company: "A", role: "x", status: "Applied", match_score: "55", follow_up_on: "2026-10-30" }, 3),
+    r("b", { company: "B", role: "x", status: "Applied", match_score: "90" }, 1),
+    r("c", { company: "C", role: "x", status: "Applied", follow_up_on: "2026-10-20" }, 2),
+  ];
+  const order = (s: Parameters<typeof sortRecords>[2]) => sortRecords(register, all, s).map((x) => x.record_id);
+  assert.deepEqual(order("changed"), ["a", "c", "b"]);
+  assert.deepEqual(order("match"), ["b", "a", "c"], "unscored last");
+  assert.deepEqual(order("follow_up"), ["c", "a", "b"], "no date last");
+  assert.equal(matchText(all[1]), "Match 90");
+  assert.equal(matchText(all[2]), null);
 });

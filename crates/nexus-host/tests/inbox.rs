@@ -15,7 +15,7 @@ use nexus_client::NexusClient;
 use nexus_host::RuntimeConfig;
 use nexus_protocol::{
     ApprovalDecision, DecideApprovalRequest, InboxFileStatus, InboxView, RecordQuery, RecordView,
-    RegisterView, RunStatus, SaveFolderRequest,
+    RegisterView, RunStatus, SaveFolderRequest, SaveInboxRequest,
 };
 use serde_json::json;
 use support::TestHost;
@@ -159,7 +159,14 @@ async fn a_job_ad_put_in_the_inbox_becomes_an_application_once() {
     let ads = Dir::new("inbox-ads");
     let folder = share(&client, &ads, "Ads", true).await;
     let inbox = client
-        .save_inbox(register.register_id, 0, Some(folder.folder_id), true)
+        .save_inbox(SaveInboxRequest {
+            register_id: register.register_id,
+            revision: 0,
+            folder_id: Some(folder.folder_id),
+            enabled: true,
+            cv_folder_id: None,
+            cv_path: None,
+        })
         .await
         .unwrap();
     assert!(inbox.enabled && inbox.files.is_empty());
@@ -185,7 +192,9 @@ async fn a_job_ad_put_in_the_inbox_becomes_an_application_once() {
     std::fs::write(ads.0.join("TopJobs vacature.pdf"), &pdf).unwrap();
 
     let view = inbox_until(&client, &register, |v| {
-        v.files.iter().any(|f| f.status == InboxFileStatus::Started)
+        v.files
+            .iter()
+            .any(|f| matches!(f.status, InboxFileStatus::Started | InboxFileStatus::Done))
     })
     .await;
     assert_eq!(
@@ -275,12 +284,14 @@ async fn a_job_ad_put_in_the_inbox_becomes_an_application_once() {
 
     // Turned off, the inbox reads nothing new.
     client
-        .save_inbox(
-            register.register_id,
-            view.revision,
-            Some(folder.folder_id),
-            false,
-        )
+        .save_inbox(SaveInboxRequest {
+            register_id: register.register_id,
+            revision: view.revision,
+            folder_id: Some(folder.folder_id),
+            enabled: false,
+            cv_folder_id: None,
+            cv_path: None,
+        })
         .await
         .unwrap();
     std::fs::write(ads.0.join("Another ad.txt"), "Vacature 2 at Beta").unwrap();
@@ -306,12 +317,26 @@ async fn without_a_model_a_file_fails_and_can_be_retried() {
     let ads = Dir::new("inbox-nomodel");
     let folder = share(&client, &ads, "Ads", false).await;
     let err = client
-        .save_inbox(register.register_id, 0, None, true)
+        .save_inbox(SaveInboxRequest {
+            register_id: register.register_id,
+            revision: 0,
+            folder_id: None,
+            enabled: true,
+            cv_folder_id: None,
+            cv_path: None,
+        })
         .await
         .unwrap_err();
     assert_eq!(err.code(), Some(nexus_protocol::ErrorCode::InvalidRequest));
     client
-        .save_inbox(register.register_id, 0, Some(folder.folder_id), true)
+        .save_inbox(SaveInboxRequest {
+            register_id: register.register_id,
+            revision: 0,
+            folder_id: Some(folder.folder_id),
+            enabled: true,
+            cv_folder_id: None,
+            cv_path: None,
+        })
         .await
         .unwrap();
     std::fs::write(ads.0.join("ad.txt"), "Vacature at Acme").unwrap();
@@ -345,5 +370,201 @@ async fn without_a_model_a_file_fails_and_can_be_retried() {
     client.remove_folder(folder.folder_id).await.unwrap();
     let view = client.inbox(register.register_id).await.unwrap();
     assert!(!view.enabled && view.folder_id.is_none());
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_cv_kept_in_the_inbox_folder_is_not_taken_for_an_ad() {
+    let host = TestHost::start_with(TOKEN, config(None)).await;
+    let client = host.client().await;
+    let register = jobs(&client).await;
+    let dir = Dir::new("inbox-cv");
+    std::fs::write(dir.0.join("CV.txt"), "Jane Doe, service desk").unwrap();
+    let folder = share(&client, &dir, "Jobs", false).await;
+    client
+        .save_inbox(SaveInboxRequest {
+            register_id: register.register_id,
+            revision: 0,
+            folder_id: Some(folder.folder_id),
+            enabled: true,
+            cv_folder_id: Some(folder.folder_id),
+            cv_path: Some("cv.TXT".into()),
+        })
+        .await
+        .unwrap();
+    let view = inbox_until(&client, &register, |v| !v.files.is_empty()).await;
+    let cv = &view.files[0];
+    assert_eq!(
+        (cv.path.as_str(), cv.status),
+        ("CV.txt", InboxFileStatus::Skipped)
+    );
+    assert_eq!(
+        cv.reason.as_deref(),
+        Some("your CV, used for the match score")
+    );
+    assert!(cv.conversation_id.is_none(), "no task was started for it");
+    host.shutdown().await;
+}
+
+fn retrying(fake: &FakeGemini) -> RuntimeConfig {
+    RuntimeConfig {
+        inbox_retry: Duration::from_millis(300),
+        ..config(Some(fake))
+    }
+}
+
+#[tokio::test]
+async fn a_rate_limited_ad_is_tried_again_on_its_own_and_scored_against_the_cv() {
+    let fake = FakeGemini::start(KEY).await;
+    let host = TestHost::start_with(TOKEN, retrying(&fake)).await;
+    let client = host.client().await;
+    connect(&client).await;
+    let register = jobs(&client).await;
+    let jobs_dir = Dir::new("inbox-cv");
+    std::fs::write(
+        jobs_dir.0.join("CV.txt"),
+        "Five years of Microsoft 365 support",
+    )
+    .unwrap();
+    let ads = Dir::new("inbox-retry");
+    let cv_folder = share(&client, &jobs_dir, "Jobs", false).await;
+    let ads_folder = share(&client, &ads, "Ads", false).await;
+
+    for (folder, path) in [
+        (Some(cv_folder.folder_id), "../CV.txt"),
+        (Some(cv_folder.folder_id), "missing.pdf"),
+    ] {
+        let err = client
+            .save_inbox(SaveInboxRequest {
+                register_id: register.register_id,
+                revision: 0,
+                folder_id: Some(ads_folder.folder_id),
+                enabled: true,
+                cv_folder_id: folder,
+                cv_path: Some(path.into()),
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.code(),
+            Some(nexus_protocol::ErrorCode::InvalidRequest),
+            "{path}"
+        );
+    }
+    let view = client
+        .save_inbox(SaveInboxRequest {
+            register_id: register.register_id,
+            revision: 0,
+            folder_id: Some(ads_folder.folder_id),
+            enabled: true,
+            cv_folder_id: Some(cv_folder.folder_id),
+            cv_path: Some("CV.txt".into()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(view.cv_folder_label.as_deref(), Some("Jobs"));
+    assert_eq!(view.cv_path.as_deref(), Some("CV.txt"));
+
+    // The first try is refused by the provider; the second one works.
+    fake.push(Reply::status(
+        429,
+        r#"{"error":{"code":429,"status":"RESOURCE_EXHAUSTED"}}"#,
+    ));
+    fake.push(Reply::calls(&[
+        ("read_document", json!({"folder": "Ads", "path": "ad.txt"})),
+        ("read_document", json!({"folder": "Jobs", "path": "CV.txt"})),
+    ]));
+    fake.push(Reply::calls(&[(
+        "add_record",
+        json!({"register": "job_applications", "values": {
+            "company": "Acme", "role": "M365 Support", "status": "To apply", "reference": "4711",
+            "match_score": 78, "match_notes": "Fits: Microsoft 365. Missing: Dutch C1.",
+            "ad_file": "Ads/ad.txt"
+        }}),
+    )]));
+    fake.push(Reply::text(&["Saved Acme, M365 Support, match 78."]));
+    std::fs::write(
+        ads.0.join("ad.txt"),
+        "Vacature 4711: M365 Support at Acme. Dutch C1 required.",
+    )
+    .unwrap();
+
+    let done = inbox_until(&client, &register, |v| {
+        v.files
+            .first()
+            .is_some_and(|f| f.status == InboxFileStatus::Done)
+    })
+    .await;
+    assert_eq!(done.files.len(), 1, "one file, tried twice");
+    let record = records(&client, &register).await.remove(0);
+    assert_eq!(record.values["match_score"], "78");
+    assert!(record.values["match_notes"].contains("Missing: Dutch C1"));
+    let titled: Vec<_> = client
+        .conversations(20)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|c| c.title == "Job ad · ad.txt")
+        .collect();
+    assert_eq!(
+        titled.len(),
+        2,
+        "the retry is a new task, the first one stays as it ended"
+    );
+    let second = client
+        .conversation(done.files[0].conversation_id.unwrap())
+        .await
+        .unwrap();
+    assert!(
+        second.messages[0].text.contains("path \"CV.txt\""),
+        "{}",
+        second.messages[0].text
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn with_the_daily_budget_used_up_a_file_waits_for_tomorrow() {
+    let fake = FakeGemini::start(KEY).await;
+    let host = TestHost::start_with(TOKEN, retrying(&fake)).await;
+    let client = host.client().await;
+    connect(&client).await;
+    let register = jobs(&client).await;
+    fake.push(Reply::text(&["Hello."]));
+    let sent = send(&client, None, "hi", "Hello").await;
+    settled(&client, &sent).await;
+    client.set_daily_token_budget(Some(1)).await.unwrap();
+    let ads = Dir::new("inbox-budget");
+    let folder = share(&client, &ads, "Ads", false).await;
+    client
+        .save_inbox(SaveInboxRequest {
+            register_id: register.register_id,
+            revision: 0,
+            folder_id: Some(folder.folder_id),
+            enabled: true,
+            cv_folder_id: None,
+            cv_path: None,
+        })
+        .await
+        .unwrap();
+    std::fs::write(ads.0.join("ad.txt"), "Vacature at Acme").unwrap();
+    let view = inbox_until(&client, &register, |v| {
+        v.files.first().is_some_and(|f| f.reason.is_some())
+    })
+    .await;
+    assert_eq!(view.files[0].status, InboxFileStatus::Waiting);
+    assert!(
+        view.files[0]
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("tried again tomorrow")
+    );
+    tokio::time::sleep(Duration::from_millis(900)).await;
+    assert_eq!(
+        fake.generations().len(),
+        1,
+        "nothing is sent while the budget is used up"
+    );
     host.shutdown().await;
 }

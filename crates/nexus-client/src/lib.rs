@@ -437,14 +437,11 @@ impl NexusClient {
 
     pub async fn save_inbox(
         &self,
-        register: nexus_protocol::RegisterId,
-        revision: i64,
-        folder: Option<nexus_protocol::FolderId>,
-        enabled: bool,
+        request: nexus_protocol::SaveInboxRequest,
     ) -> Result<nexus_protocol::InboxView, CallError> {
         Ok(self
             .client
-            .save_inbox(context::current(), register, revision, folder, enabled)
+            .save_inbox(context::current(), request)
             .await??)
     }
 

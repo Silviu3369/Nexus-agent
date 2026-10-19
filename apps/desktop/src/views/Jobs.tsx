@@ -23,14 +23,16 @@ import {
   dateText,
   filterRecords,
   formValues,
+  matchText,
   missingRequired,
   recordTitle,
   statusCounts,
   statusOf,
+  sortRecords,
   statusTone,
   valueText,
 } from "../model/records.ts";
-import type { RecordFilterState } from "../model/records.ts";
+import type { RecordFilterState, RecordSort } from "../model/records.ts";
 import { useGoTo } from "../shell/nav";
 import { useDerived, useNexus, useNexusActions } from "../state/store";
 import { Empty, ErrorLine, Panel, StatusPill } from "../ui";
@@ -52,6 +54,7 @@ function RegisterScreen({ register, initialRecordId }: { register: RegisterView;
   const [records, setRecords] = useState<RecordView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<RecordFilterState>({ status: null, dueOnly: false, text: "" });
+  const [sort, setSort] = useState<RecordSort>("changed");
   const [selected, setSelected] = useState<string | null>(initialRecordId);
   const [adding, setAdding] = useState(false);
   const [side, setSide] = useState<"import" | "export" | "inbox" | null>(null);
@@ -72,7 +75,10 @@ function RegisterScreen({ register, initialRecordId }: { register: RegisterView;
     };
   }, [register.register_id, d.recordsRev]);
 
-  const shown = useMemo(() => (records ? filterRecords(register, records, filter) : []), [register, records, filter]);
+  const shown = useMemo(
+    () => (records ? sortRecords(register, filterRecords(register, records, filter), sort) : []),
+    [register, records, filter, sort],
+  );
   const counts = useMemo(() => (records ? statusCounts(register, records) : []), [register, records]);
   const due = records?.filter((r) => r.follow_up_due).length ?? 0;
   const item = register.item_name;
@@ -142,6 +148,11 @@ function RegisterScreen({ register, initialRecordId }: { register: RegisterView;
               Follow-up due {due}
             </button>
           )}
+          <select className="record-sort" aria-label="Order" value={sort} onChange={(e) => setSort(e.currentTarget.value as RecordSort)}>
+            <option value="changed">Last changed</option>
+            <option value="match">Best match</option>
+            <option value="follow_up">Follow-up date</option>
+          </select>
           <input
             className="record-search"
             type="search"
@@ -243,6 +254,7 @@ function RecordRow({
         <span className="record-row-title">{title}</span>
         {meta && <span className="record-row-meta">{meta}</span>}
       </span>
+      {matchText(record) && <span className={`record-match${Number(record.values.match_score) >= 70 ? " record-match-good" : ""}`}>{matchText(record)}</span>}
       {followUp && (
         <span className={`record-follow${record.follow_up_due ? " record-follow-due" : ""}`}>
           {record.follow_up_due ? "Follow up due" : "Follow up"} {dateText(followUp)}
@@ -421,6 +433,20 @@ function FieldInput({ field, value, onChange }: { field: FieldDef; value: string
         <label>
           {label}
           <textarea value={value} rows={3} maxLength={field.max_chars} onChange={(e) => onChange(e.currentTarget.value)} />
+        </label>
+      );
+    case "Number":
+      return (
+        <label className="record-date">
+          {label}
+          <input
+            type="number"
+            value={value}
+            min={field.min ?? undefined}
+            max={field.max ?? undefined}
+            step={1}
+            onChange={(e) => onChange(e.currentTarget.value)}
+          />
         </label>
       );
     case "Date":
@@ -769,13 +795,15 @@ function ImportPanel({ register, onClose }: { register: RegisterView; onClose: (
 const INBOX_LABEL: Record<InboxView["files"][number]["status"], string> = {
   Waiting: "Waiting",
   Started: "Sent to the agent",
+  Done: "Done",
   Failed: "Not started",
   Skipped: "Skipped",
 };
 
-const INBOX_PILL: Record<InboxView["files"][number]["status"], "queued" | "completed" | "failed" | "cancelled"> = {
+const INBOX_PILL: Record<InboxView["files"][number]["status"], "queued" | "running" | "completed" | "failed" | "cancelled"> = {
   Waiting: "queued",
-  Started: "completed",
+  Started: "running",
+  Done: "completed",
   Failed: "failed",
   Skipped: "cancelled",
 };
@@ -788,6 +816,8 @@ function InboxPanel({ register, onClose }: { register: RegisterView; onClose: ()
   const folders = (d.folders ?? []).filter((f) => f.available);
   const [inbox, setInbox] = useState<InboxView | null>(null);
   const [folder, setFolder] = useState<string>("");
+  const [cvFolder, setCvFolder] = useState<string | null>(null);
+  const [cvPath, setCvPath] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -807,13 +837,27 @@ function InboxPanel({ register, onClose }: { register: RegisterView; onClose: ()
   }, [register.register_id, d.recordsRev]);
 
   const chosen = folder || inbox?.folder_id || folders[0]?.folder_id || "";
+  const cvFolderShown = cvFolder ?? inbox?.cv_folder_id ?? "";
+  const cvPathShown = cvPath ?? inbox?.cv_path ?? "";
 
-  async function save(enabled: boolean) {
+  async function save(enabled: boolean, cv?: { folder: string | null; path: string | null }) {
     if (!inbox) return;
     setBusy(true);
     setError(null);
+    const keep = cv ?? { folder: inbox.cv_folder_id, path: inbox.cv_path };
     try {
-      setInbox(await api.saveInbox(register.register_id, inbox.revision, chosen || null, enabled));
+      setInbox(
+        await api.saveInbox({
+          register_id: register.register_id,
+          revision: inbox.revision,
+          folder_id: chosen || inbox.folder_id,
+          enabled,
+          cv_folder_id: keep.folder,
+          cv_path: keep.path,
+        }),
+      );
+      setCvFolder(null);
+      setCvPath(null);
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -845,7 +889,7 @@ function InboxPanel({ register, onClose }: { register: RegisterView; onClose: ()
             Put job ads (PDF, Word or text) in this folder. Each new one is read by Nexus and added as an application — with
             its reference number, platform and the rest — while Nexus.Host is running. Each file becomes a task you can
             open and undo; a file is read once; nothing in the folder is moved or changed. Best a folder of its own: every
-            document in it is treated as an ad.
+            document in it except your CV is treated as an ad.
           </p>
           <label>
             Folder
@@ -878,6 +922,50 @@ function InboxPanel({ register, onClose }: { register: RegisterView; onClose: ()
               Close
             </button>
           </div>
+          <h3 className="record-history-head">CV for the match score</h3>
+          <p className="muted">
+            Name your CV and each new ad is compared with it: a match score (0–100) and what fits or is missing. Without a CV,
+            ads are recorded without a score.
+          </p>
+          <label>
+            CV folder
+            <select value={cvFolderShown} disabled={busy} onChange={(e) => setCvFolder(e.currentTarget.value)}>
+              <option value="">— no CV</option>
+              {folders.map((f) => (
+                <option key={f.folder_id} value={f.folder_id}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            CV file
+            <input
+              value={cvPathShown}
+              spellCheck={false}
+              disabled={busy || !cvFolderShown}
+              placeholder="e.g. CV 2026.pdf"
+              onChange={(e) => setCvPath(e.currentTarget.value)}
+            />
+          </label>
+          <div className="actions">
+            <button
+              type="button"
+              className="secondary"
+              disabled={busy || (cvFolderShown !== "" && cvPathShown.trim() === "")}
+              onClick={() =>
+                void save(inbox.enabled, {
+                  folder: cvFolderShown || null,
+                  path: cvFolderShown ? cvPathShown.trim() : null,
+                })
+              }
+            >
+              Save CV
+            </button>
+          </div>
+          {inbox.cv_path && (
+            <p className="muted">{`Comparing with ${inbox.cv_folder_label ?? "?"}/${inbox.cv_path}`}</p>
+          )}
           <p className={inbox.enabled ? "record-done" : "muted"} role="status">
             {inbox.enabled
               ? `On · reading “${inbox.folder_label ?? "?"}”${inbox.waiting > 0 ? ` · ${inbox.waiting} waiting` : ""}`

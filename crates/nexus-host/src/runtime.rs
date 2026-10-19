@@ -107,6 +107,7 @@ pub struct Runtime {
     /// The document reader program (`None`: this executable).
     extractor_exe: Option<PathBuf>,
     inbox_interval: Duration,
+    inbox_retry: Duration,
     inbox_state: inbox::InboxState,
 }
 
@@ -133,6 +134,9 @@ pub struct RuntimeConfig {
     pub extractor_exe: Option<PathBuf>,
     /// How often an inbox folder is looked at.
     pub inbox_interval: Duration,
+    /// The pause before an inbox task stopped by a temporary provider error
+    /// is tried again (it grows with each try).
+    pub inbox_retry: Duration,
 }
 
 impl Default for RuntimeConfig {
@@ -149,6 +153,7 @@ impl Default for RuntimeConfig {
             allow_loopback_mcp: false,
             extractor_exe: None,
             inbox_interval: inbox::DEFAULT_INBOX_INTERVAL,
+            inbox_retry: inbox::DEFAULT_INBOX_RETRY,
         }
     }
 }
@@ -194,6 +199,7 @@ impl Runtime {
             answers: remote_call::Answers::default(),
             extractor_exe: config.extractor_exe,
             inbox_interval: config.inbox_interval,
+            inbox_retry: config.inbox_retry,
             inbox_state: inbox::InboxState::default(),
         });
         runtime.ensure_registers().await?;

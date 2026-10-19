@@ -211,6 +211,46 @@ function Find-Check($win, [string]$fragment) {
   $win.FindAll($S::Descendants, $True_) | Where-Object { $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::CheckBox -and $_.Current.Name -like "*$fragment*" } | Select-Object -First 1
 }
 
+# Waits for an entry like $pattern (wildcards) inside the list labelled $list.
+function Wait-InList($win, [string]$list, [string]$pattern, [int]$seconds = 15) {
+  $deadline = (Get-Date).AddSeconds($seconds)
+  while ((Get-Date) -lt $deadline) {
+    $l = Find-Named $win $list ([System.Windows.Automation.ControlType]::List)
+    if ($l -and (Get-Names $l | Where-Object { $_ -like $pattern })) { return $true }
+    Start-Sleep -Milliseconds 250
+  }
+  return $false
+}
+
+# Picks an option of the drop-down labelled $label. Chromium lists a
+# drop-down's options only while it is open, so it is opened first.
+function Select-Option($win, [string]$label, [string]$option) {
+  $item = [System.Windows.Automation.ControlType]::ListItem
+  $deadline = (Get-Date).AddSeconds(10)
+  while ((Get-Date) -lt $deadline) {
+    $box = Find-Named $win $label ([System.Windows.Automation.ControlType]::ComboBox)
+    if ($box -and $box.Current.IsEnabled) {
+      $pattern = $null
+      if ($box.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$pattern)) {
+        $pattern.Expand()
+        Start-Sleep -Milliseconds 300
+      }
+      $choice = Find-Named $box $option $item
+      if (-not $choice) { $choice = Find-Named $A::RootElement $option $item }
+      if ($choice) {
+        $choice.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+        Start-Sleep -Milliseconds 200
+        if ($pattern -and $pattern.Current.ExpandCollapseState -ne [System.Windows.Automation.ExpandCollapseState]::Collapsed) { $pattern.Collapse() }
+        return
+      }
+    }
+    Start-Sleep -Milliseconds 200
+  }
+  $boxes = $win.FindAll($S::Descendants, (New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::ComboBox)))
+  $seen = ($boxes | ForEach-Object { "'" + $_.Current.Name + "' [" + ((Get-Names $_) -join ", ") + "]" }) -join "; "
+  throw "option '$option' of '$label' not found; drop-downs: $seen"
+}
+
 function Send-Chat($win, [string]$text) {
   Set-Field $win "Message" $text
   Click-Button $win "Send" 20
@@ -629,12 +669,18 @@ try {
   Check ($null -ne (Wait-Contains $win "Ads")) "a folder for job ads is shared"
   Click-Button $win "Jobs"
   Click-Button $win "Inbox"
+  Select-Option $win "Folder" "Ads"
+  Select-Option $win "CV folder" "Jobs"
+  Set-Field $win "CV file" "CV.txt"
+  Click-Button $win "Save CV"
+  Check ($null -ne (Wait-Contains $win "Comparing with Jobs/CV.txt")) "the CV for the match score is saved"
   Click-Button $win "Turn inbox on"
-  Check ($null -ne (Wait-Contains $win "On · reading")) "the inbox is on"
+  Check ($null -ne (Wait-Contains $win 'On · reading “Ads”')) "the inbox is on, reading the folder chosen"
   Set-Content -Path (Join-Path $adsDir "TopJobs vacature.txt") -Value "Vacature 70123456 - Service Desk Agent bij Acme NV, Springfield" -Encoding utf8
   Check ($null -ne (Wait-Like $win "Acme NV · Service Desk Agent" 40)) "the ad becomes an application on its own"
   Check ($null -ne (Wait-Contains $win "Ref 70123456")) "with the ad's reference number"
-  Check ($null -ne (Wait-Contains $win "Sent to the agent")) "the inbox lists the file as sent to the agent"
+  Check ($null -ne (Wait-Contains $win "Match 82")) "the ad is scored against the CV"
+  Check (Wait-InList $win "Inbox files" "Done*TopJobs vacature.txt*" 20) "the inbox lists the ad as done once the agent finished"
   Click-Button $win "Tools"
   $docsRow = Wait-Like $win "Documents · shared folders"
   if ($docsRow) { Invoke-Element $docsRow }

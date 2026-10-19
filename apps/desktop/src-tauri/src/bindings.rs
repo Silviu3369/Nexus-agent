@@ -109,6 +109,7 @@ mod tests {
             ts::export::<nexus_protocol::InboxFileStatus>(&conf),
             ts::export::<nexus_protocol::InboxFileView>(&conf),
             ts::export::<nexus_protocol::InboxView>(&conf),
+            ts::export::<nexus_protocol::SaveInboxRequest>(&conf),
             ts::export::<nexus_protocol::Schedule>(&conf),
             ts::export::<nexus_protocol::AutomationRunStatus>(&conf),
             ts::export::<nexus_protocol::AutomationRunView>(&conf),

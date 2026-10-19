@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::StorageError;
 
-pub const SUPPORTED_VERSION: i64 = 13;
+pub const SUPPORTED_VERSION: i64 = 14;
 
 /// Version 1: everything M1 persists. State columns are closed lists that a
 /// test keeps identical to the `nexus-core` enums. Times are UTC unix ms.
@@ -612,6 +612,41 @@ CREATE INDEX inbox_files_waiting ON inbox_files (register_id, status, id);
 CREATE INDEX inbox_files_by_conversation ON inbox_files (conversation_id);
 "#;
 
+/// Version 14: an inbox file's task is followed to its end (Done), a task
+/// stopped by a temporary provider error is tried again later on its own
+/// (attempts, retry_at_ms), and the inbox names the user's CV that each new
+/// ad is compared with. The status CHECK list is closed, so inbox_files is
+/// rebuilt (no other table refers to it).
+const V14: &str = r#"
+ALTER TABLE register_inboxes ADD COLUMN cv_folder_id TEXT REFERENCES folders (id) ON DELETE SET NULL;
+ALTER TABLE register_inboxes ADD COLUMN cv_path TEXT CHECK (cv_path IS NULL OR length(cv_path) BETWEEN 1 AND 400);
+
+CREATE TABLE inbox_files_v14 (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    register_id     TEXT    NOT NULL REFERENCES registers (id) ON DELETE CASCADE,
+    path            TEXT    NOT NULL CHECK (length(path) BETWEEN 1 AND 400),
+    sha256          TEXT    NOT NULL CHECK (length(sha256) = 64),
+    size_bytes      INTEGER NOT NULL CHECK (size_bytes >= 0),
+    status          TEXT    NOT NULL CHECK (status IN ('Waiting', 'Started', 'Done', 'Failed', 'Skipped')),
+    reason          TEXT    CHECK (reason IS NULL OR length(reason) <= 300),
+    conversation_id TEXT    REFERENCES conversations (id) ON DELETE SET NULL,
+    seen_at_ms      INTEGER NOT NULL,
+    started_at_ms   INTEGER,
+    attempts        INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    retry_at_ms     INTEGER,
+    UNIQUE (register_id, sha256)
+) STRICT;
+INSERT INTO inbox_files_v14
+    (id, register_id, path, sha256, size_bytes, status, reason, conversation_id, seen_at_ms, started_at_ms, attempts)
+SELECT id, register_id, path, sha256, size_bytes, status, reason, conversation_id, seen_at_ms, started_at_ms,
+       CASE WHEN started_at_ms IS NULL THEN 0 ELSE 1 END
+FROM inbox_files;
+DROP TABLE inbox_files;
+ALTER TABLE inbox_files_v14 RENAME TO inbox_files;
+CREATE INDEX inbox_files_waiting ON inbox_files (register_id, status, id);
+CREATE INDEX inbox_files_by_conversation ON inbox_files (conversation_id);
+"#;
+
 struct Migration {
     sql: &'static str,
     /// Rebuilds a table other tables refer to (see [`V5`]).
@@ -669,6 +704,10 @@ const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         sql: V13,
+        rebuilds_parent_table: false,
+    },
+    Migration {
+        sql: V14,
         rebuilds_parent_table: false,
     },
 ];
