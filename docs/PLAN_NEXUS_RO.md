@@ -27,7 +27,7 @@ Data de referință: **2026-10-15**, ora Europei Centrale. Acesta este unicul re
 | Limite M1 alese | Nota are maximum 128 KiB, ca o cerere să rămână sub cadrul IPC de 1 MiB chiar și cu escapare JSON ×6. Contractul propunea 1 MiB „de confirmat"; s-a confirmat 128 KiB. Aprobarea expiră după 10 minute. Snapshot-ul are cel mult 200 de run-uri și nu include conținutul preview-ului, care vine doar prin `get_run`. Pagina de evenimente are cel mult 500. |
 | Progres M1 | **Legat în Host** (executor serial, reconciliere la pornire, comenzi RPC `submit_note`/`get_snapshot`/`get_run`/`decide_approval`/`cancel_run`/`get_events`/`get_artifact_content`/`stop_host`), pe baza: (a) `nexus-core`: stările Run/Action/Operation ca enum-uri închise, cu tranzițiile din contracte §4; (b) `nexus-storage`: SQLite cu schema v1 completă pentru M1, WAL, `synchronous=FULL`, chei externe, fir unic care deține conexiunea, refuzul schemelor mai noi, al căilor de rețea și al stărilor necunoscute, evenimente în aceeași tranzacție cu starea; (c) `CreateMarkdownArtifact`: cale derivată doar din OperationId, staging + flush + publicare fără suprascriere + verificare SHA-256, refuzul joncțiunilor reale. **PATH-01 PASS**: textul ostil (traversare, C:\, \\?\, UNC, CON, ADS) rămâne doar conținut, iar o joncțiune reală în locul directorului de proiect sau de staging e refuzată fără să se scrie ceva prin ea. (d) depozitul `nexus-storage`: fiecare operație de domeniu e o singură tranzacție, cu stare plus evenimente. Logica de stare e dovedită pe SQLite real pentru RUN-01 (ciclul complet), RUN-02 (refuz/expirare), RUN-03 (idempotency și conflict), RUN-04 (run întrerupt → reconciliere → aceeași OperationId, attempt 2), RUN-07 (anulare în coadă/așteptare/execuție), SEC-01 (manifest schimbat, replay, consum dublu) și EVT-01 (cursor și watermark). Probele cap-coadă sunt în rândul „Matrice M1" de mai sus. |
 | Dependențe noi în M1 | `rusqlite` 0.40.2 cu `bundled` (din lotul aprobat), care aduce tranzitiv 8 pachete: `libsqlite3-sys`, `hashlink`, `hashbrown`, `fallible-iterator`, `fallible-streaming-iterator`, `vcpkg`, plus `sqlite-wasm-rs`/`rsqlite-vfs`, compilate doar pentru WebAssembly. `sha2` 0.10.9 a devenit dependență directă; era deja în `Cargo.lock` prin Tauri. |
-| Acțiune următoare | Ordinea decisă cu tine (2026-10-15), fiecare pas verificat înainte de următorul: (1) ~~Activitate live + bară de comenzi~~ — făcut 2026-10-16 (vezi jurnalul). Între timp, la cererea ta explicită: ~~dashboard „command center"~~ — făcut 2026-10-16 (vezi jurnalul); ordinea de mai jos rămâne. Apoi, tot la cererea ta: ~~reîncercare la pene temporare, chei detectate automat cu OpenAI/Claude/DeepSeek, model de rezervă~~ — făcut 2026-10-16 (vezi jurnalul). (2) ~~**Memorie v1**, pe proiecte de la început~~ — făcut 2026-10-16 (vezi jurnalul). (3) ~~**MCP — Nexus ca client**~~ — făcut, comis și aplicat 2026-10-17 (vezi jurnalul). Servere la distanță (HTTPS); cele *locale* rulează cod străin pe PC și rămân oprite până la o decizie de izolare (regula din AGENTS.md). Uneltele MCP care pot schimba ceva (nu se declară read-only) rămân blocate până la pasul 4, când primesc aprobare pe fiecare apel. (4) ~~**Agentul continuă singur după ce aprobi**, plus uneltele MCP cu efect, aprobate apel cu apel~~ — făcut, comis (`6e84a6d`) și aplicat 2026-10-17 (vezi jurnalul). Apoi, la recomandarea mea și cu acordul tău: ~~închiderea M2 (buget zilnic de tokeni, cost estimat)~~ — făcut 2026-10-17 (vezi jurnalul). Apoi **M3**, în ordinea aleasă de tine: (a) ~~izolarea și probele ei (ADR-ISO-001)~~ — făcut 2026-10-17 (vezi jurnalul); ~~(b) Codex în container, pe o copie de lucru~~ — renunțat, decizia ta: Nexus nu scrie cod pe PC-ul tău; (c) operații PC definite; (d) browser, ultimul. Apoi, la alegerea ta (2026-10-17), **M4**: ~~automatizări~~ — făcut, comis (`46952b2`) și aplicat 2026-10-18 (vezi jurnalul). Apoi **direcția agentului** (§3a, 2026-10-18): ~~pasul 1, Evidențe + Jobs~~ — făcut 2026-10-18 (vezi jurnalul), de încercat de tine pe un caz real; ~~pasul 2 (foldere date de tine, documente, scrisoare Word, import/export Excel)~~ — făcut 2026-10-18 (vezi jurnalul); apoi, la cererea ta, ~~inbox automat pentru anunțuri și număr de referință~~ — făcut 2026-10-18 (vezi jurnalul); apoi, la alegerea ta, ~~scor față de CV și urmărirea task-urilor din inbox~~ — făcut, comis (`a79a5b7`) și aplicat 2026-10-19 (vezi jurnalul); apoi, după cercetarea de direcție și nișa aleasă de tine (căutare de job asistată + IT support pentru firme mici, §3a), ~~Jobs → Results: rezultatul măsurat~~ — făcut 2026-10-19 (vezi jurnalul), de aplicat; urmează pasul 3 (Google Drive prin folderul de pe PC: de încercat), apoi Telegram (pasul 4). Rămase de la tine: verificarea vizuală UI-01 (scalare, temă deschisă/întunecată pe ecranul tău); o cheie reală OpenAI, Claude sau DeepSeek, dacă vrei proba reală a acelor adaptoare. |
+| Acțiune următoare | Ordinea decisă cu tine (2026-10-15), fiecare pas verificat înainte de următorul: (1) ~~Activitate live + bară de comenzi~~ — făcut 2026-10-16 (vezi jurnalul). Între timp, la cererea ta explicită: ~~dashboard „command center"~~ — făcut 2026-10-16 (vezi jurnalul); ordinea de mai jos rămâne. Apoi, tot la cererea ta: ~~reîncercare la pene temporare, chei detectate automat cu OpenAI/Claude/DeepSeek, model de rezervă~~ — făcut 2026-10-16 (vezi jurnalul). (2) ~~**Memorie v1**, pe proiecte de la început~~ — făcut 2026-10-16 (vezi jurnalul). (3) ~~**MCP — Nexus ca client**~~ — făcut, comis și aplicat 2026-10-17 (vezi jurnalul). Servere la distanță (HTTPS); cele *locale* rulează cod străin pe PC și rămân oprite până la o decizie de izolare (regula din AGENTS.md). Uneltele MCP care pot schimba ceva (nu se declară read-only) rămân blocate până la pasul 4, când primesc aprobare pe fiecare apel. (4) ~~**Agentul continuă singur după ce aprobi**, plus uneltele MCP cu efect, aprobate apel cu apel~~ — făcut, comis (`6e84a6d`) și aplicat 2026-10-17 (vezi jurnalul). Apoi, la recomandarea mea și cu acordul tău: ~~închiderea M2 (buget zilnic de tokeni, cost estimat)~~ — făcut 2026-10-17 (vezi jurnalul). Apoi **M3**, în ordinea aleasă de tine: (a) ~~izolarea și probele ei (ADR-ISO-001)~~ — făcut 2026-10-17 (vezi jurnalul); ~~(b) Codex în container, pe o copie de lucru~~ — renunțat, decizia ta: Nexus nu scrie cod pe PC-ul tău; (c) operații PC definite; (d) browser, ultimul. Apoi, la alegerea ta (2026-10-17), **M4**: ~~automatizări~~ — făcut, comis (`46952b2`) și aplicat 2026-10-18 (vezi jurnalul). Apoi **direcția agentului** (§3a, 2026-10-18): ~~pasul 1, Evidențe + Jobs~~ — făcut 2026-10-18 (vezi jurnalul), de încercat de tine pe un caz real; ~~pasul 2 (foldere date de tine, documente, scrisoare Word, import/export Excel)~~ — făcut 2026-10-18 (vezi jurnalul); apoi, la cererea ta, ~~inbox automat pentru anunțuri și număr de referință~~ — făcut 2026-10-18 (vezi jurnalul); apoi, la alegerea ta, ~~scor față de CV și urmărirea task-urilor din inbox~~ — făcut, comis (`a79a5b7`) și aplicat 2026-10-19 (vezi jurnalul); apoi, după cercetarea de direcție și nișa aleasă de tine (căutare de job asistată + IT support pentru firme mici, §3a), ~~Jobs → Results: rezultatul măsurat~~ — făcut, comis (`304e4fd`) și aplicat 2026-10-19 (vezi jurnalul). **Apoi, la 2026-10-20, ai adoptat ajustările din [revizuirea de produs](REVIZUIRE_PRODUS_RO.md)** (fără renumerotare și fără milestone-uri noi; detalii în §3, la „Ajustări adoptate”): ordinea de execuție devine (1) completarea M2, (2) M5 (extracție și validare) în paralel cu M4 (intake și email), (3) Jobs R1 folosit de tine, cu cifre, (4) M3a și M3b, (5) M6, (6) un pilot, (7) M3c (browser), (8) M7. Pașii 3 (Google Drive) și 4 (Telegram) din §3a nu mai sunt următorii: Drive e doar un folder împărțit, de încercat la ocazie; Telegram vine în M4 după email. **Următorul pas: completarea M2, într-o versiune mică**, legată de o îmbunătățire vizibilă în Jobs. Rămase de la tine: verificarea vizuală UI-01 (scalare, temă deschisă/întunecată pe ecranul tău); o cheie reală OpenAI, Claude sau DeepSeek, dacă vrei proba reală a acelor adaptoare. |
 
 Cererea curentă autorizează implementarea M0–M2 conform planului aprobat (secțiunile 4–6 de mai jos). [Promptul de pornire](PROMPT_START_RO.md) rămâne valabil ca text de referință, nu mai e singurul declanșator.
 
@@ -51,6 +51,21 @@ Fundația comună trebuie să susțină memoria pe proiect, sarcini de durată, 
 | M5 | Memorie, documente și căutare cu proveniență | M2; executor pentru importuri neîncrezătoare din M3 | Parțial, adus înainte: Memorie v1 (proiecte reale; fapte personale și de proiect cu sursă, propuse de model și aprobate de tine; căutare textuală; contextul trimis). Documente făcute în direcția agentului (2026-10-18): foldere date de tine, citirea PDF/Word/Excel/text, scrisoare Word cu aprobare, import și export Excel. Neîncepute: căutarea în documente cu sursa arătată, politica de păstrare, sursele citate în răspunsuri |
 | M6 | Distribuție Windows calificată pentru utilizare zilnică | Funcțiile selectate din M1–M5 și toate probele lor | Neînceput |
 | M7 | Extensii avansate, voce, Three.js, alte dispozitive | Contracte și limite validate în etapele precedente | Parțial, adus înainte la cererea ta: Nexus Core în Three.js (stări reale, reduced motion, alternativă statică); MCP ca client pentru servere la distanță: unelte activate de tine, cele read-only automat, celelalte cu aprobarea ta pentru fiecare apel |
+
+**Ajustări adoptate (2026-10-20).** Ai cerut evaluarea roadmap-ului față de direcția de produs, fără să fie înlocuit; ai adoptat ajustările din [revizuirea de produs](REVIZUIRE_PRODUS_RO.md), iar nișa comercială o decizi după Jobs R1. Numerotarea și conținutul inițial al etapelor rămân; fiecare ajustare e scrisă la etapa ei, ca bloc datat.
+
+| Etapă | Decizie | Pe scurt |
+| --- | --- | --- |
+| M0 | Neschimbat | Închis |
+| M1 | Neschimbat | Fundația brokerului unic; nu se redeschide |
+| M2 | Completat | Punctul „același broker din M1” nu e făcut: un singur model al sarcinii, toate efectele prin broker, cost și timp pe sarcină, taxonomia eșecurilor, politica de date pe furnizor |
+| M3 | Modificat (motivat la §7) | M3a fișiere și Office, M3b izolarea readusă, M3c browser la final; automatizarea generică mouse/tastatură amânată |
+| M4 | Cerințe inserate | Intake generic, email, remindere din evidențe; Telegram după email |
+| M5 | Ajustat, adus înainte | Extracție structurată cu proveniență, reguli de validare, clasificare, OCR, retenție; evidențele intră aici |
+| M6 | Neschimbat | ADR-DATA-001 se decide înainte, se implementează aici; precondiție pentru un pilot, nu pentru folosirea ta |
+| M7 | Ajustat ușor | Doar formatul intern de pachete se aduce înainte; restul rămâne la final; Three.js înghețat |
+
+Ordinea de execuție diferă de numerotare (cum s-a întâmplat deja cu Memorie v1 și MCP); ordinea e în §1.
 
 Nu sunt estimate termene sau dimensiuni de instalare fără builduri măsurate. O etapă se închide prin rezultate verificabile, nu prin numărul de fișiere.
 
@@ -111,7 +126,8 @@ Idei adăugate: „aruncă-i orice” (un fișier, link sau poză ajunge singur 
   - Concluzie: aprobările pe acțiunea exactă, Undo, istoricul, cheile în seif și lipsa codului străin sunt partea valoroasă a lui Nexus și rămân.
 - **Ce trebuie corectat**: un „asistent pentru orice” concurează gratis cu Microsoft (agenți în Windows), ChatGPT/Gemini și OpenClaw. Agenții de nișă se vând mai ușor, pentru că înlocuiesc muncă plătită deja (exemplul românesc Profluo: documente contabile, aproximativ de 20 de ori mai repede, la ~1/6 din cost).
 - **Prețuri de referință** (din surse ale furnizorilor, orientative): Lindy 50–200 $/lună; Manus 20–200 $/lună; Huntr (evidența joburilor) ~40 $/lună; Contera, în România, de la 49 RON/lună.
-- **Nișa aleasă de tine:**
+- **Actualizare 2026-10-20:** nișa comercială nu mai e fixată acum. O decizi după Jobs R1, pe cifre reale. Candidații: DocumentOps (documente repetitive pentru firme mici), recomandat în [revizuirea de produs](REVIZUIRE_PRODUS_RO.md) pentru că folosește aproape numai componente existente, și IT Support (mai jos), care ar cere acces la PC-urile altor firme. Jobs rămâne terenul de test. Textul de mai jos e decizia din 2026-10-19, păstrată pentru istoric.
+- **Nișa aleasă de tine (2026-10-19):**
   - **căutare de job asistată**: Jobs, cu tine ca prim utilizator real;
   - **IT support pentru firme mici**: evidența incidentelor, depanare ghidată și documentație, pentru firme fără departament IT.
 - **Ce urmează din asta:**
@@ -175,6 +191,15 @@ Acesta este un instrument local determinist, fără model AI fals. Nu citește d
 
 **Acceptare:** selectarea unui model produce cereri prin adaptorul corect; comportamentele de anulare, limită, timeout și răspuns invalid sunt testate; cheile nu apar în UI, prompturi sau loguri. Nu există schimbare tacită de furnizor.
 
+**Ajustare adoptată (2026-10-20): completarea M2.** Cerința „integrează propunerile de instrumente ale modelului cu același broker din M1” nu e îndeplinită. Munca agentului e conversație → mesaj → pași, iar modelul Task/Run/Action din M1 servește doar efectelor cu aprobare. Costul e înregistrat pe zi și pe model, nu pe sarcină, iar o sarcină nu are rezultat (un fișier din inbox „Done” nu spune dacă a reușit). Se adaugă, în M2:
+
+- un singur model al muncii: sarcina (obiectiv, declanșator, rezultat, motivul eșecului), cu conversația ca unul dintre canale;
+- toate efectele prin brokerul M1, fiecare cu o clasă de efect (citire, internă reversibilă, externă reversibilă, externă ireversibilă); scrierile în evidențe rămân directe, cu Undo, dar devin acțiuni auditate la fel;
+- cost și timp pe sarcină; evenimentele de intervenție (aprobare, respingere, editare, Undo, corectură, reîncercare); taxonomia eșecurilor (lista în [revizuirea de produs](REVIZUIRE_PRODUS_RO.md), secțiunea H);
+- politica de date pe furnizor: datele de business nu pleacă pe un nivel gratuit; înaintea unui pilot, un furnizor plătit cu DPA trebuie probat real.
+
+Deciziile de arhitectură se scriu întâi ca ADR (TASK, ACTION, POLICY, IDENTITY), apoi se implementează în pași mici, fiecare cu o îmbunătățire vizibilă.
+
 ## 7. M3 — Cod, PC și browser
 
 - Adaptor Windows Rust cu operații tipate și drepturi minime; elevare doar pentru operațiile selectate, niciodată pentru întregul produs în mod implicit.
@@ -188,6 +213,13 @@ Acesta este un instrument local determinist, fără model AI fals. Nu citește d
 
 **Acceptare:** un flux real de modificare și testare de cod, plus o operație PC verificată, trec prin policy, broker, audit și verificarea rezultatului. Instrumentele cu izolare nedemonstrată rămân indisponibile.
 
+**Ajustare adoptată (2026-10-20): M3 se modifică.** Motivul: partea de cod a ieșit prin decizia ta (2026-10-17); munca reală pe calculator înseamnă întâi fișiere și documente Office, apoi, rar, aplicații web; browserul e componenta cea mai riscantă. Prima parte a criteriului de acceptare (fluxul de cod) devine inutilă. Conținutul, în același M3:
+
+- **M3a**: operații tipate pe fișiere în folderele împărțite (mutare, redenumire, copiere) și actualizarea pe loc a unui Excel, cu diferența arătată înainte, verificare după și copie pentru rollback;
+- **M3b**: izolarea readusă (implementarea ADR-ISO-001, din commit `88ebc89`) pentru parsere, OCR și orice unealtă neîncrezătoare; cititorul de documente de azi rulează doar într-un Job Object, care nu e o izolare;
+- **M3c**, ultimul: browser cu profil dedicat, întâi citire, apoi formulare cu aprobarea valorilor exacte; doar domenii permise; niciodată platforme care interzic automatizarea și niciodată CAPTCHA;
+- amânat după prima versiune: automatizarea generică cu mouse și tastatură a aplicațiilor desktop.
+
 ## 8. M4 — Automatizări și Telegram
 
 - Scheduler persistent cu fus orar, schimbări de oră, programări ratate, suprapuneri și revocare.
@@ -198,6 +230,13 @@ Acesta este un instrument local determinist, fără model AI fals. Nu citește d
 - WhatsApp rămâne condiționat de verificarea eligibilității și regulilor oficiale valabile atunci.
 
 **Acceptare:** update-uri și declanșări duplicate nu dublează efectele; un calendar ratat nu declanșează o rafală de operații; revocarea oprește următoarele acțiuni.
+
+**Ajustare adoptată (2026-10-20): cerințe inserate în M4.**
+
+- **Intake generic**: surse folder și email; fișier luat doar când e stabil; deduplicare după conținut; o sarcină per element; reîncercare cu așteptare. Generalizează inboxul Jobs.
+- **Email**, care lipsea din toate etapele: citire ca sursă de intake, draft, trimitere doar cu aprobarea ta, verificare în Sent după ID-ul mesajului.
+- **Remindere din evidențe**: o dată de follow-up ajunsă la scadență devine o notificare sau o sarcină.
+- **Telegram** rămâne în M4, după email; aprobarea de pe telefon cere calea de confirmare de încredere (arhitectura §11). WhatsApp neschimbat.
 
 ## 9. M5 — Memorie și documente
 
@@ -210,6 +249,15 @@ Acesta este un instrument local determinist, fără model AI fals. Nu citește d
 
 **Acceptare:** memoria unui proiect nu apare neautorizat în altul; ștergerea propagă în indexuri și respectă politica documentată a backupurilor; răspunsurile pot indica sursele relevante.
 
+**Ajustare adoptată (2026-10-20): M5 se completează și se face mai devreme.**
+
+- Extracție după o schemă declarată, cu proveniența fiecărui câmp (fișier, pagină, fragment) și cu semnalarea câmpurilor nesigure.
+- Reguli de validare deterministe în Host (formate, totaluri, verificare față de evidențe sau un Excel de referință), separate de model.
+- Clasificarea documentelor primite.
+- OCR pentru scanări și imagini prin OCR-ul Windows (de verificat pe Windows Home), fără dependență mare nouă.
+- Retenție pe clasă de document.
+- Evidențele (registrele cu istoric și Undo, din §3a) fac parte formal din M5. Embeddings rămân amânate.
+
 ## 10. M6 — Calificare pentru utilizare zilnică
 
 - Profiluri per utilizator, fișiere protejate, backup/restaurare și export coerent. Modelul de criptare la repaus și de recuperare a cheilor este decis și verificat.
@@ -221,6 +269,8 @@ Acesta este un instrument local determinist, fără model AI fals. Nu citește d
 
 **Acceptare:** probele se referă la pachetul și versiunea efectiv livrate, nu doar la un build de dezvoltare. Rezultatele sunt revizuibile înaintea oricărei publicări.
 
+**Ajustare adoptată (2026-10-20):** M6 rămâne neschimbat. ADR-DATA-001 (criptare la repaus, retenție, export, audit cu hash în lanț) se decide înainte, ca să nu ceară reconstruirea Core-ului; se implementează aici. Exportul auditului și diagnosticul fără date sensibile devin criterii explicite. M6 e precondiție pentru un pilot comercial, nu pentru folosirea ta.
+
 ## 11. M7 — Extindere controlată
 
 - SDK de module cu manifest, compatibilitate, permisiuni, sănătate, dezactivare și actualizare.
@@ -230,6 +280,8 @@ Acesta este un instrument local determinist, fără model AI fals. Nu citește d
 - Three.js reflectă stări reale, respectă reduced motion și are alternativă statică.
 - Alte dispozitive cer identitate, pairing și transport autentificat. Produsul cu mai mulți utilizatori cere un proiect distinct de separare a datelor.
 - Un eventual modul de trading are controale de domeniu independente și începe în simulare; nu face parte din fundație.
+
+**Ajustare adoptată (2026-10-20):** se aduce înainte doar formatul intern de pachete first-party (declarativ, fără cod: scheme, reguli, prompturi, surse de intake, automatizări, permisiuni, metrici), când apare al doilea pachet; Jobs devine primul pachet (logica scrisă azi direct în Host, inclusiv `job_results.rs`, se mută acolo). SDK-ul pentru terți, subagenții, vocea, alte dispozitive și trading rămân la final. Three.js se îngheață: partea făcută rămâne, fără investiții noi.
 
 ## 12. Reguli de verificare și progres
 
@@ -291,3 +343,4 @@ Nu marca o etapă terminată dacă există teste obligatorii neexecutate. Pentru
 | 2026-10-19 | **Scorul față de CV aplicat.** Host-ul tău era deja oprit (ultima activitate ieri la 22:14). Baza a fost copiată și verificată (v13, integritate ok, 15 task-uri, 32 de mesaje, 1 candidatură, 2 fișiere în inbox, ambele „Started”). Apoi reconstruire release, curățarea folderelor de build și Start Host apăsat de tine | Migrarea la v14 verificată pe o copie: integritate ok, nicio cheie externă ruptă, aceleași numere. Cele 2 fișiere vechi din inbox au trecut singure din „Started” în „Done”, pentru că task-urile lor se încheiaseră | De încercat de tine: alegi CV-ul în Jobs → Inbox, pui un anunț în folder și vezi scorul; apoi pasul următor ales de tine |
 | 2026-10-19 | **Cercetare de direcție și nișa de valorificare** (cerută de tine). Verdict: felul în care e construit Nexus (control, aprobări, Undo, istoric, date pe PC, treburi concrete) e confirmat de piață; ca asistent general nu poate fi valorificat. Ai ales nișa: căutare de job asistată și IT support pentru firme mici. Detalii și surse în §3a | Surse verificate: Ping Identity (oct. 2026), VentureBeat (oct. 2026); restul, orientative | Tu: alegi primul pas din noua direcție |
 | 2026-10-19 | **Jobs → Results: rezultatul măsurat** (primul pas din nișa aleasă). Un panou nou în Jobs, calculat de Host din candidaturi și istoricul lor, fără nimic estimat. **Cifre**: trimise; răspunsuri (interviu, ofertă sau refuz) și procentul lor; interviuri și procentul lor; oferte. **Așteptare**: câte așteaptă un răspuns și câte de peste 14 zile; mediana zilelor până la primul răspuns (doar din schimbări reale, nu din candidaturi adăugate direct cu răspunsul). **Grafic** cu trimise pe ultimele 8 săptămâni (de luni, ora PC-ului), cu valoarea la trecerea mouse-ului sau la focus. **Interviuri după scorul față de CV** (70 sau peste, sub 70, fără scor) și **după sursă**. **Ce a făcut Nexus**: candidaturi adăugate, anunțuri citite din inbox, schimbări făcute și câte ai anulat. Reguli: o etapă contează odată atinsă, chiar dacă statusul a mers mai departe, dar nu dacă ai anulat schimbarea; data trimiterii vine din „Applied on”, altfel din schimbarea care a marcat candidatura trimisă, altfel candidatura e numărată fără săptămână. RPC nou doar de citire, `job_results`; fără schimbare de schemă, fără dependențe noi. Culoarea barelor a fost validată pentru ambele teme (cea de accent era prea deschisă pentru bare pe tema întunecată) | 285 de teste Rust PASS, 2 ignorate. Noi: zilele calendarului și săptămânile de luni; un caz complet (trimise, răspunsuri, interviu anulat, retras înainte de aplicare, fără dată, benzi de scor, surse grupate fără majuscule); „Other” pentru multe surse; prin Host-ul real, rezultatele după schimbările tale și ale agentului, plus anularea. 35 de teste frontend. `clippy -D warnings`, `fmt` și `tsc` curate. `scripts/m2-ui-check.ps1` 170/170 (noi: panoul Results, graficul cu eticheta fiecărei săptămâni, ce a făcut Nexus) și `scripts/m1-ui-check.ps1` 31/31. Captură pe un profil de test, cu 10 candidaturi importate din CSV: cifrele verificate de mână (9 trimise, 4 răspunsuri, 2 interviuri, săptămânile 0-1-1-1-1-2-3-0) | Tu: acord pentru commit/push și aplicare (doar repornirea Host-ului, fără migrare); apoi îl folosești pe candidaturile tale reale |
+| 2026-10-20 | **Roadmap ajustat, nu înlocuit.** Ai cerut evaluarea roadmap-ului M0–M7 față de direcția de produs (platformă locală de execuție supravegheată; Jobs ca teren de test; DocumentOps ca posibilă primă piață), fără să fie rescris. Revizuirea e în [revizuirea de produs](REVIZUIRE_PRODUS_RO.md). Ai adoptat ajustările, iar nișa comercială o decizi după Jobs R1. În plan: blocul „Ajustări adoptate” din §3, blocuri datate la M2, M3, M4, M5, M6 și M7, noua ordine de execuție în §1, nota despre nișă în §3a. Textul inițial al etapelor e păstrat; nimic nu s-a renumerotat și nu s-a adăugat niciun milestone | Doar documentație; fără cod | Următorul pas: completarea M2, într-o versiune mică (întâi ADR-urile TASK și ACTION) |
