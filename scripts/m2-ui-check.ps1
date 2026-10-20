@@ -685,6 +685,7 @@ try {
   Check ($null -ne (Wait-Contains $win "Counted from your applications and their history")) "Jobs shows its results, counted from the history"
   Check ($null -ne (Wait-Match $win "^This week: \d+ sent$")) "the weekly chart names each week's count"
   Check ($null -ne (Wait-Contains $win "Job ads it read from the inbox")) "the results say what Nexus did"
+  Check ($null -ne (Find-Named $win "How Nexus handled the job ads" ([System.Windows.Automation.ControlType]::Table))) "the results say how Nexus handled each ad, from its task"
   Click-Button $win "Tools"
   $docsRow = Wait-Like $win "Documents · shared folders"
   if ($docsRow) { Invoke-Element $docsRow }

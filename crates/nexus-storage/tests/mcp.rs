@@ -3,6 +3,8 @@
 //! the user saw, a changed or vanished tool is off, and a removed server
 //! takes its tools with it. Events never carry what a server wrote.
 
+mod common;
+
 use std::path::PathBuf;
 
 use nexus_core::{AgentStepKind, AgentStepStatus};
@@ -73,6 +75,8 @@ async fn migrating_to_v7_keeps_the_steps_and_accepts_mcp_calls() {
         let sent = store
             .append_exchange(
                 NewExchange {
+                    origin: nexus_core::TaskOrigin::User,
+                    pack: None,
                     conversation_id: None,
                     project_id: None,
                     idempotency_key: "k-v7".into(),
@@ -102,6 +106,7 @@ async fn migrating_to_v7_keeps_the_steps_and_accepts_mcp_calls() {
         // Back to version 6, as the previous host left it.
         store
             .call(|c| {
+                common::undo_v15(c)?;
                 c.execute_batch(
                     "PRAGMA foreign_keys = OFF;
                      DROP TABLE inbox_files; DROP TABLE register_inboxes; DROP TABLE folders; DROP TABLE record_changes; DROP TABLE records; DROP TABLE registers; DROP TABLE automation_runs; DROP TABLE automations; DROP TABLE model_usage; DROP TABLE model_prices; DROP TABLE paused_turns; ALTER TABLE runs DROP COLUMN outcome_json;

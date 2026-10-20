@@ -266,6 +266,58 @@ impl MessageStatus {
     }
 }
 
+// What started a task (ADR-TASK-001): the user in a conversation, an
+// automation, an item taken in by an intake source, a note the user sent
+// directly (M1), or the agent itself (an effect it proposed during a turn).
+closed_enum!(TaskOrigin {
+    Direct,
+    User,
+    Automation,
+    Intake,
+    Agent,
+});
+
+// A run is either an effect with its own action (M1: a note, a document, an
+// MCP call) or one turn of the agent: a request and every reply to it.
+closed_enum!(RunType { Effect, Agent });
+
+// Why a run failed (ADR-TASK-001), a closed list. `Internal` covers what no
+// other cause names.
+closed_enum!(FailureCause {
+    ProviderUnavailable,
+    QuotaExceeded,
+    BudgetExceeded,
+    InvalidModelOutput,
+    ValidationRefused,
+    VerificationMismatch,
+    PermissionDenied,
+    UserRejected,
+    Timeout,
+    HostInterrupted,
+    OutcomeUnknown,
+    Internal,
+});
+
+impl FailureCause {
+    /// The cause of a reply that settled with `code` (an error code name,
+    /// or `Interrupted` when the Host stopped during the reply). Kept in
+    /// step with the same mapping in schema version 15.
+    pub fn from_error_code(code: &str) -> FailureCause {
+        use FailureCause::*;
+        match code {
+            "QuotaExceeded" => QuotaExceeded,
+            "ProviderUnavailable" | "Busy" => ProviderUnavailable,
+            "DeadlineExceeded" => Timeout,
+            "BudgetExceeded" => BudgetExceeded,
+            "Unauthenticated" | "Forbidden" => PermissionDenied,
+            "InvalidRequest" => ValidationRefused,
+            "Interrupted" => HostInterrupted,
+            "OutcomeUnknown" => OutcomeUnknown,
+            _ => Internal,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,6 +334,37 @@ mod tests {
             assert_eq!(s.as_str().parse::<OperationState>().unwrap(), *s);
         }
         assert!("Approved=true".parse::<RunState>().is_err());
+    }
+
+    #[test]
+    fn a_failed_reply_names_one_cause_from_a_closed_list() {
+        assert_eq!(
+            FailureCause::from_error_code("QuotaExceeded"),
+            FailureCause::QuotaExceeded
+        );
+        assert_eq!(
+            FailureCause::from_error_code("Busy"),
+            FailureCause::ProviderUnavailable
+        );
+        assert_eq!(
+            FailureCause::from_error_code("DeadlineExceeded"),
+            FailureCause::Timeout
+        );
+        assert_eq!(
+            FailureCause::from_error_code("Interrupted"),
+            FailureCause::HostInterrupted
+        );
+        assert_eq!(
+            FailureCause::from_error_code("Forbidden"),
+            FailureCause::PermissionDenied
+        );
+        assert_eq!(
+            FailureCause::from_error_code("anything else"),
+            FailureCause::Internal
+        );
+        for c in FailureCause::ALL {
+            assert_eq!(c.as_str().parse::<FailureCause>().unwrap(), *c);
+        }
     }
 
     #[test]

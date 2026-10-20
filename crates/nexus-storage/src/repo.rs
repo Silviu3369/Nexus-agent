@@ -288,7 +288,7 @@ impl Store {
             let tx = conn.transaction()?;
             let next: Option<String> = tx
                 .query_row(
-                    "SELECT id FROM runs WHERE state = 'Queued' ORDER BY created_at_ms, id LIMIT 1",
+                    "SELECT id FROM runs WHERE state = 'Queued' AND kind = 'Effect' ORDER BY created_at_ms, id LIMIT 1",
                     [],
                     |r| r.get(0),
                 )
@@ -898,7 +898,7 @@ impl Store {
                 tx.query_row("SELECT coalesce(max(seq), 0) FROM events", [], |r| r.get(0))?;
             let ids: Vec<String> = {
                 let mut stmt =
-                    tx.prepare("SELECT id FROM runs ORDER BY created_at_ms DESC, id LIMIT ?1")?;
+                    tx.prepare("SELECT id FROM runs WHERE kind = 'Effect' ORDER BY created_at_ms DESC, id LIMIT ?1")?;
                 stmt.query_map([limit], |r| r.get(0))?
                     .collect::<Result<_, _>>()?
             };
@@ -1142,7 +1142,9 @@ fn transition_operation(
 
 fn run_ids_in_states(tx: &Transaction, states: &[RunState]) -> Result<Vec<RunId>, StorageError> {
     let mut ids = Vec::new();
-    let mut stmt = tx.prepare("SELECT id FROM runs WHERE state = ?1 ORDER BY created_at_ms, id")?;
+    let mut stmt = tx.prepare(
+        "SELECT id FROM runs WHERE state = ?1 AND kind = 'Effect' ORDER BY created_at_ms, id",
+    )?;
     for state in states {
         for id in stmt.query_map([state.as_str()], |r| r.get::<_, String>(0))? {
             ids.push(RunId(parse_uuid(&id?)?));

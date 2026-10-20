@@ -2,6 +2,8 @@
 //! is shared once, a stale edit is refused, unsharing removes only the row,
 //! events never carry the path, and the migration keeps every step.
 
+mod common;
+
 use std::path::PathBuf;
 
 use nexus_core::AgentStepKind;
@@ -96,6 +98,8 @@ async fn migrating_to_v12_keeps_every_step_and_accepts_the_new_ones() {
     let ex = s
         .append_exchange(
             NewExchange {
+                origin: nexus_core::TaskOrigin::User,
+                pack: None,
                 conversation_id: None,
                 project_id: None,
                 idempotency_key: "m".into(),
@@ -118,6 +122,7 @@ async fn migrating_to_v12_keeps_every_step_and_accepts_the_new_ones() {
     .await
     .unwrap();
     s.call(|c| {
+        common::undo_v15(c)?;
         c.execute_batch(
             "PRAGMA foreign_keys = OFF;
              DROP TABLE inbox_files; DROP TABLE register_inboxes; DROP TABLE folders;

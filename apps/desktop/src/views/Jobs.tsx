@@ -21,9 +21,11 @@ import { api, describeError, errorCode } from "../api";
 import { dateTimeText } from "../model/automation.ts";
 import {
   bandText,
+  causeText,
   changeLines,
   changeText,
   dateText,
+  durationText,
   filterRecords,
   formValues,
   groupText,
@@ -35,6 +37,7 @@ import {
   statusOf,
   sortRecords,
   statusTone,
+  usdText,
   valueText,
   weekText,
 } from "../model/records.ts";
@@ -1101,6 +1104,63 @@ function ResultsPanel({ register, onClose }: { register: RegisterView; onClose: 
                       <td>{groupText(s.counts)}</td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </>
+          )}
+          {r.ads.seen > 0 && (
+            <>
+              <h3 className="record-history-head">How Nexus handled the job ads</h3>
+              <table className="results-table" aria-label="How Nexus handled the job ads">
+                <tbody>
+                  <tr>
+                    <th scope="row">Finished</th>
+                    <td>{`${r.ads.finished} of ${r.ads.seen}`}</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Recorded an application</th>
+                    <td>{`${r.ads.recorded} (${percentText(r.ads.recorded, r.ads.finished)})`}</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Recorded nothing</th>
+                    <td>{r.ads.nothing_recorded}</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">You undid or corrected</th>
+                    <td>{r.ads.corrected}</td>
+                  </tr>
+                  {r.ads.failed > 0 && (
+                    <tr>
+                      <th scope="row">Failed</th>
+                      <td>
+                        {`${r.ads.failed}: ${r.ads.failure_causes.map((c) => `${causeText(c.cause)} (${c.count})`).join(", ")}`}
+                      </td>
+                    </tr>
+                  )}
+                  {r.ads.waiting > 0 && (
+                    <tr>
+                      <th scope="row">Waiting or in progress</th>
+                      <td>{r.ads.waiting}</td>
+                    </tr>
+                  )}
+                  <tr>
+                    <th scope="row">Usually done in</th>
+                    <td>{r.ads.median_seconds === null ? "—" : durationText(r.ads.median_seconds)}</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Tokens used</th>
+                    <td>{(r.ads.prompt_tokens + r.ads.output_tokens).toLocaleString("en-US")}</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Estimated cost</th>
+                    <td>
+                      {r.ads.estimated_cost_usd === null
+                        ? "set the model's prices in Models"
+                        : r.ads.finished > 0
+                          ? `${usdText(r.ads.estimated_cost_usd)} · ${usdText(r.ads.estimated_cost_usd / r.ads.finished)} per ad`
+                          : usdText(r.ads.estimated_cost_usd)}
+                    </td>
+                  </tr>
                 </tbody>
               </table>
             </>

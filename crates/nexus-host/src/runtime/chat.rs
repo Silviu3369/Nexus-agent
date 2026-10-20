@@ -8,7 +8,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use nexus_core::{
-    AgentStepKind, AgentStepStatus, MemoryScope, MemorySource, MessageRole, MessageStatus, RunState,
+    AgentStepKind, AgentStepStatus, MemoryScope, MemorySource, MessageRole, MessageStatus,
+    RunState, TaskOrigin,
 };
 use nexus_protocol::{
     AgentStepDetail, AgentStepId, AgentStepView, BackupModelView, ChatMessageView, ChatRole,
@@ -552,15 +553,19 @@ impl Runtime {
         self: &Arc<Self>,
         request: SendMessageRequest,
     ) -> Result<SendMessageResponse, NexusError> {
-        self.start_message(request, None).await
+        self.start_message(request, None, TaskOrigin::User, None)
+            .await
     }
 
     /// Sends a message as the user would; `title` names a new task (an
-    /// automation's run) instead of its first words.
+    /// automation's run) instead of its first words; `origin` and `pack`
+    /// say what started a new task (ADR-TASK-001).
     pub(crate) async fn start_message(
         self: &Arc<Self>,
         request: SendMessageRequest,
         title: Option<String>,
+        origin: TaskOrigin,
+        pack: Option<String>,
     ) -> Result<SendMessageResponse, NexusError> {
         if self.paused {
             return Err(NexusError::new(
@@ -611,6 +616,8 @@ impl Runtime {
             .store
             .append_exchange(
                 NewExchange {
+                    origin,
+                    pack,
                     conversation_id: request.conversation_id,
                     project_id,
                     idempotency_key: key.to_string(),

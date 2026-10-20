@@ -161,3 +161,38 @@ export function groupText(c: GroupCountView): string {
   const interviews = `${c.interviews} ${c.interviews === 1 ? "interview" : "interviews"}`;
   return `${c.sent} sent · ${interviews}${c.sent > 0 ? ` (${percentText(c.interviews, c.sent)})` : ""}`;
 }
+
+const CAUSE_TEXT: Record<string, string> = {
+  ProviderUnavailable: "the AI provider was unavailable",
+  QuotaExceeded: "the AI provider's quota was used up",
+  BudgetExceeded: "your daily token budget was used up",
+  InvalidModelOutput: "the model's answer was not usable",
+  ValidationRefused: "refused as invalid",
+  VerificationMismatch: "the result did not check out",
+  PermissionDenied: "no access",
+  UserRejected: "you rejected it",
+  Timeout: "it took too long",
+  HostInterrupted: "Nexus.Host stopped meanwhile",
+  OutcomeUnknown: "the outcome is unknown",
+  Internal: "another error",
+  NotStarted: "could not start",
+};
+
+/** A failure cause (ADR-TASK-001) in plain words. */
+export function causeText(cause: string): string {
+  return CAUSE_TEXT[cause] ?? cause;
+}
+
+/** "$0.04"; small amounts keep their first significant digits. */
+export function usdText(amount: number): string {
+  if (amount === 0) return "$0";
+  if (amount < 0.01) return `$${amount.toPrecision(2)}`;
+  return `$${amount.toFixed(2)}`;
+}
+
+/** "34 s", "4 min", "2 h". */
+export function durationText(seconds: number): string {
+  if (seconds < 90) return `${seconds} s`;
+  if (seconds < 90 * 60) return `${Math.round(seconds / 60)} min`;
+  return `${Math.round(seconds / 3600)} h`;
+}

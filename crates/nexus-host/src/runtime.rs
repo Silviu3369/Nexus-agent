@@ -655,6 +655,13 @@ impl Runtime {
                 "idempotency key must be 1..=200 bytes",
             ));
         }
+        // `agent:` names the task of a conversation (ADR-TASK-001).
+        if key.starts_with("agent:") {
+            return Err(NexusError::new(
+                ErrorCode::InvalidRequest,
+                "idempotency keys starting with \"agent:\" are reserved",
+            ));
+        }
         // Validate before persisting: an invalid note never becomes a task.
         NoteContent::new(&request.title, &request.body)
             .map_err(|e| NexusError::new(ErrorCode::InvalidRequest, e.to_string()))?;

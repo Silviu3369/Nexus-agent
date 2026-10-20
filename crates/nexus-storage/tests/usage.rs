@@ -3,6 +3,8 @@
 //! budget and prices are set and cleared, values the schema forbids are
 //! refused, and the migration keeps every message.
 
+mod common;
+
 use std::path::PathBuf;
 
 use nexus_storage::{NewExchange, SUPPORTED_VERSION, Store, UsageRow};
@@ -132,6 +134,8 @@ async fn migrating_to_v9_keeps_every_message() {
         let ex = store
             .append_exchange(
                 NewExchange {
+                    origin: nexus_core::TaskOrigin::User,
+                    pack: None,
                     conversation_id: None,
                     project_id: None,
                     idempotency_key: "m1".into(),
@@ -147,6 +151,7 @@ async fn migrating_to_v9_keeps_every_message() {
             .unwrap();
         store
             .call(|c| {
+                common::undo_v15(c)?;
                 c.execute_batch(
                     "DROP TABLE inbox_files; DROP TABLE register_inboxes; DROP TABLE folders; DROP TABLE record_changes; DROP TABLE records; DROP TABLE registers; DROP TABLE automation_runs; DROP TABLE automations; DROP TABLE model_usage; DROP TABLE model_prices; PRAGMA user_version = 8;",
                 )?;

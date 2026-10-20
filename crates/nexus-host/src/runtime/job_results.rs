@@ -11,10 +11,10 @@ use std::collections::{BTreeMap, HashMap};
 
 use nexus_core::{RecordActor, RecordChangeKind};
 use nexus_protocol::{
-    ErrorCode, GroupCountView, JobResultsView, NexusError, RecordId, RegisterId, ScoreBand,
-    ScoreBandView, SourceCountView, WeekCountView,
+    AdsHandlingView, CauseCountView, ErrorCode, GroupCountView, JobResultsView, NexusError,
+    RecordId, RegisterId, ScoreBand, ScoreBandView, SourceCountView, WeekCountView,
 };
-use nexus_storage::{RecordChangeRow, RecordRow};
+use nexus_storage::{IntakeItemRow, PriceRow, RecordChangeRow, RecordRow};
 
 use super::records::{JOB_APPLICATIONS, today, valid_date};
 use super::{Runtime, to_nexus_error};
@@ -32,6 +32,9 @@ const HIGH_SCORE: i64 = 70;
 /// Sources shown by name; the rest are added up as "Other".
 const MAX_SOURCES: usize = 5;
 const MAX_RECORDS: u32 = 20_000;
+/// How long after the agent's change a correction by the user still counts
+/// against it (ADR-TASK-001).
+const REVIEW_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 
 /// Days since 1970-01-01 of a `YYYY-MM-DD` calendar day.
 fn day_number(date: &str) -> Option<i64> {
@@ -142,6 +145,7 @@ pub(super) fn results(
                 .count(),
         ),
         partial,
+        ads: ads_handling(&[], &[]),
     };
     let mut days_to_answer = Vec::new();
     let mut bands = [
@@ -269,6 +273,85 @@ pub(super) fn results(
     out
 }
 
+/// How the agent handled the inbox's job ads: finished (with an
+/// application kept, or with nothing recorded), failed (by cause), still
+/// waiting; tokens, an estimated cost from the user's prices, and the
+/// median time per ad.
+pub(super) fn ads_handling(items: &[IntakeItemRow], prices: &[PriceRow]) -> AdsHandlingView {
+    let mut out = AdsHandlingView {
+        seen: count(items.len()),
+        finished: 0,
+        recorded: 0,
+        nothing_recorded: 0,
+        failed: 0,
+        waiting: 0,
+        corrected: 0,
+        failure_causes: Vec::new(),
+        prompt_tokens: 0,
+        output_tokens: 0,
+        estimated_cost_usd: Some(0.0),
+        median_seconds: None,
+    };
+    let mut seconds = Vec::new();
+    for item in items {
+        match item.status.as_str() {
+            "Done" => {
+                out.finished += 1;
+                if item.agent_changes > item.undone {
+                    out.recorded += 1;
+                } else {
+                    out.nothing_recorded += 1;
+                }
+                if item.undone > 0 || item.corrections > 0 {
+                    out.corrected += 1;
+                }
+                if let (Some(start), Some(end)) = (item.run_started_ms, item.run_updated_ms) {
+                    seconds.push(u32::try_from((end - start).max(0) / 1000).unwrap_or(u32::MAX));
+                }
+                for (provider, model, free_tier, prompt, output) in &item.usage {
+                    let (prompt, output) = (
+                        u64::try_from(*prompt).unwrap_or(0),
+                        u64::try_from(*output).unwrap_or(0),
+                    );
+                    out.prompt_tokens += prompt;
+                    out.output_tokens += output;
+                    if *free_tier {
+                        continue;
+                    }
+                    let price = prices
+                        .iter()
+                        .find(|p| &p.provider == provider && &p.model == model);
+                    out.estimated_cost_usd = match (out.estimated_cost_usd, price) {
+                        (Some(sum), Some(p)) => Some(
+                            sum + (prompt as f64 * p.input_per_million
+                                + output as f64 * p.output_per_million)
+                                / 1_000_000.0,
+                        ),
+                        _ => None,
+                    };
+                }
+            }
+            "Failed" => {
+                out.failed += 1;
+                let cause = item
+                    .failure_cause
+                    .clone()
+                    .unwrap_or_else(|| "NotStarted".to_string());
+                match out.failure_causes.iter_mut().find(|c| c.cause == cause) {
+                    Some(c) => c.count += 1,
+                    None => out.failure_causes.push(CauseCountView { cause, count: 1 }),
+                }
+            }
+            _ => out.waiting += 1,
+        }
+    }
+    out.failure_causes
+        .sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.cause.cmp(&b.cause)));
+    seconds.sort_unstable();
+    out.median_seconds = seconds.get(seconds.len().saturating_sub(1) / 2).copied();
+    out
+}
+
 impl Runtime {
     pub async fn job_results(&self, register_id: RegisterId) -> Result<JobResultsView, NexusError> {
         let register = self.register_by_id(register_id).await?;
@@ -288,14 +371,17 @@ impl Runtime {
             .inbox_done_count(register_id)
             .await
             .map_err(to_nexus_error)?;
-        Ok(results(
-            &records,
-            &changes,
-            &today(),
-            ads_read,
-            partial,
-            |ms| schedule::local_date(ms, None),
-        ))
+        let items = self
+            .store
+            .intake_handling(register_id, REVIEW_MS)
+            .await
+            .map_err(to_nexus_error)?;
+        let prices = self.store.model_prices().await.map_err(to_nexus_error)?;
+        let mut view = results(&records, &changes, &today(), ads_read, partial, |ms| {
+            schedule::local_date(ms, None)
+        });
+        view.ads = ads_handling(&items, &prices);
+        Ok(view)
     }
 }
 
@@ -491,6 +577,65 @@ mod tests {
         assert_eq!((v.added_by_nexus, v.ads_read), (2, 7));
         assert_eq!((v.nexus_changes, v.undone_changes), (3, 1));
         assert!(!v.partial);
+    }
+
+    fn item(
+        status: &str,
+        run: Option<(&str, Option<&str>)>,
+        changes: (i64, i64, i64),
+    ) -> IntakeItemRow {
+        IntakeItemRow {
+            status: status.into(),
+            reason: None,
+            run_state: run.map(|r| r.0.to_string()),
+            failure_cause: run.and_then(|r| r.1.map(str::to_string)),
+            run_started_ms: run.map(|_| 1_000),
+            run_updated_ms: run.map(|_| 31_000),
+            usage: vec![("Gemini".into(), "flash".into(), false, 1_000_000, 100_000)],
+            agent_changes: changes.0,
+            undone: changes.1,
+            corrections: changes.2,
+        }
+    }
+
+    #[test]
+    fn ads_are_counted_by_how_their_task_ended_with_tokens_cost_and_time() {
+        let items = [
+            item("Done", Some(("Succeeded", None)), (2, 0, 0)),
+            item("Done", Some(("Succeeded", None)), (1, 0, 1)),
+            item("Done", Some(("Succeeded", None)), (0, 0, 0)),
+            item("Done", Some(("Succeeded", None)), (1, 1, 0)),
+            item("Failed", Some(("Failed", Some("QuotaExceeded"))), (0, 0, 0)),
+            item("Failed", None, (0, 0, 0)),
+            item("Waiting", None, (0, 0, 0)),
+            item("Started", Some(("Running", None)), (0, 0, 0)),
+        ];
+        let price = PriceRow {
+            provider: "Gemini".into(),
+            model: "flash".into(),
+            input_per_million: 0.5,
+            output_per_million: 2.0,
+        };
+        let v = ads_handling(&items, &[price]);
+        assert_eq!((v.seen, v.finished, v.failed, v.waiting), (8, 4, 2, 2));
+        // The fourth: its only change was undone, so nothing was kept.
+        assert_eq!((v.recorded, v.nothing_recorded, v.corrected), (2, 2, 2));
+        let causes: Vec<(&str, u32)> = v
+            .failure_causes
+            .iter()
+            .map(|c| (c.cause.as_str(), c.count))
+            .collect();
+        assert_eq!(causes, [("NotStarted", 1), ("QuotaExceeded", 1)]);
+        assert_eq!((v.prompt_tokens, v.output_tokens), (4_000_000, 400_000));
+        // 4 × (1M × 0.5 + 0.1M × 2.0) / 1M = 4 × 0.7.
+        assert!((v.estimated_cost_usd.unwrap() - 2.8).abs() < 1e-9);
+        assert_eq!(v.median_seconds, Some(30));
+
+        let unpriced = ads_handling(&items, &[]);
+        assert_eq!(unpriced.estimated_cost_usd, None, "no price, no estimate");
+        let mut free = items[0].clone();
+        free.usage[0].2 = true;
+        assert_eq!(ads_handling(&[free], &[]).estimated_cost_usd, Some(0.0));
     }
 
     #[test]

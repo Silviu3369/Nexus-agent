@@ -1,6 +1,8 @@
 //! M2 persistence on a real SQLite file: schema migration, connections
 //! without secrets, versioned persona and conversations.
 
+mod common;
+
 use std::path::PathBuf;
 
 use nexus_core::{AgentStepKind, AgentStepStatus, MessageRole, MessageStatus, ThinkingLevel};
@@ -70,6 +72,8 @@ fn exchange(
     connection: ConnectionId,
 ) -> NewExchange {
     NewExchange {
+        origin: nexus_core::TaskOrigin::User,
+        pack: None,
         conversation_id: conversation,
         project_id: None,
         idempotency_key: key.to_string(),
@@ -95,6 +99,7 @@ async fn an_existing_database_is_migrated_forward_keeping_its_data() {
         // Roll the file back to version 1 as an M1 host would have left it.
         store
             .call(|c| {
+                common::undo_v15(c)?;
                 c.execute_batch(UNDO_V6)?;
                 c.execute_batch(
                     "DROP TABLE agent_steps; DROP TABLE messages; DROP TABLE conversations;
@@ -142,6 +147,7 @@ async fn an_existing_connection_defaults_to_low_thinking_after_migrating_to_v3()
         // Roll back to v2, as an M2 host before this change would have left it.
         store
             .call(|c| {
+                common::undo_v15(c)?;
                 c.execute_batch(UNDO_V6)?;
                 c.execute_batch(
                     "DROP TABLE agent_steps; ALTER TABLE provider_connections DROP COLUMN thinking_level;
@@ -211,6 +217,7 @@ async fn migrating_to_v5_keeps_every_connection_and_the_messages_linked_to_it() 
         // Put back the v4 table (Gemini only), as a host before this change left it.
         store
             .call(|c| {
+                common::undo_v15(c)?;
                 c.execute_batch(UNDO_V6)?;
                 c.execute_batch(
                     "PRAGMA foreign_keys = OFF;
@@ -330,6 +337,7 @@ async fn migrating_to_v6_puts_every_conversation_in_the_default_project_and_keep
             .unwrap();
         env_store
             .call(|c| {
+                common::undo_v15(c)?;
                 c.execute_batch(UNDO_V6)?;
                 c.execute_batch("PRAGMA user_version = 5;")?;
                 Ok(())

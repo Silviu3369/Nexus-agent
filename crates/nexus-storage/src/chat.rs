@@ -2,8 +2,8 @@
 //! persona and conversations. One transaction per operation, with events,
 //! like the M1 repository.
 
-use nexus_core::{MessageRole, MessageStatus, RunState, ThinkingLevel};
-use nexus_protocol::{ConnectionId, ConversationId, MessageId, ProjectId, RunId};
+use nexus_core::{FailureCause, MessageRole, MessageStatus, RunState, TaskOrigin, ThinkingLevel};
+use nexus_protocol::{ConnectionId, ConversationId, MessageId, ProjectId, RunId, TaskId};
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::json;
 
@@ -59,6 +59,8 @@ pub struct MessageRow {
     pub prompt_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
     pub proposed_run_id: Option<RunId>,
+    /// The agent's run (turn) this message belongs to (ADR-TASK-001).
+    pub run_id: Option<RunId>,
     pub created_at_ms: i64,
 }
 
@@ -86,6 +88,10 @@ pub struct NewExchange {
     pub persona_version: i64,
     /// The title of a new conversation (`None`: from the text).
     pub title: Option<String>,
+    /// What started a new conversation's task; ignored for a follow-up.
+    pub origin: TaskOrigin,
+    /// The pack or flow it belongs to (an intake's register), if any.
+    pub pack: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -502,7 +508,15 @@ impl Store {
                     found.ok_or(StorageError::NotFound("conversation"))?;
                     tx.execute("UPDATE conversations SET updated_at_ms = ?1 WHERE id = ?2", params![now, id.to_string()])?;
                     // The user moved on: a reply still waiting on a decision
-                    // in this task no longer continues after it.
+                    // in this task no longer continues after it, and its
+                    // turn ends there.
+                    tx.execute(
+                        "UPDATE runs SET state = 'Cancelled', revision = revision + 1, updated_at_ms = ?1
+                         WHERE kind = 'Agent' AND state = 'AwaitingApproval' AND id IN (
+                             SELECT m.run_id FROM paused_turns p JOIN messages m ON m.id = p.message_id
+                             WHERE p.conversation_id = ?2)",
+                        params![now, id.to_string()],
+                    )?;
                     tx.execute("DELETE FROM paused_turns WHERE conversation_id = ?1", [id.to_string()])?;
                     id
                 }
@@ -528,15 +542,31 @@ impl Store {
                 [conversation_id.to_string()],
                 |r| r.get(0),
             )?;
+            let task = agent_task(&tx, conversation_id, new.origin, new.pack.as_deref(), now)?;
+            let run = RunId::new();
+            tx.execute(
+                "INSERT INTO runs (id, task_id, state, revision, created_at_ms, updated_at_ms, kind)
+                 VALUES (?1, ?2, 'Running', 1, ?3, ?3, 'Agent')",
+                params![run.to_string(), task.to_string(), now],
+            )?;
             let (user_id, model_id) = (MessageId::new(), MessageId::new());
             tx.execute(
                 "INSERT INTO messages (id, conversation_id, seq, role, text, status, idempotency_key, persona_version,
-                 created_at_ms, updated_at_ms) VALUES (?1, ?2, ?3, 'User', ?4, 'Complete', ?5, ?6, ?7, ?7)",
-                params![user_id.to_string(), conversation_id.to_string(), seq, new.text, new.idempotency_key, new.persona_version, now],
+                 run_id, created_at_ms, updated_at_ms) VALUES (?1, ?2, ?3, 'User', ?4, 'Complete', ?5, ?6, ?7, ?8, ?8)",
+                params![
+                    user_id.to_string(),
+                    conversation_id.to_string(),
+                    seq,
+                    new.text,
+                    new.idempotency_key,
+                    new.persona_version,
+                    run.to_string(),
+                    now
+                ],
             )?;
             tx.execute(
                 "INSERT INTO messages (id, conversation_id, seq, role, text, status, connection_id, model, persona_version,
-                 created_at_ms, updated_at_ms) VALUES (?1, ?2, ?3, 'Model', '', 'Streaming', ?4, ?5, ?6, ?7, ?7)",
+                 run_id, created_at_ms, updated_at_ms) VALUES (?1, ?2, ?3, 'Model', '', 'Streaming', ?4, ?5, ?6, ?7, ?8, ?8)",
                 params![
                     model_id.to_string(),
                     conversation_id.to_string(),
@@ -544,6 +574,7 @@ impl Store {
                     new.connection_id.to_string(),
                     new.model,
                     new.persona_version,
+                    run.to_string(),
                     now
                 ],
             )?;
@@ -600,6 +631,11 @@ impl Store {
                     id.to_string()
                 ],
             )?;
+            if settled == 1
+                && let Some(run) = current.run_id
+            {
+                settle_turn(&tx, run, status, &settlement, now)?;
+            }
             if settled == 1
                 && status == MessageStatus::Complete
                 && let Some(pause) = &settlement.pause
@@ -694,6 +730,13 @@ impl Store {
                 )
                 .optional()?;
             let Some(request_id) = request_id.filter(|_| later_request == 0) else {
+                if let Some(turn) = paused_reply.run_id {
+                    tx.execute(
+                        "UPDATE runs SET state = 'Cancelled', revision = revision + 1, updated_at_ms = ?1
+                         WHERE id = ?2 AND kind = 'Agent' AND state = 'AwaitingApproval'",
+                        params![now, turn.to_string()],
+                    )?;
+                }
                 tx.execute("DELETE FROM paused_turns WHERE message_id = ?1", [reply.to_string()])?;
                 tx.commit()?;
                 return Ok(None);
@@ -714,8 +757,8 @@ impl Store {
             let id = MessageId::new();
             tx.execute(
                 "INSERT INTO messages (id, conversation_id, seq, role, text, status, idempotency_key, connection_id, model,
-                 persona_version, created_at_ms, updated_at_ms)
-                 VALUES (?1, ?2, ?3, 'Model', '', 'Streaming', ?4, ?5, ?6, ?7, ?8, ?8)",
+                 persona_version, run_id, created_at_ms, updated_at_ms)
+                 VALUES (?1, ?2, ?3, 'Model', '', 'Streaming', ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
                 params![
                     id.to_string(),
                     conversation.to_string(),
@@ -724,9 +767,17 @@ impl Store {
                     paused_reply.connection_id.map(|c| c.to_string()),
                     paused_reply.model,
                     paused_reply.persona_version,
+                    paused_reply.run_id.map(|r| r.to_string()),
                     now
                 ],
             )?;
+            if let Some(turn) = paused_reply.run_id {
+                tx.execute(
+                    "UPDATE runs SET state = 'Running', revision = revision + 1, updated_at_ms = ?1
+                     WHERE id = ?2 AND kind = 'Agent' AND state = 'AwaitingApproval'",
+                    params![now, turn.to_string()],
+                )?;
+            }
             tx.execute("DELETE FROM paused_turns WHERE message_id = ?1", [reply.to_string()])?;
             tx.execute(
                 "UPDATE conversations SET updated_at_ms = ?1 WHERE id = ?2",
@@ -767,6 +818,12 @@ impl Store {
             if n > 0 {
                 insert_event(&tx, "MessagesInterrupted", "messages", 0, json!({"count": n}), now)?;
             }
+            tx.execute(
+                "UPDATE runs SET state = 'Failed', error_code = 'Interrupted',
+                 error_message = 'the host stopped during the reply', failure_cause = 'HostInterrupted',
+                 revision = revision + 1, updated_at_ms = ?1 WHERE kind = 'Agent' AND state = 'Running'",
+                [now],
+            )?;
             tx.commit()?;
             Ok(n)
         })
@@ -994,6 +1051,20 @@ fn title_from(text: &str) -> String {
 /// Removes messages with their steps; facts proposed in them keep their
 /// task but lose the message.
 fn remove_messages(tx: &Transaction, ids: &[String]) -> Result<usize, StorageError> {
+    let mut turns: Vec<String> = Vec::new();
+    for id in ids {
+        let turn: Option<String> = tx
+            .query_row("SELECT run_id FROM messages WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .optional()?
+            .flatten();
+        if let Some(turn) = turn
+            && !turns.contains(&turn)
+        {
+            turns.push(turn);
+        }
+    }
     for id in ids {
         tx.execute(
             "UPDATE memory_items SET message_id = NULL WHERE message_id = ?1",
@@ -1001,6 +1072,13 @@ fn remove_messages(tx: &Transaction, ids: &[String]) -> Result<usize, StorageErr
         )?;
         tx.execute("DELETE FROM agent_steps WHERE message_id = ?1", [id])?;
         tx.execute("DELETE FROM messages WHERE id = ?1", [id])?;
+    }
+    for turn in turns {
+        tx.execute(
+            "DELETE FROM runs WHERE id = ?1 AND kind = 'Agent'
+             AND NOT EXISTS (SELECT 1 FROM messages WHERE run_id = ?1)",
+            [&turn],
+        )?;
     }
     Ok(ids.len())
 }
@@ -1013,6 +1091,11 @@ fn remove_conversation(
 ) -> Result<(), StorageError> {
     tx.execute(
         "UPDATE memory_items SET conversation_id = NULL, message_id = NULL WHERE conversation_id = ?1",
+        [id.to_string()],
+    )?;
+    tx.execute(
+        "DELETE FROM tasks WHERE conversation_id = ?1
+         AND NOT EXISTS (SELECT 1 FROM runs WHERE runs.task_id = tasks.id)",
         [id.to_string()],
     )?;
     tx.execute("DELETE FROM conversations WHERE id = ?1", [id.to_string()])?;
@@ -1092,7 +1175,7 @@ fn current_persona(tx: &Transaction) -> Result<Option<PersonaRow>, StorageError>
 
 const MESSAGE_COLUMNS: &str =
     "id, conversation_id, seq, role, text, status, connection_id, model, persona_version,
-    error_code, error_message, prompt_tokens, output_tokens, proposed_run_id, created_at_ms";
+    error_code, error_message, prompt_tokens, output_tokens, proposed_run_id, created_at_ms, run_id";
 
 type RawMessage = (
     String,
@@ -1110,6 +1193,7 @@ type RawMessage = (
     Option<i64>,
     Option<String>,
     i64,
+    Option<String>,
 );
 
 fn raw_message(r: &rusqlite::Row) -> rusqlite::Result<RawMessage> {
@@ -1129,6 +1213,7 @@ fn raw_message(r: &rusqlite::Row) -> rusqlite::Result<RawMessage> {
         r.get(12)?,
         r.get(13)?,
         r.get(14)?,
+        r.get(15)?,
     ))
 }
 
@@ -1153,6 +1238,7 @@ fn into_message(raw: RawMessage) -> Result<MessageRow, StorageError> {
         prompt_tokens: raw.11,
         output_tokens: raw.12,
         proposed_run_id: raw.13.as_deref().map(parse_uuid).transpose()?.map(RunId),
+        run_id: raw.15.as_deref().map(parse_uuid).transpose()?.map(RunId),
         created_at_ms: raw.14,
     })
 }
@@ -1203,4 +1289,99 @@ fn conversation_from_raw(raw: RawConversation) -> Result<ConversationRow, Storag
             .transpose()?
             .map(ProjectId),
     })
+}
+
+/// The task of a conversation (ADR-TASK-001), created with its first
+/// request. A conversation from before version 15 already has one.
+fn agent_task(
+    tx: &Transaction,
+    conversation: ConversationId,
+    origin: TaskOrigin,
+    pack: Option<&str>,
+    now: i64,
+) -> Result<TaskId, StorageError> {
+    let found: Option<String> = tx
+        .query_row(
+            "SELECT id FROM tasks WHERE conversation_id = ?1",
+            [conversation.to_string()],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(id) = found {
+        return Ok(TaskId(parse_uuid(&id)?));
+    }
+    let project: String = tx.query_row(
+        "SELECT coalesce(c.project_id, (SELECT id FROM projects ORDER BY created_at_ms, id LIMIT 1))
+         FROM conversations c WHERE c.id = ?1",
+        [conversation.to_string()],
+        |r| r.get(0),
+    )?;
+    let id = TaskId::new();
+    tx.execute(
+        "INSERT INTO tasks (id, project_id, idempotency_key, request_json, request_sha256, created_at_ms,
+                            origin, conversation_id, pack)
+         VALUES (?1, ?2, ?3, ?4, '', ?5, ?6, ?7, ?8)",
+        params![
+            id.to_string(),
+            project,
+            format!("agent:{conversation}"),
+            json!({"conversation_id": conversation.to_string()}).to_string(),
+            now,
+            origin.as_str(),
+            conversation.to_string(),
+            pack
+        ],
+    )?;
+    Ok(id)
+}
+
+/// A reply settled: its turn waits on the user (a proposal), succeeded,
+/// failed with a cause, or was stopped; an effect the reply proposed
+/// becomes a child run of the turn.
+fn settle_turn(
+    tx: &Transaction,
+    run: RunId,
+    status: MessageStatus,
+    settlement: &Settlement,
+    now: i64,
+) -> Result<(), StorageError> {
+    let (state, cause) = match status {
+        MessageStatus::Complete if settlement.pause.is_some() => (RunState::AwaitingApproval, None),
+        MessageStatus::Complete => (RunState::Succeeded, None),
+        MessageStatus::Cancelled => (RunState::Cancelled, None),
+        MessageStatus::Failed | MessageStatus::Streaming => (
+            RunState::Failed,
+            Some(FailureCause::from_error_code(
+                settlement.error_code.as_deref().unwrap_or(""),
+            )),
+        ),
+    };
+    tx.execute(
+        "UPDATE runs SET state = ?1, error_code = ?2, error_message = ?3, failure_cause = ?4,
+         revision = revision + 1, updated_at_ms = ?5 WHERE id = ?6 AND kind = 'Agent' AND state = 'Running'",
+        params![
+            state.as_str(),
+            settlement.error_code,
+            settlement.error_message,
+            cause.map(FailureCause::as_str),
+            now,
+            run.to_string()
+        ],
+    )?;
+    let proposed = settlement
+        .proposed_run_id
+        .into_iter()
+        .chain(settlement.pause.as_ref().map(|p| p.run_id));
+    for effect in proposed {
+        tx.execute(
+            "UPDATE runs SET parent_run_id = ?1 WHERE id = ?2 AND kind = 'Effect' AND parent_run_id IS NULL",
+            params![run.to_string(), effect.to_string()],
+        )?;
+        tx.execute(
+            "UPDATE tasks SET origin = 'Agent'
+             WHERE origin = 'Direct' AND id = (SELECT task_id FROM runs WHERE id = ?1)",
+            [effect.to_string()],
+        )?;
+    }
+    Ok(())
 }

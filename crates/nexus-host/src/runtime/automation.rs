@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 
+use nexus_core::TaskOrigin;
 use nexus_protocol::{
     AutomationId, AutomationRunStatus, AutomationRunView, AutomationView, ConversationId,
     ErrorCode, NexusError, SaveAutomationRequest, Schedule, SendMessageRequest,
@@ -398,6 +399,8 @@ impl Runtime {
                     text: row.prompt.clone(),
                 },
                 Some(title),
+                TaskOrigin::Automation,
+                None,
             )
             .await;
         Ok(match sent {

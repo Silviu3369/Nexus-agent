@@ -4,6 +4,8 @@
 //! a retry waits for its time, unsharing the folder removes the inbox, and
 //! the migrations add the tables and keep every existing row.
 
+mod common;
+
 use std::path::PathBuf;
 
 use nexus_storage::{InboxSettle, SUPPORTED_VERSION, StorageError, Store};
@@ -150,6 +152,7 @@ async fn migrating_to_v13_adds_the_inbox_and_keeps_the_rest() {
         .await
         .unwrap();
     s.call(|c| {
+        common::undo_v15(c)?;
         c.execute_batch(
             "DROP TABLE inbox_files; DROP TABLE register_inboxes; PRAGMA user_version = 12;",
         )?;
@@ -275,6 +278,7 @@ async fn migrating_to_v14_keeps_every_inbox_file_and_counts_the_started_ones() {
     // The tables as version 13 had them, with the rows a v13 inbox leaves.
     let (reg, folder) = (register.to_string(), ads.id.to_string());
     s.call(move |c| {
+        common::undo_v15(c)?;
         c.execute_batch(
             "DROP TABLE inbox_files; DROP TABLE register_inboxes;
              CREATE TABLE register_inboxes (

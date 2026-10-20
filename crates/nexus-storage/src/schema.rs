@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::StorageError;
 
-pub const SUPPORTED_VERSION: i64 = 14;
+pub const SUPPORTED_VERSION: i64 = 15;
 
 /// Version 1: everything M1 persists. State columns are closed lists that a
 /// test keeps identical to the `nexus-core` enums. Times are UTC unix ms.
@@ -647,6 +647,116 @@ CREATE INDEX inbox_files_waiting ON inbox_files (register_id, status, id);
 CREATE INDEX inbox_files_by_conversation ON inbox_files (conversation_id);
 "#;
 
+/// Version 15 (ADR-TASK-001): one model of the agent's work. A task is a
+/// conversation (or a note sent directly, M1, or an effect the agent
+/// proposed), with its origin; each request and every reply to it is a run
+/// of type Agent, whose state follows its messages; an effect the agent
+/// proposed is a child run of that turn. Existing conversations become
+/// tasks and their turns become runs, with the state and cause their last
+/// reply had; nothing is deleted. Columns are only added (no rebuild).
+const V15: &str = r#"
+ALTER TABLE tasks ADD COLUMN origin TEXT NOT NULL DEFAULT 'Direct'
+    CHECK (origin IN ('Direct', 'User', 'Automation', 'Intake', 'Agent'));
+ALTER TABLE tasks ADD COLUMN conversation_id TEXT REFERENCES conversations (id) ON DELETE SET NULL;
+ALTER TABLE tasks ADD COLUMN pack TEXT CHECK (pack IS NULL OR length(pack) BETWEEN 1 AND 64);
+CREATE UNIQUE INDEX tasks_by_conversation ON tasks (conversation_id) WHERE conversation_id IS NOT NULL;
+
+ALTER TABLE runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'Effect' CHECK (kind IN ('Effect', 'Agent'));
+ALTER TABLE runs ADD COLUMN parent_run_id TEXT REFERENCES runs (id) ON DELETE SET NULL;
+ALTER TABLE runs ADD COLUMN failure_cause TEXT CHECK (failure_cause IS NULL OR failure_cause IN (
+    'ProviderUnavailable', 'QuotaExceeded', 'BudgetExceeded', 'InvalidModelOutput', 'ValidationRefused', 'VerificationMismatch', 'PermissionDenied', 'UserRejected', 'Timeout', 'HostInterrupted', 'OutcomeUnknown', 'Internal'));
+CREATE INDEX runs_by_task ON runs (task_id);
+CREATE INDEX runs_by_parent ON runs (parent_run_id);
+
+ALTER TABLE messages ADD COLUMN run_id TEXT REFERENCES runs (id);
+CREATE INDEX messages_by_run ON messages (run_id);
+
+-- A task for every conversation. Random ids are drawn once per row into a
+-- table first, then formatted as UUIDs.
+CREATE TEMP TABLE v15_tasks AS
+SELECT c.id AS conversation_id,
+       lower(hex(randomblob(16))) AS h,
+       coalesce(c.project_id, (SELECT id FROM projects ORDER BY created_at_ms, id LIMIT 1)) AS project_id,
+       c.created_at_ms AS created_at_ms,
+       CASE WHEN EXISTS (SELECT 1 FROM automation_runs a WHERE a.conversation_id = c.id) THEN 'Automation'
+            WHEN EXISTS (SELECT 1 FROM inbox_files f WHERE f.conversation_id = c.id) THEN 'Intake'
+            ELSE 'User' END AS origin,
+       (SELECT r.key FROM inbox_files f JOIN registers r ON r.id = f.register_id
+         WHERE f.conversation_id = c.id LIMIT 1) AS pack
+FROM conversations c;
+INSERT INTO tasks (id, project_id, idempotency_key, request_json, request_sha256, created_at_ms, origin,
+                   conversation_id, pack)
+SELECT substr(h, 1, 8) || '-' || substr(h, 9, 4) || '-4' || substr(h, 14, 3) || '-a' || substr(h, 18, 3) || '-' || substr(h, 21, 12), project_id, 'agent:' || conversation_id,
+       json_object('conversation_id', conversation_id), '', created_at_ms, origin, conversation_id, pack
+FROM v15_tasks;
+DROP TABLE v15_tasks;
+
+-- A run for every request: its state is the one its last reply had.
+CREATE TEMP TABLE v15_turns AS
+SELECT u.id AS request_id,
+       u.conversation_id AS conversation_id,
+       u.created_at_ms AS created_at_ms,
+       lower(hex(randomblob(16))) AS h,
+       (SELECT m.id FROM messages m
+         WHERE m.conversation_id = u.conversation_id AND m.role = 'Model' AND m.seq > u.seq
+           AND NOT EXISTS (SELECT 1 FROM messages n WHERE n.conversation_id = u.conversation_id
+                             AND n.role = 'User' AND n.seq > u.seq AND n.seq < m.seq)
+         ORDER BY m.seq DESC LIMIT 1) AS last_reply
+FROM messages u WHERE u.role = 'User';
+ALTER TABLE v15_turns ADD COLUMN run_id TEXT;
+UPDATE v15_turns SET run_id = substr(h, 1, 8) || '-' || substr(h, 9, 4) || '-4' || substr(h, 14, 3) || '-a' || substr(h, 18, 3) || '-' || substr(h, 21, 12);
+INSERT INTO runs (id, task_id, state, revision, error_code, error_message, created_at_ms, updated_at_ms, kind,
+                  failure_cause)
+SELECT t.run_id, k.id,
+       CASE WHEN m.id IS NULL THEN 'Failed'
+            WHEN m.status = 'Streaming' THEN 'Running'
+            WHEN m.status = 'Complete'
+                 AND EXISTS (SELECT 1 FROM paused_turns p WHERE p.message_id = m.id) THEN 'AwaitingApproval'
+            WHEN m.status = 'Complete' THEN 'Succeeded'
+            WHEN m.status = 'Cancelled' THEN 'Cancelled'
+            ELSE 'Failed' END,
+       1, m.error_code, m.error_message, t.created_at_ms, coalesce(m.updated_at_ms, t.created_at_ms), 'Agent',
+       CASE WHEN m.id IS NULL THEN 'Internal'
+            WHEN m.status = 'Failed' THEN CASE m.error_code
+             WHEN 'QuotaExceeded' THEN 'QuotaExceeded'
+             WHEN 'ProviderUnavailable' THEN 'ProviderUnavailable'
+             WHEN 'Busy' THEN 'ProviderUnavailable'
+             WHEN 'DeadlineExceeded' THEN 'Timeout'
+             WHEN 'BudgetExceeded' THEN 'BudgetExceeded'
+             WHEN 'Unauthenticated' THEN 'PermissionDenied'
+             WHEN 'Forbidden' THEN 'PermissionDenied'
+             WHEN 'InvalidRequest' THEN 'ValidationRefused'
+             WHEN 'Interrupted' THEN 'HostInterrupted'
+             WHEN 'OutcomeUnknown' THEN 'OutcomeUnknown'
+             ELSE 'Internal' END
+            ELSE NULL END
+FROM v15_turns t
+JOIN tasks k ON k.conversation_id = t.conversation_id
+LEFT JOIN messages m ON m.id = t.last_reply;
+UPDATE messages SET run_id = (SELECT t.run_id FROM v15_turns t WHERE t.request_id = messages.id)
+WHERE role = 'User';
+UPDATE messages SET run_id = (
+    SELECT u.run_id FROM messages u
+    WHERE u.conversation_id = messages.conversation_id AND u.role = 'User' AND u.seq < messages.seq
+    ORDER BY u.seq DESC LIMIT 1)
+WHERE role = 'Model';
+DROP TABLE v15_turns;
+
+-- Effects the agent proposed become child runs of their turn.
+UPDATE runs SET parent_run_id = (
+    SELECT m.run_id FROM messages m WHERE m.proposed_run_id = runs.id AND m.run_id IS NOT NULL LIMIT 1)
+WHERE kind = 'Effect'
+  AND EXISTS (SELECT 1 FROM messages m WHERE m.proposed_run_id = runs.id AND m.run_id IS NOT NULL);
+UPDATE runs SET parent_run_id = (
+    SELECT m.run_id FROM paused_turns p JOIN messages m ON m.id = p.message_id
+    WHERE p.run_id = runs.id AND m.run_id IS NOT NULL LIMIT 1)
+WHERE kind = 'Effect' AND parent_run_id IS NULL
+  AND EXISTS (SELECT 1 FROM paused_turns p JOIN messages m ON m.id = p.message_id
+              WHERE p.run_id = runs.id AND m.run_id IS NOT NULL);
+UPDATE tasks SET origin = 'Agent'
+WHERE id IN (SELECT task_id FROM runs WHERE kind = 'Effect' AND parent_run_id IS NOT NULL);
+"#;
+
 struct Migration {
     sql: &'static str,
     /// Rebuilds a table other tables refer to (see [`V5`]).
@@ -710,9 +820,19 @@ const MIGRATIONS: &[Migration] = &[
         sql: V14,
         rebuilds_parent_table: false,
     },
+    Migration {
+        sql: V15,
+        rebuilds_parent_table: false,
+    },
 ];
 
 pub fn migrate(conn: &mut Connection) -> Result<(), StorageError> {
+    migrate_until(conn, SUPPORTED_VERSION)
+}
+
+/// Applies the migrations up to `target` (tests build an older schema with
+/// it, to prove a migration on the shape it really starts from).
+pub(crate) fn migrate_until(conn: &mut Connection, target: i64) -> Result<(), StorageError> {
     let current: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if current > SUPPORTED_VERSION {
         return Err(StorageError::SchemaTooNew {
@@ -720,7 +840,12 @@ pub fn migrate(conn: &mut Connection) -> Result<(), StorageError> {
             supported: SUPPORTED_VERSION,
         });
     }
-    for (index, migration) in MIGRATIONS.iter().enumerate().skip(current as usize) {
+    for (index, migration) in MIGRATIONS
+        .iter()
+        .enumerate()
+        .skip(current as usize)
+        .take(target.saturating_sub(current).max(0) as usize)
+    {
         let version = index as i64 + 1;
         // Foreign-key enforcement can only be switched outside a transaction.
         if migration.rebuilds_parent_table {

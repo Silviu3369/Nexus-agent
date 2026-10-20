@@ -30,7 +30,8 @@ async fn seed_task(store: &Store) {
         .call(|conn| {
             conn.execute_batch(
                 "INSERT INTO projects (id, name, revision, created_at_ms) VALUES ('p1', 'Nexus', 1, 0);
-                 INSERT INTO tasks VALUES ('t1', 'p1', 'key-1', '{}', 'h', 0);",
+                 INSERT INTO tasks (id, project_id, idempotency_key, request_json, request_sha256, created_at_ms)
+                 VALUES ('t1', 'p1', 'key-1', '{}', 'h', 0);",
             )?;
             Ok(())
         })
@@ -117,15 +118,17 @@ async fn foreign_keys_are_enforced() {
     let result = store
         .call(|conn| {
             conn.execute(
-                "INSERT INTO tasks VALUES ('t1', 'no-such-project', 'k', '{}', 'h', 0)",
+                "INSERT INTO tasks (id, project_id, idempotency_key, request_json, request_sha256, created_at_ms)
+                 VALUES ('t1', 'no-such-project', 'k', '{}', 'h', 0)",
                 [],
             )?;
             Ok(())
         })
         .await;
+    let err = result.unwrap_err().to_string();
     assert!(
-        result.is_err(),
-        "a task must not reference a missing project"
+        err.contains("FOREIGN KEY"),
+        "a task must not reference a missing project: {err}"
     );
 }
 

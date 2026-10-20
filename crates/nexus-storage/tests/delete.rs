@@ -57,6 +57,8 @@ async fn turn(
         .store
         .append_exchange(
             NewExchange {
+                origin: nexus_core::TaskOrigin::User,
+                pack: None,
                 conversation_id: conversation,
                 project_id: None,
                 idempotency_key: uuid::Uuid::new_v4().to_string(),
@@ -191,6 +193,8 @@ async fn a_reply_still_being_written_blocks_the_deletion() {
         .store
         .append_exchange(
             NewExchange {
+                origin: nexus_core::TaskOrigin::User,
+                pack: None,
                 conversation_id: None,
                 project_id: None,
                 idempotency_key: "w1".into(),

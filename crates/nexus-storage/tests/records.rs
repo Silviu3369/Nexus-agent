@@ -6,6 +6,8 @@
 //! record removes its history, events never carry values, and the
 //! migration keeps every message and step.
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -76,6 +78,8 @@ async fn task(store: &Store) -> (ConversationId, MessageId) {
     let ex = store
         .append_exchange(
             NewExchange {
+                origin: nexus_core::TaskOrigin::User,
+                pack: None,
                 conversation_id: None,
                 project_id: None,
                 idempotency_key: uuid::Uuid::new_v4().to_string(),
@@ -490,6 +494,7 @@ async fn migrating_to_v11_keeps_every_message_and_step() {
             .unwrap();
         store
             .call(|c| {
+                common::undo_v15(c)?;
                 c.execute_batch(
                     "PRAGMA foreign_keys = OFF;
                      DROP TABLE inbox_files; DROP TABLE register_inboxes; DROP TABLE folders; DROP TABLE record_changes; DROP TABLE records; DROP TABLE registers;

@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import type { FieldDef, RecordChangeView, RecordView, RegisterView } from "@nexus/contracts";
 import {
   bandText,
+  causeText,
   changeLines,
   changeText,
   dateText,
+  durationText,
   filterRecords,
   formValues,
   groupText,
@@ -16,6 +18,7 @@ import {
   sortRecords,
   statusCounts,
   statusTone,
+  usdText,
   weekText,
 } from "../src/model/records.ts";
 
@@ -144,4 +147,16 @@ test("results read as plain numbers, with no percentage of nothing", () => {
   assert.equal(groupText({ sent: 3, interviews: 1 }), "3 sent · 1 interview (33%)");
   assert.equal(groupText({ sent: 2, interviews: 0 }), "2 sent · 0 interviews (0%)");
   assert.equal(groupText({ sent: 0, interviews: 0 }), "0 sent · 0 interviews");
+});
+
+test("how the ads were handled reads in plain words", () => {
+  assert.equal(causeText("QuotaExceeded"), "the AI provider's quota was used up");
+  assert.equal(causeText("NotStarted"), "could not start");
+  assert.equal(causeText("Something new"), "Something new");
+  assert.equal(usdText(0), "$0");
+  assert.equal(usdText(0.0042), "$0.0042");
+  assert.equal(usdText(2.8), "$2.80");
+  assert.equal(durationText(34), "34 s");
+  assert.equal(durationText(240), "4 min");
+  assert.equal(durationText(7200), "2 h");
 });

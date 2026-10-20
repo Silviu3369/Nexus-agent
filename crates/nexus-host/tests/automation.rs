@@ -476,6 +476,8 @@ async fn a_run_sent_just_before_a_stop_is_recorded_not_sent_again() {
         let exchange = store
             .append_exchange(
                 NewExchange {
+                    origin: nexus_core::TaskOrigin::User,
+                    pack: None,
                     conversation_id: None,
                     project_id: None,
                     idempotency_key: format!("auto:{id}:{due}"),

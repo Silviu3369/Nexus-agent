@@ -20,7 +20,7 @@ pub use chat::{
     MessageRow, NewExchange, Pause, PersonaRow, Settlement,
 };
 pub use folders::FolderRow;
-pub use inbox::{InboxFileRow, InboxRow, InboxSettle};
+pub use inbox::{InboxFileRow, InboxRow, InboxSettle, IntakeItemRow};
 pub use mcp::{McpServerRow, McpToolRow, NewMcpTool};
 pub use memory::{MemoryFilter, MemoryRow, NewMemory, ProjectRow};
 pub use records::{
@@ -174,6 +174,17 @@ fn open_connection(path: &Path) -> Result<Connection, StorageError> {
     conn.pragma_update(None, "secure_delete", true)?;
     schema::migrate(&mut conn)?;
     Ok(conn)
+}
+
+/// Tests only: creates a database at schema `version` (an older one), as a
+/// Nexus of that version would have left it, so a migration can be proven
+/// on the shape it really starts from. Not for production use.
+#[doc(hidden)]
+pub fn create_at_version(path: &Path, version: i64) -> Result<(), StorageError> {
+    let mut conn = Connection::open(path)?;
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.pragma_update(None, "foreign_keys", true)?;
+    schema::migrate_until(&mut conn, version)
 }
 
 pub fn now_ms() -> i64 {

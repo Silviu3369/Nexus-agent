@@ -3,6 +3,8 @@
 //! continues once (a second caller gets nothing), a new request or a
 //! deletion drops it, and the migration keeps every message.
 
+mod common;
+
 use std::path::PathBuf;
 
 use nexus_core::MessageStatus;
@@ -53,6 +55,8 @@ async fn exchange(store: &Store, conversation: Option<ConversationId>, key: &str
     store
         .append_exchange(
             NewExchange {
+                origin: nexus_core::TaskOrigin::User,
+                pack: None,
                 conversation_id: conversation,
                 project_id: None,
                 idempotency_key: key.into(),
@@ -245,6 +249,7 @@ async fn migrating_to_v8_keeps_every_message() {
         let ex = exchange(&store, None, "m1").await;
         store
             .call(|c| {
+                common::undo_v15(c)?;
                 c.execute_batch(
                     "DROP TABLE inbox_files; DROP TABLE register_inboxes; DROP TABLE folders; DROP TABLE record_changes; DROP TABLE records; DROP TABLE registers; DROP TABLE automation_runs; DROP TABLE automations; DROP TABLE model_usage; DROP TABLE model_prices; DROP TABLE paused_turns; ALTER TABLE runs DROP COLUMN outcome_json;
                      PRAGMA user_version = 7;",

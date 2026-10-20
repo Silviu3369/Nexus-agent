@@ -114,6 +114,8 @@ mod tests {
             ts::export::<nexus_protocol::GroupCountView>(&conf),
             ts::export::<nexus_protocol::ScoreBandView>(&conf),
             ts::export::<nexus_protocol::SourceCountView>(&conf),
+            ts::export::<nexus_protocol::CauseCountView>(&conf),
+            ts::export::<nexus_protocol::AdsHandlingView>(&conf),
             ts::export::<nexus_protocol::JobResultsView>(&conf),
             ts::export::<nexus_protocol::SaveInboxRequest>(&conf),
             ts::export::<nexus_protocol::Schedule>(&conf),

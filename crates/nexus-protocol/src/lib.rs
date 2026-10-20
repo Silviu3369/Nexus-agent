@@ -47,11 +47,11 @@ pub use memory::{
     MemoryStatus, ProjectView, SaveProjectRequest,
 };
 pub use records::{
-    ExportView, FieldChange, FieldDef, FieldKind, GroupCountView, ImportPreviewView, ImportRequest,
-    ImportResultView, ImportSkipView, InboxFileStatus, InboxFileView, InboxView, JobResultsView,
-    RecordActor, RecordChangeKind, RecordChangeView, RecordDetailView, RecordQuery, RecordView,
-    RegisterView, SaveInboxRequest, SaveRecordRequest, ScoreBand, ScoreBandView, SourceCountView,
-    WeekCountView,
+    AdsHandlingView, CauseCountView, ExportView, FieldChange, FieldDef, FieldKind, GroupCountView,
+    ImportPreviewView, ImportRequest, ImportResultView, ImportSkipView, InboxFileStatus,
+    InboxFileView, InboxView, JobResultsView, RecordActor, RecordChangeKind, RecordChangeView,
+    RecordDetailView, RecordQuery, RecordView, RegisterView, SaveInboxRequest, SaveRecordRequest,
+    ScoreBand, ScoreBandView, SourceCountView, WeekCountView,
 };
 pub use service::{NexusService, NexusServiceClient};
 pub use usage::{ModelPrice, ModelUsageView, UsageView};

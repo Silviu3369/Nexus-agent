@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use nexus_core::TaskOrigin;
 use nexus_protocol::{
     ErrorCode, FolderId, InboxFileStatus, InboxFileView, InboxView, NexusError, RegisterId,
     SaveInboxRequest, SendMessageRequest,
@@ -537,6 +538,8 @@ impl Runtime {
                     ),
                 },
                 Some(format!("{} · {}", inbox_title(register), file.path)),
+                TaskOrigin::Intake,
+                Some(register.row.key.clone()),
             )
             .await;
         let (conversation, failure) = match sent {

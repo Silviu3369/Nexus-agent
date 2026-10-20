@@ -231,6 +231,36 @@ async fn a_job_ad_put_in_the_inbox_becomes_an_application_once() {
     let read = fake.generations()[1].json().to_string();
     assert!(read.contains("70123456"), "the agent read the PDF's text");
 
+    // Results count the ad by how its task ended (ADR-TASK-001).
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let handled = loop {
+        let handled = client.job_results(register.register_id).await.unwrap().ads;
+        if handled.finished == 1 {
+            break handled;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "{handled:?}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    assert_eq!(
+        (
+            handled.seen,
+            handled.recorded,
+            handled.nothing_recorded,
+            handled.failed
+        ),
+        (1, 1, 0, 0)
+    );
+    assert!(
+        handled.prompt_tokens > 0,
+        "the ad's tokens are counted: {handled:?}"
+    );
+    assert!(handled.median_seconds.is_some());
+    assert_eq!(
+        handled.estimated_cost_usd,
+        Some(0.0),
+        "the test connection is on the free tier: nothing to pay"
+    );
+
     // The same content again (a copy) is not read twice.
     std::fs::write(ads.0.join("copy.pdf"), &pdf).unwrap();
     tokio::time::sleep(Duration::from_millis(900)).await;
@@ -519,6 +549,14 @@ async fn a_rate_limited_ad_is_tried_again_on_its_own_and_scored_against_the_cv()
         second.messages[0].text.contains("path \"CV.txt\""),
         "{}",
         second.messages[0].text
+    );
+    // The ad counts once, by the task that finished it; the refused first
+    // try does not make it a failure.
+    let ads = client.job_results(register.register_id).await.unwrap().ads;
+    assert_eq!(
+        (ads.seen, ads.finished, ads.recorded, ads.failed),
+        (1, 1, 1, 0),
+        "{ads:?}"
     );
     host.shutdown().await;
 }

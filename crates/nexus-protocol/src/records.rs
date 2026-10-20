@@ -299,7 +299,7 @@ pub struct SourceCountView {
 /// application that was applied for (Applied, Interviewing, Offer,
 /// Rejected, or withdrawn after applying); a stage counts once it was
 /// reached, even if the status moved on, unless the user undid it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct JobResultsView {
     pub sent: u32,
     pub to_apply: u32,
@@ -330,4 +330,42 @@ pub struct JobResultsView {
     pub undone_changes: u32,
     /// Only the newest applications were counted (a very large register).
     pub partial: bool,
+    /// How the agent handled the job ads the inbox gave it.
+    pub ads: AdsHandlingView,
+}
+
+/// A failure cause (ADR-TASK-001's closed list, or `NotStarted` when the
+/// task could not even start) and how many ads it stopped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct CauseCountView {
+    pub cause: String,
+    pub count: u32,
+}
+
+/// How the agent handled the job ads from the inbox (ADR-TASK-001),
+/// counted from each ad's task and its runs; the cost is an estimate from
+/// the prices the user entered.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct AdsHandlingView {
+    /// Ads taken in (skipped files not counted).
+    pub seen: u32,
+    /// Ads whose task ended well; of those, the ones that left an
+    /// application the user kept, and the ones where it recorded nothing.
+    pub finished: u32,
+    pub recorded: u32,
+    pub nothing_recorded: u32,
+    pub failed: u32,
+    /// Waiting their turn or a retry, or being worked on.
+    pub waiting: u32,
+    /// Finished ads whose applications the user undid or corrected (within
+    /// 7 days of the agent's change).
+    pub corrected: u32,
+    pub failure_causes: Vec<CauseCountView>,
+    pub prompt_tokens: u64,
+    pub output_tokens: u64,
+    /// For the finished ads, in US dollars; `None` when a model they used
+    /// has no price entered.
+    pub estimated_cost_usd: Option<f64>,
+    /// Median time from the ad's task starting to its last reply.
+    pub median_seconds: Option<u32>,
 }

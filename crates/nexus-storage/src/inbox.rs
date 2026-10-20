@@ -447,3 +447,111 @@ impl Store {
         .await
     }
 }
+
+/// One inbox item and how the agent's work on it went (ADR-TASK-001).
+#[derive(Debug, Clone, PartialEq)]
+pub struct IntakeItemRow {
+    pub status: String,
+    pub reason: Option<String>,
+    /// The latest run of the item's task.
+    pub run_state: Option<String>,
+    pub failure_cause: Option<String>,
+    pub run_started_ms: Option<i64>,
+    pub run_updated_ms: Option<i64>,
+    /// Tokens of the task's replies, per (provider, model, free tier).
+    pub usage: Vec<(String, String, bool, i64, i64)>,
+    /// The agent's changes to records in this task, how many of them the
+    /// user undid, and the user's own changes to those records within
+    /// `review_ms` after the agent's last change.
+    pub agent_changes: i64,
+    pub undone: i64,
+    pub corrections: i64,
+}
+
+impl Store {
+    /// Every item of a register's inbox (skipped files left out) with how
+    /// its task went.
+    pub async fn intake_handling(
+        &self,
+        register: RegisterId,
+        review_ms: i64,
+    ) -> Result<Vec<IntakeItemRow>, StorageError> {
+        self.call(move |conn| {
+            let tx = conn.transaction()?;
+            let files: Vec<(String, Option<String>, Option<String>)> = {
+                let mut stmt = tx.prepare(
+                    "SELECT status, reason, conversation_id FROM inbox_files
+                     WHERE register_id = ?1 AND status <> 'Skipped' ORDER BY id",
+                )?;
+                stmt.query_map([register.to_string()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                    .collect::<Result<_, _>>()?
+            };
+            let mut items = Vec::with_capacity(files.len());
+            for (status, reason, conversation) in files {
+                let mut item = IntakeItemRow {
+                    status,
+                    reason,
+                    run_state: None,
+                    failure_cause: None,
+                    run_started_ms: None,
+                    run_updated_ms: None,
+                    usage: Vec::new(),
+                    agent_changes: 0,
+                    undone: 0,
+                    corrections: 0,
+                };
+                if let Some(conversation) = conversation {
+                    if let Some((state, cause, started, updated)) = tx
+                        .query_row(
+                            "SELECT r.state, r.failure_cause, r.created_at_ms, r.updated_at_ms
+                             FROM runs r JOIN tasks t ON t.id = r.task_id
+                             WHERE t.conversation_id = ?1 AND r.kind = 'Agent'
+                             ORDER BY r.created_at_ms DESC, r.id LIMIT 1",
+                            [&conversation],
+                            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                        )
+                        .optional()?
+                    {
+                        item.run_state = Some(state);
+                        item.failure_cause = cause;
+                        item.run_started_ms = Some(started);
+                        item.run_updated_ms = Some(updated);
+                    }
+                    let mut stmt = tx.prepare(
+                        "SELECT c.provider, coalesce(m.model, ''), c.free_tier,
+                                coalesce(sum(m.prompt_tokens), 0), coalesce(sum(m.output_tokens), 0)
+                         FROM messages m JOIN provider_connections c ON c.id = m.connection_id
+                         WHERE m.conversation_id = ?1 AND m.role = 'Model'
+                         GROUP BY c.provider, m.model, c.free_tier",
+                    )?;
+                    item.usage = stmt
+                        .query_map([&conversation], |r| {
+                            Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? == 1, r.get(3)?, r.get(4)?))
+                        })?
+                        .collect::<Result<_, _>>()?;
+                    let (changes, undone, first, last): (i64, i64, Option<i64>, Option<i64>) = tx.query_row(
+                        "SELECT count(*), coalesce(sum(undone_at_ms IS NOT NULL), 0), min(at_ms), max(at_ms)
+                         FROM record_changes WHERE conversation_id = ?1 AND actor = 'Agent'",
+                        [&conversation],
+                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                    )?;
+                    item.agent_changes = changes;
+                    item.undone = undone;
+                    if let (Some(first), Some(last)) = (first, last) {
+                        item.corrections = tx.query_row(
+                            "SELECT count(*) FROM record_changes u
+                             WHERE u.actor = 'User' AND u.kind = 'Updated' AND u.at_ms BETWEEN ?2 AND ?3
+                               AND u.record_id IN (SELECT record_id FROM record_changes
+                                                   WHERE conversation_id = ?1 AND actor = 'Agent')",
+                            params![conversation, first, last + review_ms],
+                            |r| r.get(0),
+                        )?;
+                    }
+                }
+                items.push(item);
+            }
+            Ok(items)
+        })
+        .await
+    }
+}

@@ -5,6 +5,8 @@
 //! without it, deleting an automation keeps its tasks, events never carry
 //! the instruction, and the migration keeps every message.
 
+mod common;
+
 use std::path::PathBuf;
 
 use nexus_protocol::{AutomationRunStatus, ConversationId, Schedule};
@@ -66,6 +68,8 @@ async fn task(store: &Store, key: &str) -> ConversationId {
     store
         .append_exchange(
             NewExchange {
+                origin: nexus_core::TaskOrigin::User,
+                pack: None,
                 conversation_id: None,
                 project_id: None,
                 idempotency_key: key.into(),
@@ -326,6 +330,7 @@ async fn migrating_to_v10_keeps_every_message() {
         let conversation = task(&store, "m1").await;
         store
             .call(|c| {
+                common::undo_v15(c)?;
                 c.execute_batch(
                     "DROP TABLE inbox_files; DROP TABLE register_inboxes; DROP TABLE folders; DROP TABLE record_changes; DROP TABLE records; DROP TABLE registers; DROP TABLE automation_runs; DROP TABLE automations; PRAGMA user_version = 9;",
                 )?;
