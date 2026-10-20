@@ -260,6 +260,8 @@ Pentru mai mulți utilizatori se adaugă un proiect explicit de identitate, sepa
 | ADR-ISO-001 | Backend OS/VM pentru cod neîncrezător | De demonstrat înainte de M3 |
 | ADR-DATA-001 | Criptare, backup, export și recuperarea cheilor | De decis înainte de date sensibile în utilizare zilnică / M6 |
 | ADR-RELEASE-001 | Installer, semnare, actualizare și compatibilitate | De calificat în M6 |
+| ADR-TASK-001 | Un singur model al muncii agentului: Task → Run → Step → Action, cu rezultat, cost și intervenții | **Acceptat** (2026-10-20), completarea M2; de implementat |
+| ADR-ACTION-001 | Un singur broker pentru efecte; clase de efect; descriptorul de instrument din contracte §6 | **Acceptat** (2026-10-20), completarea M2; de implementat |
 
 Rezultatele ADR-urilor se înregistrează în acest document, cu alternativa aleasă, motiv, dependențe, limitări și probe. Progresul rămâne în plan; aici se schimbă deciziile de proiectare.
 
@@ -272,3 +274,105 @@ Rezultatele ADR-urilor se înregistrează în acest document, cu alternativa ale
 - **Două hop-uri:** webview ↔ shell Tauri, prin comenzile înguste `host_status`/`start_host`; shell ↔ Host, prin `nexus-client`. Webview-ul nu primește niciodată tokenul, căi sau argumente de proces.
 - **Host fals (IPC-02):** numele de pipe sunt globale, deci alt cont Windows ar putea ocupa numele primul. De aceea, înainte de handshake, clientul citește prin `GetNamedPipeServerProcessId` PID-ul procesului server, apoi SID-ul din tokenul lui de acces, și refuză dacă nu e SID-ul utilizatorului curent. Dacă identitatea nu poate fi citită, refuză la fel. În ambele cazuri tokenul nu pleacă, iar dashboardul afișează starea „Neverificat”. Un proces ostil sub același cont rămâne în afara modelului de amenințare (`SECURITATE_SI_VALIDARE_RO.md` §1).
 - **Probe:** `crates/nexus-host/tests/handshake.rs` (8 teste pe pipe real) și proba end-to-end pe executabilele release, consemnată în planul activ.
+
+### ADR-TASK-001 — un singur model al muncii agentului (acceptat, 2026-10-20)
+
+**Context.** [Contractele](CONTRACTE_NEXUS_RO.md) §3 definesc Task, Run, Step, Action și Operation. Codul are însă două modele paralele:
+
+- **M1** (`tasks`, `runs`, `actions`, `operations`, `approvals`) servește doar efectelor cu aprobare: nota, documentul, apelul MCP cu efect. Fiecare are propriul task, creat artificial.
+- **Munca agentului** (din M2) e `conversations` → `messages` → `agent_steps`, legată de M1 doar prin `messages.proposed_run_id` și `paused_turns.run_id`.
+
+Consecințe:
+
+- interfața numește „task” o conversație, iar baza de date numește „task” altceva;
+- o sarcină nu are rezultat: un fișier din inbox „Done” spune doar că sarcina s-a încheiat, nu că a reușit;
+- costul se înregistrează pe zi și pe model (`model_usage`), nu pe sarcină;
+- intervențiile tale nu sunt înregistrate ca atare.
+
+Metricile din planul ajustat (M2) nu pot fi calculate cinstit pe acest model.
+
+**Decizie.**
+
+1. **Un singur tabel `tasks`.** Se extinde tabelul M1 în loc să apară o a treia noțiune. Un task are: obiectivul (cererea inițială), originea (`User` prin chat, `Automation`, `Intake`, `Direct` pentru nota trimisă direct, ulterior `Channel`), proiectul, pachetul sau fluxul (opțional, de exemplu `jobs`), momentele de început și de sfârșit și starea (`Open`, `Ended`). Task-urile M1 existente devin task-uri cu originea `Direct`.
+2. **Conversația rămâne firul în care se vorbește.** Un task de chat corespunde unei conversații, ca în interfața de azi. Un task din Intake sau Automation are, prin construcție, o singură tură.
+3. **Fiecare tură a agentului e un Run de tip `Agent`.** Tura e răspunsul modelului, cu pașii și acțiunile lui. Pașii (`agent_steps`) devin Steps-urile acelui Run. Efectele cu aprobare rămân Run-uri copil (`parent_run_id`), cu mașinăria M1 neschimbată și deja probată. Contractele prevăd deja „execuții copil” care consumă bugetul părintelui.
+4. **Rezultatul are două părți separate:**
+   - **execuția**: rezultatul Run-ului, cu stările din contracte §4 (`Succeeded`, `Failed`, `Cancelled`, `Denied`, `NeedsReview`), plus o cauză de eșec dintr-o listă închisă: ProviderUnavailable, QuotaExceeded, BudgetExceeded, InvalidModelOutput, ValidationRefused, VerificationMismatch, PermissionDenied, UserRejected, Timeout, HostInterrupted, OutcomeUnknown;
+   - **acceptarea ta**: un Run reușit e „acceptat” dacă, într-o fereastră de revizuire (propus: 7 zile), nu ai respins, anulat sau corectat ce a făcut.
+   - **Rata de reușită** se calculează pe Run-uri reușite și acceptate. Pentru task-urile cu o singură tură, rezultatul task-ului e rezultatul turei.
+5. **Costul și timpul pe Run**: tokenii turei (există deja pe mesaj), înmulțiți cu prețurile introduse de tine; timpul împărțit în agent activ / așteptarea ta / așteptarea furnizorului (inclusiv reîncercările) / coadă. Se calculează din pași și aprobări și se păstrează la încheierea Run-ului.
+6. **Intervențiile devin evenimente durabile** (task, run, acțiune, tip, actor, moment): aprobare, respingere, editare înainte de aprobare (când va exista), Undo, corectură (o schimbare a ta pe un câmp scris de agent), reîncercare manuală, oprire. Se scriu în aceeași tranzacție cu fapta care le produce.
+7. **Migrarea** (date reale, deci cu backup, verificare pe copie și acordul tău la aplicare):
+   - conversațiile devin task-uri: originea se deduce din `automation_runs` și `inbox_files`, altfel `User`;
+   - mesajele modelului devin Run-uri `Agent`, cu starea dedusă din starea mesajului;
+   - Run-urile de efect existente se leagă de părinte prin `proposed_run_id` și `paused_turns`;
+   - nimic nu se șterge; acceptarea nu se poate reconstrui pentru trecut, deci rămâne necunoscută pentru datele vechi.
+
+**Ce nu se schimbă:** stările și tranzițiile din contracte §4, aprobarea legată de manifest, reconcilierea, chat-ul așa cum îl vezi.
+
+**Alternative respinse:**
+
+- un tabel nou pentru sarcinile agentului: a treia noțiune de „task”;
+- jurnal de telemetrie separat de stare: ar diverge de audit;
+- o sarcină pentru fiecare mesaj al tău: o conversație cu mai multe întrebări ar deveni zeci de sarcini fără obiectiv.
+
+**Răspunsurile tale (2026-10-20):** fereastra de revizuire rămâne de 7 zile; task-ul de chat = conversația, ca acum.
+
+### ADR-ACTION-001 — un singur broker, clase de efect și descriptorul de instrument (acceptat, 2026-10-20)
+
+**Context.** Contractele §6 definesc ToolDescriptor (versiune, scheme, efecte, politică de date, permisiuni, limite, verificare) și semantica de reîncercare (ReadOnly, IdempotentWithKey, Reconcilable, NonRepeatable). Codul o implementează complet doar pentru `CreateMarkdownArtifact`. Instrumentele adăugate apoi au fiecare drumul lui:
+
+- documentul și apelul MCP cu efect: Run-uri cu aprobare;
+- scrierile în evidențe: directe, cu istoric și Undo;
+- faptele de memorie: propuneri cu aprobare;
+- citirile: pași.
+
+Clasa efectului e implicită în cod, verificarea există doar pentru fișiere, iar compensarea (Undo) doar pentru evidențe. Fiecare instrument nou (email, Excel, browser) ar adăuga încă un drum.
+
+**Decizie.**
+
+1. **Registru de instrumente în Host**, cod de încredere, static. Pachetele nu pot adăuga instrumente, doar alege dintre ele și strânge politicile. Fiecare instrument are descriptorul din contracte §6, completat cu:
+   - **clasa efectului**, de mai jos;
+   - **semantica de reîncercare** (din contracte, neschimbată);
+   - **metoda de verificare** și **nivelul dovezii**: `Verified` (citire înapoi: hash, revizie, mesaj găsit în Sent), `Reported` (serviciul a confirmat, fără verificare independentă, de exemplu MCP), `Unverifiable`. Metricile le numără separat;
+   - **compensarea**: lipsă sau o operație nouă, autorizată (contractele spun deja că rollback-ul nu e universal);
+   - **politica implicită de aprobare** (mai jos) și **politica datelor** (ce trimite instrumentul și unde).
+2. **Clasele de efect și politica lor implicită:**
+
+   | Clasă | Exemple azi / curând | Aprobare implicită | Compensare |
+   | --- | --- | --- | --- |
+   | `Read` | fetch, listarea și citirea fișierelor, căutarea în evidențe, unelte MCP read-only | niciuna | — |
+   | `InternalReversible` | adăugarea și schimbarea în evidențe | niciuna (decizia ta din 2026-10-18), dar auditată | Undo |
+   | `ExternalReversible` | document nou într-un folder împărțit; mutarea sau redenumirea de fișiere și actualizarea unui Excel (M3a) | aprobarea manifestului exact | ștergere sau restaurare, doar dacă resursa e neschimbată de la efect |
+   | `ExternalIrreversible` | trimiterea unui email (M4); unelte MCP cu efect; trimiterea unui formular (M3c) | mereu aprobare; în această versiune nu poate fi relaxată | niciuna |
+
+3. **Un singur drum:**
+   1. modelul propune;
+   2. Host-ul validează argumentele față de descriptor;
+   3. politica decide: automat, aprobare sau refuz; modelul și conținutul documentelor nu o pot schimba;
+   4. se creează o Action, cu stările din contracte §4 și manifestul;
+   5. pentru orice efect se salvează intenția (Operation);
+   6. execuție;
+   7. verificare;
+   8. rezultat cu dovada;
+   9. eveniment.
+
+   Citirile rămân Steps (fără Action), ca să nu umple baza; dovezile lor rămân în pas. Scrierile `InternalReversible` în evidențe se execută în aceeași tranzacție SQLite cu Action-ul, deci nu au nevoie de reconciliere.
+4. **Migrarea** se face instrument cu instrument, fără schimbare de comportament:
+   1. evidențele;
+   2. documentul;
+   3. MCP;
+   4. apoi instrumentele noi (email, fișiere, Excel) intră direct pe drumul comun.
+
+   Testele existente rămân și trebuie să treacă neschimbate la fiecare pas.
+5. **Ce primești vizibil:** documentul creat de Nexus primește Undo (ștergere, doar dacă fișierul e neschimbat), iar fiecare acțiune arată clasa și nivelul dovezii.
+
+**Ce nu se schimbă:** manifestul și hash-ul aprobării, consumul unic, reconcilierea, staging-ul și verificarea fișierelor, scrierea directă în evidențe cu Undo.
+
+**Alternative respinse:**
+
+- drumuri separate pe instrument, cu telemetrie doar în log: politica și auditul ar diverge;
+- Action pentru orice citire: zgomot și cost, fără câștig de control;
+- risc declarat de model: interzis de contracte §6.
+
+**Răspunsurile tale (2026-10-20):** emailul trimis cere mereu aprobare în această versiune; documentul creat de Nexus primește Undo.
