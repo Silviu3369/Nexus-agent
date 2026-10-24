@@ -49,6 +49,8 @@ async fn submit(env: &Env, key: &str, hash: &str) -> Result<SubmitOutcome, Stora
 
 fn action(manifest_sha256: &str) -> NewAction {
     NewAction {
+        effect_class: nexus_core::EffectClass::InternalReversible,
+        evidence: nexus_core::Evidence::Verified,
         tool_id: "CreateMarkdownArtifact".to_string(),
         tool_version: 1,
         operation_id: OperationId::new(),

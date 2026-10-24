@@ -2,10 +2,12 @@
 //! and runs every read and write in order, so writes are serialised without
 //! locks in the callers (`ARHITECTURA_NEXUS_RO.md` §5, §7).
 
+mod actions;
 mod automation;
 mod chat;
 mod folders;
 mod inbox;
+mod interventions;
 mod mcp;
 mod memory;
 mod records;
@@ -14,6 +16,7 @@ mod schema;
 mod steps;
 mod usage;
 
+pub use actions::CompensationRow;
 pub use automation::{AutomationRow, AutomationRunRow, NewAutomation};
 pub use chat::{
     ConnectionRow, Continuation, ConversationRow, DEFAULT_PERSONA_NAME, Deleted, Exchange,
@@ -21,6 +24,7 @@ pub use chat::{
 };
 pub use folders::FolderRow;
 pub use inbox::{InboxFileRow, InboxRow, InboxSettle, IntakeItemRow};
+pub use interventions::TurnReviewRow;
 pub use mcp::{McpServerRow, McpToolRow, NewMcpTool};
 pub use memory::{MemoryFilter, MemoryRow, NewMemory, ProjectRow};
 pub use records::{

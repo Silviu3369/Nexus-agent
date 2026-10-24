@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use nexus_core::{ActionState, OperationState, RunState};
+use nexus_core::{ActionState, EffectClass, Evidence, OperationState, RunState};
 use nexus_protocol::{
     ActionId, ApprovalId, ArtifactId, ConversationId, EventId, MessageId, OperationId, ProjectId,
     RunId, TaskId,
@@ -75,6 +75,12 @@ pub struct ActionRow {
     pub manifest_json: String,
     pub manifest_sha256: String,
     pub revision: i64,
+    /// ADR-ACTION-001: the class of its effect and the evidence its
+    /// success has (`None` only for rows written before version 17).
+    pub effect_class: Option<EffectClass>,
+    pub evidence: Option<Evidence>,
+    /// For a compensation: the action it reverses.
+    pub compensates: Option<ActionId>,
 }
 
 #[derive(Debug, Clone)]
@@ -166,6 +172,8 @@ pub enum SubmitOutcome {
 pub struct NewAction {
     pub tool_id: String,
     pub tool_version: i64,
+    pub effect_class: EffectClass,
+    pub evidence: Evidence,
     pub operation_id: OperationId,
     pub manifest_json: String,
     pub manifest_sha256: String,
@@ -318,8 +326,8 @@ impl Store {
             let approval_id = ApprovalId::new();
             tx.execute(
                 "INSERT INTO actions (id, run_id, operation_id, tool_id, tool_version, state, manifest_json,
-                                      manifest_sha256, revision, created_at_ms, updated_at_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 'AwaitingApproval', ?6, ?7, 1, ?8, ?8)",
+                                      manifest_sha256, revision, created_at_ms, updated_at_ms, effect_class, evidence)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'AwaitingApproval', ?6, ?7, 1, ?8, ?8, ?9, ?10)",
                 params![
                     action_id.to_string(),
                     run_id.to_string(),
@@ -328,7 +336,9 @@ impl Store {
                     action.tool_version,
                     action.manifest_json,
                     action.manifest_sha256,
-                    now
+                    now,
+                    action.effect_class.as_str(),
+                    action.evidence.as_str()
                 ],
             )?;
             tx.execute(
@@ -395,6 +405,16 @@ impl Store {
                 &approval_id.to_string(),
                 2,
                 json!({"decision": decision.as_str(), "action_id": action.id.to_string()}),
+                now,
+            )?;
+            crate::interventions::record_on_effect(
+                &tx,
+                &action.run_id.to_string(),
+                match decision {
+                    Decision::Approved => nexus_core::InterventionKind::Approved,
+                    Decision::Denied => nexus_core::InterventionKind::Rejected,
+                },
+                json!({"action": action.id.to_string()}),
                 now,
             )?;
             match decision {
@@ -789,6 +809,18 @@ impl Store {
         self.call(move |conn| {
             let tx = conn.transaction()?;
             let detail = load_detail(&tx, run_id)?;
+            if matches!(
+                detail.run.state,
+                RunState::Queued | RunState::AwaitingApproval | RunState::Running
+            ) {
+                crate::interventions::record_on_effect(
+                    &tx,
+                    &run_id.to_string(),
+                    nexus_core::InterventionKind::Stopped,
+                    json!({}),
+                    now,
+                )?;
+            }
             match detail.run.state {
                 RunState::Queued | RunState::AwaitingApproval => {
                     if let Some(approval) = &detail.approval
@@ -1082,7 +1114,7 @@ fn transition_run(
     )
 }
 
-fn transition_action(
+pub(crate) fn transition_action(
     tx: &Transaction,
     action_id: ActionId,
     to: ActionState,
@@ -1217,7 +1249,8 @@ fn load_task(tx: &Transaction, task_id: TaskId) -> Result<TaskRow, StorageError>
     })
 }
 
-const ACTION_COLUMNS: &str = "id, run_id, operation_id, tool_id, tool_version, state, manifest_json, manifest_sha256, revision";
+const ACTION_COLUMNS: &str = "id, run_id, operation_id, tool_id, tool_version, state, manifest_json, manifest_sha256, revision,
+    effect_class, evidence, compensates_action_id";
 
 fn action_from_row(r: &rusqlite::Row) -> rusqlite::Result<Result<ActionRow, StorageError>> {
     let id: String = r.get(0)?;
@@ -1226,6 +1259,8 @@ fn action_from_row(r: &rusqlite::Row) -> rusqlite::Result<Result<ActionRow, Stor
     let state: String = r.get(5)?;
     let (tool_id, tool_version, manifest_json, manifest_sha256, revision) =
         (r.get(3)?, r.get(4)?, r.get(6)?, r.get(7)?, r.get(8)?);
+    let (effect_class, evidence, compensates): (Option<String>, Option<String>, Option<String>) =
+        (r.get(9)?, r.get(10)?, r.get(11)?);
     Ok((|| {
         Ok(ActionRow {
             id: ActionId(parse_uuid(&id)?),
@@ -1237,6 +1272,13 @@ fn action_from_row(r: &rusqlite::Row) -> rusqlite::Result<Result<ActionRow, Stor
             manifest_json,
             manifest_sha256,
             revision,
+            effect_class: effect_class.as_deref().map(parse_state).transpose()?,
+            evidence: evidence.as_deref().map(parse_state).transpose()?,
+            compensates: compensates
+                .as_deref()
+                .map(parse_uuid)
+                .transpose()?
+                .map(ActionId),
         })
     })())
 }
@@ -1253,7 +1295,9 @@ fn load_action(tx: &Transaction, action_id: ActionId) -> Result<ActionRow, Stora
 
 fn load_action_for_run(tx: &Transaction, run_id: RunId) -> Result<Option<ActionRow>, StorageError> {
     tx.query_row(
-        &format!("SELECT {ACTION_COLUMNS} FROM actions WHERE run_id = ?1"),
+        &format!(
+            "SELECT {ACTION_COLUMNS} FROM actions WHERE run_id = ?1 AND compensates_action_id IS NULL"
+        ),
         [run_id.to_string()],
         action_from_row,
     )
@@ -1433,4 +1477,18 @@ fn load_origin(tx: &Transaction, run_id: RunId) -> Result<Option<RunOrigin>, Sto
         })
     })
     .transpose()
+}
+
+/// Every action of a run, oldest first (compensations included).
+pub(crate) fn actions_of_run(
+    tx: &Transaction,
+    run_id: RunId,
+) -> Result<Vec<ActionRow>, StorageError> {
+    let mut stmt = tx.prepare(&format!(
+        "SELECT {ACTION_COLUMNS} FROM actions WHERE run_id = ?1 ORDER BY created_at_ms, rowid"
+    ))?;
+    let rows = stmt
+        .query_map([run_id.to_string()], action_from_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+    rows.into_iter().collect()
 }

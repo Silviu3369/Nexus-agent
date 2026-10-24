@@ -2789,6 +2789,16 @@ button.ghost.danger-ghost {
   white-space: nowrap;
 }
 
+.effect-line {
+  margin: 4px 0 0;
+  font-size: 0.84rem;
+}
+
+.turn-line {
+  margin: 4px 0 0;
+  font-size: 0.84rem;
+}
+
 .results-tiles {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

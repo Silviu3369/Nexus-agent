@@ -10,13 +10,13 @@ use std::path::{Path, PathBuf};
 use nexus_core::{AgentStepKind, AgentStepStatus, RunState};
 use nexus_protocol::{FolderId, MessageId, NexusError, NotePreview, OperationId, RunId};
 use nexus_storage::{
-    FolderRow, NewAction, NewOperation, RunDetail, RunError, StorageError, SubmitOutcome, now_ms,
+    FolderRow, NewOperation, RunDetail, RunError, StorageError, SubmitOutcome, now_ms,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::files::named;
-use super::{MANIFEST_VERSION, Manifest, POLICY_REVISION, Runtime, to_nexus_error};
+use super::{Runtime, to_nexus_error};
 use crate::fault;
 use crate::tools::document_file::{
     self, Destination, DocFormat, DocumentContent, Observed, TOOL_ID, TOOL_VERSION,
@@ -260,48 +260,26 @@ impl Runtime {
                 return Ok(());
             }
         };
-        let now = now_ms();
-        let operation_id = OperationId::new();
-        let expires_at_ms = now.saturating_add(self.approval_ttl_ms);
-        let destination = request.target().display().to_string();
-        let manifest = Manifest {
-            manifest_version: MANIFEST_VERSION,
-            actor: "local-user",
-            channel: "dashboard",
-            project_id: detail.task.project_id.to_string(),
-            operation_id: operation_id.to_string(),
-            tool_id: TOOL_ID,
-            tool_version: TOOL_VERSION,
-            effect: "create-new-file",
-            destination: &destination,
-            content_sha256: content.sha256_hex(),
-            content_size: content.size(),
-            policy_revision: POLICY_REVISION,
-            single_use: true,
-            expires_at_ms,
-        };
-        let manifest_json =
-            serde_json::to_string(&manifest).map_err(|e| StorageError::Corrupt(e.to_string()))?;
-        let manifest_sha256 = sha256_hex(manifest_json.as_bytes());
-        self.store
-            .prepare_action(
-                detail.run.id,
-                NewAction {
-                    tool_id: TOOL_ID.to_string(),
-                    tool_version: i64::from(TOOL_VERSION),
-                    operation_id,
-                    manifest_json,
-                    manifest_sha256,
-                    approval_expires_at_ms: expires_at_ms,
-                },
-                now,
-            )
-            .await?;
-        Ok(())
+        let tool = crate::tools::registry::by_id(TOOL_ID).expect("registered");
+        self.prepare_effect(
+            detail,
+            tool,
+            OperationId::new(),
+            super::broker::Target {
+                effect: "create-new-file",
+                destination: request.target().display().to_string(),
+                content_sha256: content.sha256_hex(),
+                content_size: content.size(),
+            },
+        )
+        .await
     }
 
     /// The folder must still be shared, writable and the same place.
-    async fn folder_still_allows(&self, request: &DocumentRequest) -> Result<(), String> {
+    pub(super) async fn folder_still_allows(
+        &self,
+        request: &DocumentRequest,
+    ) -> Result<(), String> {
         let id = uuid::Uuid::parse_str(&request.folder_id)
             .map(FolderId)
             .map_err(|_| "the folder's id is unreadable".to_string())?;

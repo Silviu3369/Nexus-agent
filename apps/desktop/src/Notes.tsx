@@ -1,3 +1,4 @@
+import { effectText } from "./model/execution.ts";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { RunId, RunStatus, RunView } from "@nexus/contracts";
 import { api, describeError } from "./api";
@@ -222,6 +223,7 @@ export function RunDetail({ summary, onChanged }: { summary: RunView; onChanged:
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [content, setContent] = useState<string | null>(null);
+  const [confirmUndo, setConfirmUndo] = useState(false);
   // Several details can be on screen (chat proposals), so ids are unique.
   const headingId = useId();
 
@@ -262,6 +264,9 @@ export function RunDetail({ summary, onChanged }: { summary: RunView; onChanged:
       <div role="status" aria-live="polite">
         <StatusBadge status={view.status} call={call !== null} />
       </div>
+      {effectText(view.effect_class, view.evidence) && (
+        <p className="muted effect-line">{effectText(view.effect_class, view.evidence)}</p>
+      )}
 
       {view.failure && (
         <p className={view.status === "Cancelled" ? "muted" : "error"}>
@@ -365,6 +370,40 @@ export function RunDetail({ summary, onChanged }: { summary: RunView; onChanged:
           )}
         </div>
       )}
+
+      {view.undone_at_ms !== null && (
+        <p className="muted" role="status">{`Undone at ${time(view.undone_at_ms)}: the file Nexus created was deleted.`}</p>
+      )}
+      {view.can_undo &&
+        (confirmUndo ? (
+          <div className="confirm-bar" role="alert">
+            <p>{`Delete ${view.title}? Nexus deletes it only if it is unchanged since it was written.`}</p>
+            <div className="actions">
+              <button
+                type="button"
+                className="danger"
+                disabled={busy}
+                onClick={() =>
+                  act(async () => {
+                    await api.undoEffect(view.run_id);
+                    setConfirmUndo(false);
+                  })
+                }
+              >
+                Delete the file
+              </button>
+              <button type="button" className="ghost" disabled={busy} onClick={() => setConfirmUndo(false)}>
+                Keep
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="actions">
+            <button type="button" className="secondary" disabled={busy} onClick={() => setConfirmUndo(true)}>
+              Undo
+            </button>
+          </div>
+        ))}
 
       {CANCELLABLE.includes(view.status) && (
         <div className="actions">

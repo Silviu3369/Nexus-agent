@@ -178,6 +178,16 @@ impl NexusClient {
             .await??)
     }
 
+    pub async fn undo_effect(
+        &self,
+        run_id: nexus_protocol::RunId,
+    ) -> Result<nexus_protocol::RunView, CallError> {
+        Ok(self
+            .client
+            .undo_effect(context::current(), run_id)
+            .await??)
+    }
+
     pub async fn cancel_run(&self, run_id: RunId) -> Result<RunView, CallError> {
         Ok(self.client.cancel_run(context::current(), run_id).await??)
     }

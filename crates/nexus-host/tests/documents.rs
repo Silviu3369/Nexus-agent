@@ -505,7 +505,16 @@ async fn a_document_is_written_only_after_approval_and_never_over_a_file() {
         })
         .await
         .unwrap();
-    wait_run(&client, run, RunStatus::Succeeded).await;
+    let done = wait_run(&client, run, RunStatus::Succeeded).await;
+    assert_eq!(
+        (
+            done.effect_class.as_deref(),
+            done.evidence.as_deref(),
+            done.can_undo
+        ),
+        (Some("ExternalReversible"), Some("Verified"), true),
+        "ADR-ACTION-001: the run says what kind of effect it is and how it is proven"
+    );
     let written = std::fs::read(&target).unwrap();
     assert_eq!(
         documents::docx_text(&written).unwrap(),
@@ -528,6 +537,34 @@ async fn a_document_is_written_only_after_approval_and_never_over_a_file() {
             .starts_with("~nexus")),
         "no staging file is left"
     );
+
+    // Undo (ADR-ACTION-001): refused while the file differs from what
+    // Nexus wrote; once it is the same again, deleted, and only once.
+    std::fs::write(&target, b"changed by me").unwrap();
+    let refused = client.undo_effect(run).await.unwrap_err();
+    assert!(
+        format!("{refused:?}").contains("changed since Nexus wrote it"),
+        "{refused:?}"
+    );
+    assert_eq!(std::fs::read(&target).unwrap(), b"changed by me");
+    std::fs::write(&target, &written).unwrap();
+    let undone = client.undo_effect(run).await.unwrap();
+    assert!(!target.exists(), "the document Nexus created is gone");
+    assert!(undone.undone_at_ms.is_some() && !undone.can_undo);
+    assert!(client.undo_effect(run).await.is_err(), "undone once");
+    let task = client.conversation(sent.conversation_id).await.unwrap();
+    let turn = task
+        .messages
+        .iter()
+        .rev()
+        .find_map(|m| m.turn.clone())
+        .unwrap();
+    assert_eq!(
+        turn.interventions,
+        ["Approved", "Undo"],
+        "the approval and the undo are the user's interventions on the turn"
+    );
+    assert_eq!(turn.acceptance, nexus_protocol::Acceptance::NotAccepted);
 
     // An existing name, or a folder shared for reading, is refused at once.
     fake.push(Reply::calls(&[(
@@ -752,4 +789,58 @@ async fn a_crash_while_writing_leaves_exactly_one_document_after_restart() {
         client.stop_host().await.ok();
         support::wait_exit(&mut host);
     }
+}
+
+#[tokio::test]
+async fn an_undo_interrupted_before_deleting_leaves_the_file_to_be_undone_again() {
+    let fake = FakeGemini::start(KEY).await;
+    let profile = support::TempProfile::new("doc-undo-recovery");
+    let out = Dir::new("doc-undo-recovery");
+    let envs = [(support::GEMINI_BASE_URL_ENV, fake.base_url.as_str())];
+    let mut host = support::spawn_host_env(profile.path(), Some("undo_after_intent"), &envs);
+    let client = support::connect(profile.path()).await;
+    connect(&client).await;
+    share(&client, "Letters", &out, true).await;
+    fake.push(Reply::calls(&[(
+        "propose_document",
+        json!({"folder": "Letters", "file_name": "Cover letter", "format": "docx", "body": "Dear team,
+
+Hello."}),
+    )]));
+    fake.push(Reply::text(&["The letter is saved."]));
+    let sent = send(&client, None, "undo", "Write the letter").await;
+    let run = settled(&client, &sent).await.proposed_run_id.unwrap();
+    let pending = wait_run(&client, run, RunStatus::AwaitingApproval)
+        .await
+        .pending_approval
+        .unwrap();
+    client
+        .decide_approval(DecideApprovalRequest {
+            approval_id: pending.approval_id,
+            manifest_sha256: pending.manifest_sha256,
+            decision: ApprovalDecision::Approve,
+        })
+        .await
+        .unwrap();
+    wait_run(&client, run, RunStatus::Succeeded).await;
+    let target = out.path().join("Cover letter.docx");
+    assert!(target.exists());
+    let _ = client.undo_effect(run).await;
+    assert!(
+        !support::wait_exit(&mut host).success(),
+        "the host aborted once the undo's intent was written"
+    );
+    assert!(target.exists(), "nothing was deleted before the crash");
+
+    // After the restart the undo is decided from the file: still there and
+    // unchanged, so it did not happen; the user can undo again.
+    let mut host = support::spawn_host_env(profile.path(), None, &envs);
+    let client = support::connect(profile.path()).await;
+    let view = wait_run(&client, run, RunStatus::Succeeded).await;
+    assert!(view.can_undo && view.undone_at_ms.is_none(), "{view:?}");
+    let undone = client.undo_effect(run).await.unwrap();
+    assert!(!target.exists());
+    assert!(undone.undone_at_ms.is_some());
+    client.stop_host().await.ok();
+    support::wait_exit(&mut host);
 }

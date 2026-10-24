@@ -6,7 +6,9 @@
 
 use std::collections::BTreeMap;
 
-use nexus_core::{RecordActor, RecordChangeKind};
+use nexus_core::{
+    ActionState, EffectClass, Evidence, InterventionKind, RecordActor, RecordChangeKind,
+};
 use nexus_protocol::{ConversationId, MessageId, RecordId, RegisterId};
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::json;
@@ -359,6 +361,24 @@ impl Store {
                 return Ok(None);
             }
             let register = load_register(&tx, current.register_id)?;
+            if actor == RecordActor::User {
+                // Overwriting what the agent wrote corrects it (ADR-TASK-001).
+                let changed: Vec<&String> = current
+                    .values
+                    .keys()
+                    .chain(values.keys())
+                    .filter(|k| current.values.get(*k) != values.get(*k))
+                    .collect();
+                for (change, fields) in agent_writers(&tx, id, Some(&changed))? {
+                    agent_intervention(
+                        &tx,
+                        &change,
+                        InterventionKind::Correction,
+                        json!({"record": id.to_string(), "change": change.id, "fields": fields}),
+                        now,
+                    )?;
+                }
+            }
             let revision = current.revision + 1;
             write_values(&tx, &register, id, &values, revision, now)?;
             let change_id = insert_change(
@@ -479,6 +499,29 @@ impl Store {
                     "the record changed after this; undo the later change first".into(),
                 ));
             }
+            if change.actor == RecordActor::Agent {
+                if let Some((original, turn)) = crate::actions::of_record_change(&tx, change.id)? {
+                    crate::actions::record(
+                        &tx,
+                        &turn,
+                        "UndoRecordChange",
+                        1,
+                        EffectClass::InternalReversible,
+                        Evidence::Verified,
+                        ActionState::Verified,
+                        json!({"record": change.record_id.to_string(), "change": change.id}),
+                        Some(&original),
+                        now,
+                    )?;
+                }
+                agent_intervention(
+                    &tx,
+                    &change,
+                    InterventionKind::Undo,
+                    json!({"record": change.record_id.to_string(), "change": change.id}),
+                    now,
+                )?;
+            }
             tx.execute(
                 "UPDATE agent_steps SET detail_json = json_set(detail_json, '$.undone', json('true'))
                  WHERE kind = 'RecordChanged' AND json_extract(detail_json, '$.change_id') = ?1",
@@ -543,6 +586,16 @@ impl Store {
             let tx = conn.transaction()?;
             let current = load_record(&tx, id)?;
             let register = load_register(&tx, current.register_id)?;
+            // Deleting what the agent added or wrote corrects it.
+            for (change, _) in agent_writers(&tx, id, None)? {
+                agent_intervention(
+                    &tx,
+                    &change,
+                    InterventionKind::Correction,
+                    json!({"record": id.to_string(), "change": change.id, "deleted": true}),
+                    now,
+                )?;
+            }
             tx.execute("DELETE FROM records WHERE id = ?1", [id.to_string()])?;
             insert_event(
                 &tx,
@@ -609,6 +662,13 @@ fn insert_change(
     now: i64,
 ) -> Result<i64, StorageError> {
     let origin = origin.filter(|_| actor == RecordActor::Agent);
+    let fields: Vec<&String> = after
+        .keys()
+        .chain(before.into_iter().flat_map(|b| b.keys()))
+        .filter(|k| before.and_then(|b| b.get(*k)) != after.get(*k))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
     tx.execute(
         "INSERT INTO record_changes (record_id, kind, actor, before_json, after_json, revision_after,
          conversation_id, message_id, read_hosts_json, at_ms)
@@ -627,7 +687,32 @@ fn insert_change(
             now
         ],
     )?;
-    Ok(tx.last_insert_rowid())
+    let change = tx.last_insert_rowid();
+    // The agent's write is an action of its turn (ADR-ACTION-001), done and
+    // checked in this very transaction.
+    if let Some(origin) = origin
+        && let Some(turn) = crate::actions::turn_of_message(tx, &origin.message_id.to_string())?
+    {
+        crate::actions::record(
+            tx,
+            &turn,
+            "RecordWrite",
+            1,
+            EffectClass::InternalReversible,
+            Evidence::Verified,
+            ActionState::Verified,
+            serde_json::json!({
+                "record": record.to_string(),
+                "change": change,
+                "kind": kind.as_str(),
+                "fields": fields,
+                "revision_after": revision_after,
+            }),
+            None,
+            now,
+        )?;
+    }
+    Ok(change)
 }
 
 fn load_register(tx: &Transaction, id: RegisterId) -> Result<RegisterRow, StorageError> {
@@ -758,4 +843,68 @@ impl RawChange {
             at_ms: self.at_ms,
         })
     }
+}
+
+/// The agent's changes that last wrote the given fields of a record (every
+/// field when `fields` is `None`), each with the fields it wrote; undone
+/// changes do not count.
+fn agent_writers(
+    tx: &Transaction,
+    record: RecordId,
+    fields: Option<&[&String]>,
+) -> Result<Vec<(RecordChangeRow, Vec<String>)>, StorageError> {
+    let mut stmt = tx.prepare(&format!(
+        "SELECT {CHANGE_COLUMNS} FROM record_changes WHERE record_id = ?1 ORDER BY id DESC"
+    ))?;
+    let history = stmt
+        .query_map([record.to_string()], raw_change)?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(RawChange::parse)
+        .collect::<Result<Vec<_>, _>>()?;
+    let keys: Vec<String> = match fields {
+        Some(fields) => fields.iter().map(|k| (*k).clone()).collect(),
+        None => history
+            .iter()
+            .flat_map(|c| c.after.keys().cloned())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect(),
+    };
+    let mut out: Vec<(RecordChangeRow, Vec<String>)> = Vec::new();
+    for key in keys {
+        // The newest change that set this field decides who wrote it.
+        let writer = history.iter().find(|c| {
+            let before = c.before.as_ref().and_then(|b| b.get(&key));
+            c.after.get(&key) != before && (c.after.contains_key(&key) || before.is_some())
+        });
+        let Some(writer) =
+            writer.filter(|c| c.actor == RecordActor::Agent && c.undone_at_ms.is_none())
+        else {
+            continue;
+        };
+        match out.iter_mut().find(|(c, _)| c.id == writer.id) {
+            Some((_, keys)) => keys.push(key),
+            None => out.push((writer.clone(), vec![key])),
+        }
+    }
+    Ok(out)
+}
+
+/// Records an intervention on the turn that made an agent's change.
+fn agent_intervention(
+    tx: &Transaction,
+    change: &RecordChangeRow,
+    kind: InterventionKind,
+    detail: serde_json::Value,
+    now: i64,
+) -> Result<(), StorageError> {
+    let conversation = change.conversation_id.map(|c| c.to_string());
+    let message = change.message_id.map(|m| m.to_string());
+    if let Some((task, run)) =
+        crate::interventions::turn_of(tx, conversation.as_deref(), message.as_deref())?
+    {
+        crate::interventions::record(tx, &task, run.as_deref(), None, kind, detail, now)?;
+    }
+    Ok(())
 }

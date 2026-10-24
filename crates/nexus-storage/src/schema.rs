@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::StorageError;
 
-pub const SUPPORTED_VERSION: i64 = 15;
+pub const SUPPORTED_VERSION: i64 = 17;
 
 /// Version 1: everything M1 persists. State columns are closed lists that a
 /// test keeps identical to the `nexus-core` enums. Times are UTC unix ms.
@@ -757,6 +757,75 @@ UPDATE tasks SET origin = 'Agent'
 WHERE id IN (SELECT task_id FROM runs WHERE kind = 'Effect' AND parent_run_id IS NOT NULL);
 "#;
 
+/// Version 16 (ADR-TASK-001): what the user did about the agent's work,
+/// kept as durable facts, each written in the same transaction as the act
+/// itself: a proposal approved or rejected, a change undone or corrected, a
+/// retry, a stop. `run_id` is the turn it concerns (or the effect run of a
+/// note sent directly); `effect_run_id` the effect it was about, if any.
+/// From earlier versions, the decisions already recorded are carried over:
+/// approvals, undone agent changes and decided memory proposals.
+const V16: &str = r#"
+CREATE TABLE interventions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id       TEXT    NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
+    run_id        TEXT    REFERENCES runs (id) ON DELETE SET NULL,
+    effect_run_id TEXT    REFERENCES runs (id) ON DELETE SET NULL,
+    kind          TEXT    NOT NULL CHECK (kind IN ('Approved', 'Rejected', 'Undo', 'Correction', 'Retry', 'Stopped')),
+    detail_json   TEXT    NOT NULL DEFAULT '{}' CHECK (json_valid(detail_json)),
+    at_ms         INTEGER NOT NULL
+) STRICT;
+CREATE INDEX interventions_by_run ON interventions (run_id, at_ms);
+CREATE INDEX interventions_by_task ON interventions (task_id, at_ms);
+
+INSERT INTO interventions (task_id, run_id, effect_run_id, kind, detail_json, at_ms)
+SELECT coalesce(parent.task_id, effect.task_id), coalesce(effect.parent_run_id, effect.id), effect.id,
+       CASE a.decision WHEN 'Approved' THEN 'Approved' ELSE 'Rejected' END,
+       json_object('from_version', 15), a.decided_at_ms
+FROM approvals a
+JOIN actions ac ON ac.id = a.action_id
+JOIN runs effect ON effect.id = ac.run_id
+LEFT JOIN runs parent ON parent.id = effect.parent_run_id
+WHERE a.decision IS NOT NULL;
+
+INSERT INTO interventions (task_id, run_id, kind, detail_json, at_ms)
+SELECT k.id, m.run_id, 'Undo', json_object('record_change', rc.id, 'from_version', 15), rc.undone_at_ms
+FROM record_changes rc
+JOIN tasks k ON k.conversation_id = rc.conversation_id
+LEFT JOIN messages m ON m.id = rc.message_id
+WHERE rc.actor = 'Agent' AND rc.undone_at_ms IS NOT NULL;
+
+INSERT INTO interventions (task_id, run_id, kind, detail_json, at_ms)
+SELECT k.id, m.run_id, CASE mi.status WHEN 'Rejected' THEN 'Rejected' ELSE 'Approved' END,
+       json_object('memory', mi.id, 'from_version', 15), mi.decided_at_ms
+FROM memory_items mi
+JOIN tasks k ON k.conversation_id = mi.conversation_id
+LEFT JOIN messages m ON m.id = mi.message_id
+WHERE mi.source = 'Agent' AND mi.decided_at_ms IS NOT NULL;
+"#;
+
+/// Version 17 (ADR-ACTION-001): every action names its effect class and
+/// the evidence its success has, and a compensation (an undo) names the
+/// action it reverses. Existing actions are classed by their tool. The
+/// agent's register writes and proposed facts become actions of their turn
+/// from now on (earlier ones stay in their own history).
+const V17: &str = r#"
+ALTER TABLE actions ADD COLUMN effect_class TEXT CHECK (effect_class IS NULL OR effect_class IN (
+    'Read', 'InternalReversible', 'ExternalReversible', 'ExternalIrreversible'));
+ALTER TABLE actions ADD COLUMN evidence TEXT CHECK (evidence IS NULL OR evidence IN (
+    'Verified', 'Reported', 'Unverifiable'));
+ALTER TABLE actions ADD COLUMN compensates_action_id TEXT REFERENCES actions (id);
+CREATE INDEX actions_by_run ON actions (run_id);
+CREATE INDEX actions_by_compensated ON actions (compensates_action_id);
+UPDATE actions SET
+    effect_class = CASE tool_id
+        WHEN 'CreateMarkdownArtifact' THEN 'InternalReversible'
+        WHEN 'CreateDocument' THEN 'ExternalReversible'
+        WHEN 'McpToolCall' THEN 'ExternalIrreversible' END,
+    evidence = CASE tool_id
+        WHEN 'McpToolCall' THEN 'Reported'
+        ELSE 'Verified' END;
+"#;
+
 struct Migration {
     sql: &'static str,
     /// Rebuilds a table other tables refer to (see [`V5`]).
@@ -822,6 +891,14 @@ const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         sql: V15,
+        rebuilds_parent_table: false,
+    },
+    Migration {
+        sql: V16,
+        rebuilds_parent_table: false,
+    },
+    Migration {
+        sql: V17,
         rebuilds_parent_table: false,
     },
 ];

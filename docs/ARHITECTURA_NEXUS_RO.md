@@ -260,8 +260,8 @@ Pentru mai mulți utilizatori se adaugă un proiect explicit de identitate, sepa
 | ADR-ISO-001 | Backend OS/VM pentru cod neîncrezător | De demonstrat înainte de M3 |
 | ADR-DATA-001 | Criptare, backup, export și recuperarea cheilor | De decis înainte de date sensibile în utilizare zilnică / M6 |
 | ADR-RELEASE-001 | Installer, semnare, actualizare și compatibilitate | De calificat în M6 |
-| ADR-TASK-001 | Un singur model al muncii agentului: Task → Run → Step → Action, cu rezultat, cost și intervenții | **Acceptat** (2026-10-20), completarea M2; de implementat |
-| ADR-ACTION-001 | Un singur broker pentru efecte; clase de efect; descriptorul de instrument din contracte §6 | **Acceptat** (2026-10-20), completarea M2; de implementat |
+| ADR-TASK-001 | Un singur model al muncii agentului: Task → Run → Step → Action, cu rezultat, cost și intervenții | **Implementat** (schema v15 și v16, 2026-10-21) |
+| ADR-ACTION-001 | Un singur broker pentru efecte; clase de efect; descriptorul de instrument din contracte §6 | **Implementat** (schema v17, 2026-10-21) |
 
 Rezultatele ADR-urilor se înregistrează în acest document, cu alternativa aleasă, motiv, dependențe, limitări și probe. Progresul rămâne în plan; aici se schimbă deciziile de proiectare.
 
@@ -275,7 +275,7 @@ Rezultatele ADR-urilor se înregistrează în acest document, cu alternativa ale
 - **Host fals (IPC-02):** numele de pipe sunt globale, deci alt cont Windows ar putea ocupa numele primul. De aceea, înainte de handshake, clientul citește prin `GetNamedPipeServerProcessId` PID-ul procesului server, apoi SID-ul din tokenul lui de acces, și refuză dacă nu e SID-ul utilizatorului curent. Dacă identitatea nu poate fi citită, refuză la fel. În ambele cazuri tokenul nu pleacă, iar dashboardul afișează starea „Neverificat”. Un proces ostil sub același cont rămâne în afara modelului de amenințare (`SECURITATE_SI_VALIDARE_RO.md` §1).
 - **Probe:** `crates/nexus-host/tests/handshake.rs` (8 teste pe pipe real) și proba end-to-end pe executabilele release, consemnată în planul activ.
 
-### ADR-TASK-001 — un singur model al muncii agentului (acceptat, 2026-10-20)
+### ADR-TASK-001 — un singur model al muncii agentului (acceptat 2026-10-20, implementat 2026-10-21)
 
 **Context.** [Contractele](CONTRACTE_NEXUS_RO.md) §3 definesc Task, Run, Step, Action și Operation. Codul are însă două modele paralele:
 
@@ -318,7 +318,23 @@ Metricile din planul ajustat (M2) nu pot fi calculate cinstit pe acest model.
 
 **Răspunsurile tale (2026-10-20):** fereastra de revizuire rămâne de 7 zile; task-ul de chat = conversația, ca acum.
 
-### ADR-ACTION-001 — un singur broker, clase de efect și descriptorul de instrument (acceptat, 2026-10-20)
+**Implementare (2026-10-21):**
+
+- Schema v15: tasks, ture (Run de tip Agent) și cauze de eșec.
+- Schema v16: tabelul `interventions`. Fiecare intervenție se scrie în aceeași tranzacție cu fapta:
+  - aprobarea sau respingerea unei propuneri;
+  - anularea unui efect;
+  - oprirea unui răspuns;
+  - Undo pe o schimbare a agentului;
+  - corectura: o editare a ta peste un câmp scris ultima dată de agent, sau ștergerea unei înregistrări atinse de agent;
+  - decizia pe un fapt propus;
+  - Retry în inbox.
+- La migrare se preiau aprobările, Undo-urile și deciziile pe fapte deja existente. Corecturile din trecut nu se pot reconstrui.
+- Acceptarea se calculează la citire. Tura reușită e în revizuire 7 zile de la sfârșit. Respingerea, Undo, corectura sau oprirea până atunci (inclusiv în timpul turei) o fac neacceptată. Aprobările și Retry nu contează împotriva ei.
+- Se vede în Tasks (o linie sub fiecare tură) și în Jobs → Results.
+- Codul: `nexus-storage/src/interventions.rs`, `nexus-host/src/runtime/acceptance.rs`.
+
+### ADR-ACTION-001 — un singur broker, clase de efect și descriptorul de instrument (acceptat 2026-10-20, implementat 2026-10-21)
 
 **Context.** Contractele §6 definesc ToolDescriptor (versiune, scheme, efecte, politică de date, permisiuni, limite, verificare) și semantica de reîncercare (ReadOnly, IdempotentWithKey, Reconcilable, NonRepeatable). Codul o implementează complet doar pentru `CreateMarkdownArtifact`. Instrumentele adăugate apoi au fiecare drumul lui:
 
@@ -376,3 +392,24 @@ Clasa efectului e implicită în cod, verificarea există doar pentru fișiere, 
 - risc declarat de model: interzis de contracte §6.
 
 **Răspunsurile tale (2026-10-20):** emailul trimis cere mereu aprobare în această versiune; documentul creat de Nexus primește Undo.
+
+**Implementare (2026-10-21):**
+
+- **Registrul** e în `nexus-host/src/tools/registry.rs`. Are 12 unelte, fiecare cu: clasa, reîncercarea, dovada, compensarea, modul de execuție (imediat, propunere, run de efect), aprobarea și ce trimite. Politica `needs_approval` cere aprobare pentru orice efect extern. Testele verifică invarianții registrului și faptul că orice funcție oferită modelului e înregistrată.
+- **Brokerul** e în `nexus-host/src/runtime/broker.rs` și are:
+  - rutarea apelurilor modelului;
+  - un singur constructor de manifest (`prepare_effect`);
+  - un singur dispatch de execuție (`run_effect`);
+  - un singur dispatch de recuperare (`reconcile_effect`).
+
+  Nota, documentul și apelul MCP își păstrează implementările proprii, deci garanțiile M1 sunt neschimbate.
+- **Schema v17:** `actions` primește clasa, dovada și acțiunea compensată. Acțiunile existente primesc clasa uneltei lor.
+  - Scrierile agentului în evidențe devin acțiuni Verified ale turei, în aceeași tranzacție. Cele dinainte de v17 rămân doar în istoricul evidenței.
+  - Undo pe ele devine o acțiune care o numește pe cea anulată.
+  - Faptele propuse devin acțiuni care așteaptă decizia ta din Memory; nu au cardul de aprobare M1, ca și înainte.
+- **Undo pentru documentul creat** (`undo_effect`):
+  - se face doar dacă fișierul e neschimbat (SHA-256) și folderul e încă împărțit pentru scriere;
+  - intenția se scrie întâi (o acțiune de compensare în starea Executing);
+  - apoi se șterge fișierul și se verifică absența lui;
+  - după o cădere se decide din fișier, fără repetare oarbă.
+- `nexus-storage` folosește `sha2` (deja în proiect, aprobat în M1) pentru hash-ul manifestelor interne.

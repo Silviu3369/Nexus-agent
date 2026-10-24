@@ -357,9 +357,12 @@ pub struct AdsHandlingView {
     pub failed: u32,
     /// Waiting their turn or a retry, or being worked on.
     pub waiting: u32,
-    /// Finished ads whose applications the user undid or corrected (within
-    /// 7 days of the agent's change).
+    /// Finished ads whose turn the user rejected, undid, corrected or
+    /// stopped within its 7-day review window; accepted once the window
+    /// passed with none of that; still in review before it ends.
     pub corrected: u32,
+    pub accepted: u32,
+    pub in_review: u32,
     pub failure_causes: Vec<CauseCountView>,
     pub prompt_tokens: u64,
     pub output_tokens: u64,

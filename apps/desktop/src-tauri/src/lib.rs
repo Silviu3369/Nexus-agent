@@ -25,6 +25,7 @@ pub fn run() {
             runs::get_run,
             runs::decide_approval,
             runs::cancel_run,
+            runs::undo_effect,
             runs::artifact_content,
             runs::reveal_artifact,
             runs::create_backup,

@@ -1126,7 +1126,15 @@ function ResultsPanel({ register, onClose }: { register: RegisterView; onClose: 
                     <td>{r.ads.nothing_recorded}</td>
                   </tr>
                   <tr>
-                    <th scope="row">You undid or corrected</th>
+                    <th scope="row">Accepted (kept 7 days)</th>
+                    <td>{r.ads.accepted}</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Still in review</th>
+                    <td>{r.ads.in_review}</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">You rejected, undid or corrected</th>
                     <td>{r.ads.corrected}</td>
                   </tr>
                   {r.ads.failed > 0 && (

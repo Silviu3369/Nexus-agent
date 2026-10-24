@@ -16,7 +16,7 @@ use nexus_protocol::{
     ChatStatus, ConnectionId, ConnectionView, ConversationId, ConversationSummary,
     ConversationView, DeletedView, ErrorCode, MessageId, ModelView, NexusError, PersonaView,
     ProjectId, ProviderChoice, RunFailure, RunId, SaveConnectionRequest, SavePersonaRequest,
-    SendMessageRequest, SendMessageResponse, SubmitNoteRequest,
+    SendMessageRequest, SendMessageResponse, SubmitNoteRequest, TurnView,
 };
 use nexus_providers::{
     ApiKey, Client, KeyDetection, Message, Part, ProviderError, ProviderEvent, ProviderKind,
@@ -494,13 +494,28 @@ impl Runtime {
                 .or_default()
                 .push(step_view(&row));
         }
+        let now = now_ms();
+        let turns: HashMap<RunId, TurnView> = self
+            .store
+            .turn_reviews(id)
+            .await
+            .map_err(to_nexus_error)?
+            .iter()
+            .map(|row| (row.run_id, super::acceptance::turn_view(row, now)))
+            .collect();
         Ok(ConversationView {
             conversation_id: conversation.id,
             project_id: conversation.project_id,
             title: conversation.title,
             messages: messages
                 .iter()
-                .map(|m| self.message_view(m, steps.remove(&m.id).unwrap_or_default()))
+                .map(|m| {
+                    let turn = match m.role {
+                        MessageRole::Model => m.run_id.and_then(|r| turns.get(&r).cloned()),
+                        MessageRole::User => None,
+                    };
+                    self.message_view(m, steps.remove(&m.id).unwrap_or_default(), turn)
+                })
                 .collect(),
         })
     }
@@ -515,7 +530,12 @@ impl Runtime {
         Ok(rows.iter().map(step_view).collect())
     }
 
-    fn message_view(&self, m: &MessageRow, steps: Vec<AgentStepView>) -> ChatMessageView {
+    fn message_view(
+        &self,
+        m: &MessageRow,
+        steps: Vec<AgentStepView>,
+        turn: Option<TurnView>,
+    ) -> ChatMessageView {
         let text = match m.status {
             MessageStatus::Streaming => self.replies.text(m.id).unwrap_or_default(),
             _ => m.text.clone(),
@@ -544,6 +564,7 @@ impl Runtime {
             output_tokens: m.output_tokens,
             created_at_ms: m.created_at_ms,
             steps,
+            turn,
         }
     }
 
@@ -1006,17 +1027,18 @@ impl Runtime {
             total_usage = add_usage(total_usage, call.usage);
             step += 1;
 
-            // What ends the step and waits for the user: a note, or a call
-            // to an MCP tool that can change things (the first one asked).
+            // What ends the step and waits for the user: the first call the
+            // broker routes to an effect run waiting for approval
+            // (ADR-ACTION-001: a note, a new document, an MCP call that can
+            // change things).
+            let writable = folders.iter().any(|f| f.can_write);
             let proposal = call
                 .calls
                 .iter()
                 .filter(|c| {
-                    c.name == NOTE_TOOL
-                        || (c.name == DOC_TOOL && folders.iter().any(|f| f.can_write))
-                        || mcp_offer
-                            .iter()
-                            .any(|o| o.function == c.name && o.needs_approval)
+                    super::broker::waits_for_approval(super::broker::route(
+                        &c.name, &mcp_offer, writable,
+                    ))
                 })
                 .min_by_key(|c| c.order);
             let fetch_call = call.calls.iter().find(|c| c.name == FETCH_TOOL);
@@ -1133,16 +1155,18 @@ impl Runtime {
                         "a proposal came with other tool calls; only the proposal is acted on"
                     );
                 }
-                let proposed_run_id = match mcp_offer.iter().find(|o| o.function == proposed.name) {
-                    Some(offered) => {
+                let tool = super::broker::route(&proposed.name, &mcp_offer, writable);
+                let offered = mcp_offer.iter().find(|o| o.function == proposed.name);
+                let proposed_run_id = match (tool.map(|t| t.id), offered) {
+                    (Some(crate::tools::registry::MCP_CALL_ID), Some(offered)) => {
                         self.propose_mcp_call(reply, offered, &proposed.arguments)
                             .await
                     }
-                    None if proposed.name == DOC_TOOL => {
+                    (Some(crate::tools::document_file::TOOL_ID), _) => {
                         self.propose_document(reply, &folders, &proposed.arguments)
                             .await
                     }
-                    None => self.propose_note(reply, &proposed.arguments).await,
+                    _ => self.propose_note(reply, &proposed.arguments).await,
                 };
                 let pause = match proposed_run_id {
                     Some(run_id) if budget.continuations < MAX_CONTINUATIONS => paused_turn(

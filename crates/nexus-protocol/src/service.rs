@@ -50,6 +50,10 @@ pub trait NexusService {
     /// Bound to the manifest hash the client previewed (`CONTRACTE_NEXUS_RO.md` §5).
     async fn decide_approval(request: DecideApprovalRequest) -> Result<RunView, NexusError>;
 
+    /// Undoes a run's effect that can be undone (a document Nexus created,
+    /// deleted only if unchanged); the user's own request, confirmed.
+    async fn undo_effect(run_id: RunId) -> Result<RunView, NexusError>;
+
     async fn cancel_run(run_id: RunId) -> Result<RunView, NexusError>;
 
     async fn get_events(after: i64, limit: u32) -> Result<EventsPage, NexusError>;

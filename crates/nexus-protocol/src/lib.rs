@@ -28,10 +28,10 @@ pub use automation::{
     AutomationRunStatus, AutomationRunView, AutomationView, SaveAutomationRequest, Schedule,
 };
 pub use chat::{
-    AgentStepDetail, AgentStepStatus, AgentStepView, BackupModelView, ChatMessageView, ChatRole,
-    ChatStatus, ConnectionView, ConversationSummary, ConversationView, DeletedView, ModelView,
-    PersonaView, ProviderChoice, SaveConnectionRequest, SavePersonaRequest, SendMessageRequest,
-    SendMessageResponse, ThinkingLevel,
+    Acceptance, AgentStepDetail, AgentStepStatus, AgentStepView, BackupModelView, ChatMessageView,
+    ChatRole, ChatStatus, ConnectionView, ConversationSummary, ConversationView, DeletedView,
+    ModelView, PersonaView, ProviderChoice, SaveConnectionRequest, SavePersonaRequest,
+    SendMessageRequest, SendMessageResponse, ThinkingLevel, TurnView,
 };
 pub use error::{ErrorCode, NexusError};
 pub use files::{FolderEntryView, FolderView, SaveFolderRequest};

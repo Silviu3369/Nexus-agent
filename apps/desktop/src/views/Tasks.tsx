@@ -1,12 +1,17 @@
 // Tasks: every request given to the agent, with its runs, steps and the
 // actions they led to. A task continues with follow-up messages.
 
+import { causeText } from "../model/records.ts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ConversationView } from "@nexus/contracts";
 import { api, describeError } from "../api";
 import { ApprovalCard } from "../components/ApprovalCard";
 import { Timeline } from "../components/Timeline";
-import { buildRuns, taskRows } from "../model/execution.ts";
+import {
+  buildRuns,
+  taskRows,
+  turnLine,
+} from "../model/execution.ts";
 import type { ExecStatus, RunVM } from "../model/execution.ts";
 import { ago, clock, duration } from "../model/format.ts";
 import { RunDetail } from "../Notes";
@@ -364,6 +369,10 @@ function RunBlock({
         </div>
       )}
       {run.failure && <p className={run.status === "cancelled" ? "muted" : "error"}>{replyFailure(run.failure)}</p>}
+      {run.turn?.failure_cause && run.turn.failure_cause !== "HostInterrupted" && run.status !== "cancelled" && (
+        <p className="muted turn-line">{`Cause: ${causeText(run.turn.failure_cause)}`}</p>
+      )}
+      {turnLine(run.turn) && <p className="muted turn-line">{turnLine(run.turn)}</p>}
       {notes.map((note) =>
         note.status === "AwaitingApproval" ? (
           <ApprovalCard key={note.run_id} run={note} agentName={agentName} />

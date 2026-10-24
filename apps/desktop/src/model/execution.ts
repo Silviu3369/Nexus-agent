@@ -23,6 +23,7 @@ import type {
   RunId,
   RunStatus,
   RunView,
+  TurnView,
 } from "@nexus/contracts";
 import { hostOf, kib, median, seconds } from "./format.ts";
 
@@ -110,6 +111,8 @@ export interface RunVM {
   /** The latest reply of the run: the one a Stop or a deletion names. */
   messageId: string;
   streaming: boolean;
+  /** How the turn ended and whether the user kept it (ADR-TASK-001). */
+  turn: TurnView | null;
 }
 
 export const STOPPED_BY_USER = "stopped by the user";
@@ -652,6 +655,7 @@ export function buildRuns(
       current.outputTokens = sum(current.outputTokens, m.output_tokens);
       current.messageId = m.message_id;
       current.streaming = m.status === "Streaming";
+      current.turn = m.turn ?? current.turn;
       if (proposed) current.proposedRunIds.push(proposed);
       continue;
     }
@@ -673,6 +677,7 @@ export function buildRuns(
       outputTokens: m.output_tokens,
       proposedRunIds: proposed ? [proposed] : [],
       streaming: m.status === "Streaming",
+      turn: m.turn,
     };
     out.push(current);
     request = null;
@@ -1116,6 +1121,7 @@ const EVENT_TEXT: Record<string, { title: string; tool: ActivityTool; status?: E
   InboxFileSeen: { title: "New file seen in the inbox", tool: "Records" },
   InboxFileHandled: { title: "Inbox file sent to the agent", tool: "Records" },
   InboxFileRetried: { title: "Inbox file put back in line", tool: "Records" },
+  InterventionRecorded: { title: "Your decision about the agent's work recorded", tool: "System" },
   InboxFileSettled: { title: "Inbox file's task ended", tool: "Records" },
   RecordAdded: { title: "Record added", tool: "Records" },
   RecordUpdated: { title: "Record changed", tool: "Records" },
@@ -1252,7 +1258,7 @@ export function invalidatedBy(events: EventView[]): Set<Collection> {
       out.add("focus");
       // A finished model call adds to today's tokens.
       out.add("usage");
-    } else if (k.startsWith("Message")) {
+    } else if (k.startsWith("Message") || k === "InterventionRecorded") {
       out.add("conversations");
       out.add("steps");
       out.add("focus");
@@ -1304,4 +1310,54 @@ export function invalidatedBy(events: EventView[]): Set<Collection> {
     }
   }
   return out;
+}
+
+const INTERVENTION_TEXT: Record<string, string> = {
+  Rejected: "rejected",
+  Undo: "undid",
+  Correction: "corrected",
+  Stopped: "stopped",
+};
+
+/** One line on how a turn stands (ADR-TASK-001): in review until a date,
+ *  accepted, or not accepted because the user rejected, undid, corrected
+ *  or stopped what it did. `null` for a turn still running or waiting. */
+export function turnLine(turn: TurnView | null): string | null {
+  if (!turn) return null;
+  switch (turn.acceptance) {
+    case "InReview":
+      return turn.review_until_ms === null
+        ? "In review"
+        : `In review until ${new Date(turn.review_until_ms).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}: undo or correct it before then and it does not count as accepted`;
+    case "Accepted":
+      return "Accepted: kept for 7 days without being undone or corrected";
+    case "NotAccepted": {
+      const did = [...new Set(turn.interventions.map((k) => INTERVENTION_TEXT[k]).filter(Boolean))];
+      return `Not accepted: you ${did.join(", ") || "changed"} what it did`;
+    }
+    default:
+      return null;
+  }
+}
+
+const EFFECT_TEXT: Record<string, string> = {
+  Read: "Only reads",
+  InternalReversible: "Changes only Nexus's own data; can be undone",
+  ExternalReversible: "Changes something outside Nexus; can be undone",
+  ExternalIrreversible: "Changes something outside Nexus; cannot be undone",
+};
+
+const EVIDENCE_TEXT: Record<string, string> = {
+  Verified: "proven by reading the result back",
+  Reported: "as the service reported it, not checked independently",
+  Unverifiable: "the result cannot be checked",
+};
+
+/** What kind of effect a run has and how its success is proven
+ *  (ADR-ACTION-001), in one line; `null` when the run does not say. */
+export function effectText(effectClass: string | null, evidence: string | null): string | null {
+  const effect = effectClass ? EFFECT_TEXT[effectClass] : undefined;
+  if (!effect) return null;
+  const proof = evidence ? EVIDENCE_TEXT[evidence] : undefined;
+  return proof ? `${effect} · ${proof}` : effect;
 }

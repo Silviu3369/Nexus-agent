@@ -281,6 +281,44 @@ closed_enum!(TaskOrigin {
 // MCP call) or one turn of the agent: a request and every reply to it.
 closed_enum!(RunType { Effect, Agent });
 
+// What the user did about the agent's work (ADR-TASK-001): decided a
+// proposal, undid or corrected a change, tried again, or stopped it.
+closed_enum!(InterventionKind {
+    Approved,
+    Rejected,
+    Undo,
+    Correction,
+    Retry,
+    Stopped,
+});
+
+impl InterventionKind {
+    /// Counts against accepting the turn it concerns: the user turned down,
+    /// undid, corrected or stopped what the agent did.
+    pub fn is_negative(self) -> bool {
+        use InterventionKind::*;
+        matches!(self, Rejected | Undo | Correction | Stopped)
+    }
+}
+
+// What a tool's effect is (ADR-ACTION-001): it only reads; it changes
+// Nexus's own state and can be undone; it changes something outside Nexus
+// that can be put back; or something that cannot.
+closed_enum!(EffectClass {
+    Read,
+    InternalReversible,
+    ExternalReversible,
+    ExternalIrreversible,
+});
+
+// How well an action's success is proven (ADR-ACTION-001): read back and
+// checked, only reported by the service, or not checkable at all.
+closed_enum!(Evidence {
+    Verified,
+    Reported,
+    Unverifiable,
+});
+
 // Why a run failed (ADR-TASK-001), a closed list. `Internal` covers what no
 // other cause names.
 closed_enum!(FailureCause {

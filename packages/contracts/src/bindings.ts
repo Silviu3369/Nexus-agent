@@ -77,7 +77,7 @@ export type RunKind = "Note" | "McpCall" | "Document"
  */
 export type McpCallView = { server: string; url: string; tool: string; arguments_json: string; result_chars: number | null; truncated: boolean | null; duration_ms: number | null }
 
-export type RunView = { run_id: RunId; title: string; status: RunStatus; revision: number; failure: RunFailure | null; pending_approval: PendingApproval | null; artifact: ArtifactSummary | null; origin: RunOrigin | null; kind: RunKind; call: McpCallView | null; created_at_ms: number; updated_at_ms: number }
+export type RunView = { run_id: RunId; title: string; status: RunStatus; effect_class: string | null; evidence: string | null; undone_at_ms: number | null; can_undo: boolean; revision: number; failure: RunFailure | null; pending_approval: PendingApproval | null; artifact: ArtifactSummary | null; origin: RunOrigin | null; kind: RunKind; call: McpCallView | null; created_at_ms: number; updated_at_ms: number }
 
 export type Snapshot = { runs: RunView[]; watermark: number }
 
@@ -142,7 +142,7 @@ export type AgentStepDetail = { kind: "ModelCall"; model: string; first_byte_ms:
 
 export type AgentStepView = { step_id: AgentStepId; message_id: MessageId; conversation_id: ConversationId; conversation_title: string; seq: number; status: AgentStepStatus; detail: AgentStepDetail; started_at_ms: number; finished_at_ms: number | null }
 
-export type ChatMessageView = { message_id: MessageId; role: ChatRole; text: string; status: ChatStatus; model: string | null; persona_version: number | null; failure: RunFailure | null; proposed_run_id: RunId | null; prompt_tokens: number | null; output_tokens: number | null; created_at_ms: number; steps: AgentStepView[] }
+export type ChatMessageView = { message_id: MessageId; role: ChatRole; text: string; status: ChatStatus; model: string | null; persona_version: number | null; failure: RunFailure | null; proposed_run_id: RunId | null; prompt_tokens: number | null; output_tokens: number | null; created_at_ms: number; steps: AgentStepView[]; turn: TurnView | null }
 
 export type ConversationSummary = { conversation_id: ConversationId; project_id: ProjectId | null; title: string; updated_at_ms: number }
 
@@ -278,11 +278,23 @@ export type SourceCountView = { source: string; counts: GroupCountView }
 export type CauseCountView = { cause: string; count: number }
 
 /**
+ * Whether the user kept what the agent did in a turn (ADR-TASK-001): a
+ * turn that succeeded is accepted once its review window (7 days) passes
+ * with nothing of it rejected, undone, corrected or stopped.
+ */
+export type Acceptance = "NotApplicable" | "InReview" | "Accepted" | "NotAccepted"
+
+/**
+ * One turn of the agent: a request and every reply to it.
+ */
+export type TurnView = { run_id: RunId; status: RunStatus; failure_cause: string | null; acceptance: Acceptance; review_until_ms: number | null; interventions: string[] }
+
+/**
  * How the agent handled the job ads from the inbox (ADR-TASK-001),
  * counted from each ad's task and its runs; the cost is an estimate from
  * the prices the user entered.
  */
-export type AdsHandlingView = { seen: number; finished: number; recorded: number; nothing_recorded: number; failed: number; waiting: number; corrected: number; failure_causes: CauseCountView[]; prompt_tokens: number; output_tokens: number; estimated_cost_usd: number | null; median_seconds: number | null }
+export type AdsHandlingView = { seen: number; finished: number; recorded: number; nothing_recorded: number; failed: number; waiting: number; corrected: number; accepted: number; in_review: number; failure_causes: CauseCountView[]; prompt_tokens: number; output_tokens: number; estimated_cost_usd: number | null; median_seconds: number | null }
 
 /**
  * What the job applications led to (`PLAN_NEXUS_RO.md` §3a), counted from

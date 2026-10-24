@@ -72,6 +72,7 @@ export const api = {
   decide: (approvalId: ApprovalId, manifestSha256: string, approve: boolean) =>
     invoke<RunView>("decide_approval", { approvalId, manifestSha256, approve }),
   cancelRun: (runId: RunId) => invoke<RunView>("cancel_run", { runId }),
+  undoEffect: (runId: RunId) => invoke<RunView>("undo_effect", { runId }),
   artifactContent: (artifactId: ArtifactId) => invoke<string>("artifact_content", { artifactId }),
   revealArtifact: (runId: RunId) => invoke<null>("reveal_artifact", { runId }),
   createBackup: () => invoke<BackupSummary>("create_backup"),

@@ -257,6 +257,25 @@ impl Store {
                 json!({"scope": new.scope.as_str(), "project": new.project_id.map(|p| p.to_string())}),
                 now,
             )?;
+            // The agent's proposal is an action of its turn (ADR-ACTION-001),
+            // waiting for the user's decision in Memory.
+            if new.source == MemorySource::Agent
+                && let Some(message) = new.message_id
+                && let Some(turn) = crate::actions::turn_of_message(&tx, &message.to_string())?
+            {
+                crate::actions::record(
+                    &tx,
+                    &turn,
+                    "MemoryFact",
+                    1,
+                    nexus_core::EffectClass::InternalReversible,
+                    nexus_core::Evidence::Verified,
+                    nexus_core::ActionState::AwaitingApproval,
+                    json!({"memory": id.to_string(), "scope": new.scope.as_str()}),
+                    None,
+                    now,
+                )?;
+            }
             let row = load_memory(&tx, id)?;
             tx.commit()?;
             Ok(row)
@@ -331,6 +350,29 @@ impl Store {
                  decided_at_ms = ?2 WHERE id = ?3 AND status = 'Proposed'",
                 params![next.as_str(), now, id.to_string()],
             )?;
+            // A fact the agent proposed: the user's decision about its work.
+            if current.source == MemorySource::Agent {
+                crate::actions::decide_fact(&tx, &id.to_string(), approve, now)?;
+                let conversation = current.conversation_id.map(|c| c.to_string());
+                let message = current.message_id.map(|m| m.to_string());
+                if let Some((task, run)) =
+                    crate::interventions::turn_of(&tx, conversation.as_deref(), message.as_deref())?
+                {
+                    crate::interventions::record(
+                        &tx,
+                        &task,
+                        run.as_deref(),
+                        None,
+                        if approve {
+                            nexus_core::InterventionKind::Approved
+                        } else {
+                            nexus_core::InterventionKind::Rejected
+                        },
+                        json!({"memory": id.to_string()}),
+                        now,
+                    )?;
+                }
+            }
             insert_event(
                 &tx,
                 "MemoryDecided",

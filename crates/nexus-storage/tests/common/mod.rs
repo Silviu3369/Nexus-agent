@@ -1,6 +1,8 @@
 //! Support shared by the storage tests.
 
-/// Takes a database from schema version 15 back to 14, so an older
+/// Takes a database from the current schema back to version 14 (version
+/// 16 only added the interventions table, version 17 columns of actions),
+/// so an older
 /// migration test can go on undoing to the version it starts from. Version
 /// 15 (ADR-TASK-001) only added columns, to tables other tables refer to, so
 /// those tables are rebuilt with their exact version-14 definition, read
@@ -9,6 +11,15 @@
 #[allow(dead_code)]
 pub fn undo_v15(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
     let v14 = v14_tables();
+    conn.execute_batch(
+        "DROP TABLE IF EXISTS interventions;
+         DELETE FROM actions WHERE compensates_action_id IS NOT NULL
+             OR run_id IN (SELECT id FROM runs WHERE kind = 'Agent');
+         DROP INDEX IF EXISTS actions_by_run; DROP INDEX IF EXISTS actions_by_compensated;
+         ALTER TABLE actions DROP COLUMN compensates_action_id;
+         ALTER TABLE actions DROP COLUMN effect_class;
+         ALTER TABLE actions DROP COLUMN evidence;",
+    )?;
     conn.execute_batch("PRAGMA foreign_keys = OFF; PRAGMA legacy_alter_table = ON;")?;
     conn.execute_batch(
         "DROP INDEX IF EXISTS tasks_by_conversation; DROP INDEX IF EXISTS runs_by_task;

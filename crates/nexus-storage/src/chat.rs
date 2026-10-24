@@ -1074,11 +1074,18 @@ fn remove_messages(tx: &Transaction, ids: &[String]) -> Result<usize, StorageErr
         tx.execute("DELETE FROM messages WHERE id = ?1", [id])?;
     }
     for turn in turns {
-        tx.execute(
-            "DELETE FROM runs WHERE id = ?1 AND kind = 'Agent'
-             AND NOT EXISTS (SELECT 1 FROM messages WHERE run_id = ?1)",
+        let left: i64 = tx.query_row(
+            "SELECT count(*) FROM messages WHERE run_id = ?1",
             [&turn],
+            |r| r.get(0),
         )?;
+        if left == 0 {
+            // The turn goes with its messages, and with it the actions it
+            // recorded inside Nexus (ADR-ACTION-001); effects it proposed
+            // are runs of their own and stay, without the link.
+            tx.execute("DELETE FROM actions WHERE run_id = ?1", [&turn])?;
+            tx.execute("DELETE FROM runs WHERE id = ?1 AND kind = 'Agent'", [&turn])?;
+        }
     }
     Ok(ids.len())
 }
@@ -1356,7 +1363,7 @@ fn settle_turn(
             )),
         ),
     };
-    tx.execute(
+    let ended = tx.execute(
         "UPDATE runs SET state = ?1, error_code = ?2, error_message = ?3, failure_cause = ?4,
          revision = revision + 1, updated_at_ms = ?5 WHERE id = ?6 AND kind = 'Agent' AND state = 'Running'",
         params![
@@ -1368,6 +1375,23 @@ fn settle_turn(
             run.to_string()
         ],
     )?;
+    // Only the user stops a reply (ADR-TASK-001: an intervention).
+    if ended == 1 && state == RunState::Cancelled {
+        let task: String = tx.query_row(
+            "SELECT task_id FROM runs WHERE id = ?1",
+            [run.to_string()],
+            |r| r.get(0),
+        )?;
+        crate::interventions::record(
+            tx,
+            &task,
+            Some(&run.to_string()),
+            None,
+            nexus_core::InterventionKind::Stopped,
+            json!({}),
+            now,
+        )?;
+    }
     let proposed = settlement
         .proposed_run_id
         .into_iter()

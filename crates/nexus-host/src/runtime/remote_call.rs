@@ -12,20 +12,17 @@ use std::sync::Mutex;
 use nexus_core::RunState;
 use nexus_protocol::{McpCallPreview, McpCallView, NexusError, OperationId, RunId};
 use nexus_providers::mcp::{McpError, ToolOutput};
-use nexus_storage::{
-    NewAction, NewOperation, RunDetail, RunError, StorageError, SubmitOutcome, now_ms,
-};
+use nexus_storage::{NewOperation, RunDetail, RunError, StorageError, SubmitOutcome, now_ms};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::{MANIFEST_VERSION, Manifest, POLICY_REVISION, Runtime, to_nexus_error};
+use super::{Runtime, to_nexus_error};
 use crate::fault;
 use crate::tools::markdown_artifact::sha256_hex;
 
 /// `kind` of a stored call request (a note request has none).
 pub(crate) const KIND: &str = "mcp_call";
-pub(crate) const TOOL_ID: &str = "McpToolCall";
-const TOOL_VERSION: u32 = 1;
+pub(crate) const TOOL_ID: &str = crate::tools::registry::MCP_CALL_ID;
 /// Answers waiting for their task to continue (normally for well under a
 /// second); older ones are dropped.
 const MAX_KEPT_ANSWERS: usize = 16;
@@ -236,43 +233,19 @@ impl Runtime {
         detail: &RunDetail,
         call: &McpCallRequest,
     ) -> Result<(), StorageError> {
-        let now = now_ms();
-        let operation_id = OperationId::new();
-        let expires_at_ms = now.saturating_add(self.approval_ttl_ms);
-        let manifest = Manifest {
-            manifest_version: MANIFEST_VERSION,
-            actor: "local-user",
-            channel: "dashboard",
-            project_id: detail.task.project_id.to_string(),
-            operation_id: operation_id.to_string(),
-            tool_id: TOOL_ID,
-            tool_version: TOOL_VERSION,
-            effect: "call-remote-tool",
-            destination: &call.url,
-            content_sha256: call.sha256(),
-            content_size: call.arguments_size(),
-            policy_revision: POLICY_REVISION,
-            single_use: true,
-            expires_at_ms,
-        };
-        let manifest_json =
-            serde_json::to_string(&manifest).map_err(|e| StorageError::Corrupt(e.to_string()))?;
-        let manifest_sha256 = sha256_hex(manifest_json.as_bytes());
-        self.store
-            .prepare_action(
-                detail.run.id,
-                NewAction {
-                    tool_id: TOOL_ID.to_string(),
-                    tool_version: i64::from(TOOL_VERSION),
-                    operation_id,
-                    manifest_json,
-                    manifest_sha256,
-                    approval_expires_at_ms: expires_at_ms,
-                },
-                now,
-            )
-            .await?;
-        Ok(())
+        let tool = crate::tools::registry::by_id(TOOL_ID).expect("registered");
+        self.prepare_effect(
+            detail,
+            tool,
+            OperationId::new(),
+            super::broker::Target {
+                effect: "call-remote-tool",
+                destination: call.url.clone(),
+                content_sha256: call.sha256(),
+                content_size: call.arguments_size(),
+            },
+        )
+        .await
     }
 
     /// Approved: the call must still be the approved one, to the same
@@ -309,7 +282,11 @@ impl Runtime {
             staging_relpath: format!("mcp-call/{}/request", action.operation_id),
             expected_sha256: call.sha256(),
             expected_size: call.arguments_size() as i64,
-            algorithm_version: i64::from(TOOL_VERSION),
+            algorithm_version: i64::from(
+                crate::tools::registry::by_id(TOOL_ID)
+                    .expect("registered")
+                    .version,
+            ),
         };
         match self.store.claim_effect(run_id, intent, now_ms()).await {
             Ok(_) => {}

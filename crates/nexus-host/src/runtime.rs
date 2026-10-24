@@ -14,8 +14,7 @@ use nexus_protocol::{
     SystemStatusView,
 };
 use nexus_storage::{
-    Decision, NewAction, NewOperation, RunDetail, RunError, StorageError, Store, SubmitOutcome,
-    now_ms,
+    Decision, NewOperation, RunDetail, RunError, StorageError, Store, SubmitOutcome, now_ms,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Notify, watch};
@@ -24,9 +23,12 @@ use crate::backup;
 use crate::fault;
 use crate::system::SystemMonitor;
 use crate::tools::markdown_artifact::{self as note_tool, ArtifactPaths, NoteContent, Observed};
+use crate::tools::registry;
 use crate::vault::SecretVault;
 
+mod acceptance;
 mod automation;
+mod broker;
 mod chat;
 mod document_run;
 mod files;
@@ -212,6 +214,7 @@ impl Runtime {
             );
         } else {
             runtime.reconcile_interrupted().await?;
+            runtime.reconcile_compensations().await?;
             runtime.store.fail_interrupted_messages(now_ms()).await?;
             runtime
                 .store
@@ -279,116 +282,28 @@ impl Runtime {
         let Some(detail) = self.store.claim_next_queued_run(now_ms()).await? else {
             return Ok(false);
         };
-        let run_id = detail.run.id;
-        if let Some(document) = document_run::request_of(&detail) {
-            match detail.action.as_ref().map(|a| a.state) {
-                None => self.prepare_document(&detail, &document).await?,
-                Some(ActionState::Authorized) => self.execute_document(&detail, &document).await?,
-                Some(ActionState::Executing) => self.resume_document(&detail, &document).await?,
-                Some(other) => {
-                    self.store
-                        .mark_needs_review(
-                            run_id,
-                            RunError::new(
-                                "OutcomeUnknown",
-                                format!("queued document has action in state {other}"),
-                            ),
-                            now_ms(),
-                        )
-                        .await?;
-                }
-            }
-            return Ok(true);
-        }
-        if let Some(call) = remote_call::request_of(&detail) {
-            match detail.action.as_ref().map(|a| a.state) {
-                None => self.prepare_call(&detail, &call).await?,
-                Some(ActionState::Authorized) => self.execute_call(&detail, &call).await?,
-                Some(other) => {
-                    self.store
-                        .mark_needs_review(
-                            run_id,
-                            RunError::new(
-                                "OutcomeUnknown",
-                                format!("queued call has action in state {other}"),
-                            ),
-                            now_ms(),
-                        )
-                        .await?;
-                }
-            }
-            return Ok(true);
-        }
-        let content = match note_content(&detail) {
-            Ok(content) => content,
-            Err(reason) => {
-                self.store
-                    .fail_run(run_id, RunError::new("InvalidRequest", reason), now_ms())
-                    .await?;
-                return Ok(true);
-            }
-        };
-        match detail.action.as_ref().map(|a| a.state) {
-            None => self.prepare(&detail, &content).await?,
-            Some(ActionState::Authorized) => self.execute(&detail, &content).await?,
-            Some(ActionState::Executing) => self.resume(&detail, &content).await?,
-            Some(other) => {
-                self.store
-                    .mark_needs_review(
-                        run_id,
-                        RunError::new(
-                            "OutcomeUnknown",
-                            format!("queued run has action in state {other}"),
-                        ),
-                        now_ms(),
-                    )
-                    .await?;
-            }
-        }
+        self.run_effect(&detail).await?;
         Ok(true)
     }
 
-    /// Builds the exact manifest and asks for approval. Nothing is written.
+    /// The note's manifest: its place in Nexus's store and its bytes.
     async fn prepare(&self, detail: &RunDetail, content: &NoteContent) -> Result<(), StorageError> {
-        let now = now_ms();
         let operation_id = OperationId::new();
         let paths =
             ArtifactPaths::for_operation(&self.artifact_root, detail.task.project_id, operation_id);
-        let expires_at_ms = now.saturating_add(self.approval_ttl_ms);
-        let manifest = Manifest {
-            manifest_version: MANIFEST_VERSION,
-            actor: "local-user",
-            channel: "dashboard",
-            project_id: detail.task.project_id.to_string(),
-            operation_id: operation_id.to_string(),
-            tool_id: note_tool::TOOL_ID,
-            tool_version: note_tool::TOOL_VERSION,
-            effect: "create-new-file",
-            destination: &paths.target_relpath,
-            content_sha256: content.sha256_hex(),
-            content_size: content.size(),
-            policy_revision: POLICY_REVISION,
-            single_use: true,
-            expires_at_ms,
-        };
-        let manifest_json =
-            serde_json::to_string(&manifest).map_err(|e| StorageError::Corrupt(e.to_string()))?;
-        let manifest_sha256 = note_tool::sha256_hex(manifest_json.as_bytes());
-        self.store
-            .prepare_action(
-                detail.run.id,
-                NewAction {
-                    tool_id: note_tool::TOOL_ID.to_string(),
-                    tool_version: i64::from(note_tool::TOOL_VERSION),
-                    operation_id,
-                    manifest_json,
-                    manifest_sha256,
-                    approval_expires_at_ms: expires_at_ms,
-                },
-                now,
-            )
-            .await?;
-        Ok(())
+        let tool = registry::by_id(note_tool::TOOL_ID).expect("registered");
+        self.prepare_effect(
+            detail,
+            tool,
+            operation_id,
+            broker::Target {
+                effect: "create-new-file",
+                destination: paths.target_relpath.clone(),
+                content_sha256: content.sha256_hex(),
+                content_size: content.size(),
+            },
+        )
+        .await
     }
 
     /// Approved: re-check preconditions, consume the approval together with
@@ -577,64 +492,47 @@ impl Runtime {
                 continue;
             };
 
-            if let Some(document) = document_run::request_of(&detail) {
-                tracing::info!(run = %run_id, "reconciling an interrupted document");
-                self.reconcile_document(&detail, &document, operation_id)
+            self.reconcile_effect(&detail, operation_id).await?;
+        }
+        self.wake.notify_one();
+        Ok(())
+    }
+
+    /// Startup: a note interrupted after its intent, decided from Nexus's
+    /// store (RUN-04…06).
+    async fn reconcile_note(
+        &self,
+        detail: &RunDetail,
+        content: &NoteContent,
+        operation_id: OperationId,
+    ) -> Result<(), StorageError> {
+        let run_id = detail.run.id;
+        let paths = self.paths(detail, operation_id);
+        let observed = observe(&paths, content).await;
+        tracing::info!(run = %run_id, ?observed, "reconciling interrupted run");
+        match observed {
+            Observed::Complete => {
+                // RUN-05: the file was published before the crash; record
+                // it instead of creating a second one.
+                discard_staging(&paths).await;
+                self.store.complete_operation(run_id, now_ms()).await?;
+            }
+            Observed::Uncertain(reason) if paths.target().exists() => {
+                // RUN-06: something is there but it is not provably ours.
+                self.store
+                    .mark_needs_review(run_id, RunError::new("OutcomeUnknown", reason), now_ms())
                     .await?;
-                continue;
             }
-            if remote_call::request_of(&detail).is_some() {
-                // A call cannot be observed afterwards: it may have reached
-                // the server, so it is left for the user, never repeated.
-                tracing::info!(run = %run_id, "reconciling an interrupted MCP call");
-                self.reconcile_call(run_id).await?;
-                continue;
-            }
-            let paths = self.paths(&detail, operation_id);
-            let content = match note_content(&detail) {
-                Ok(c) => c,
-                Err(reason) => {
-                    self.store
-                        .mark_needs_review(
-                            run_id,
-                            RunError::new("OutcomeUnknown", reason),
-                            now_ms(),
-                        )
-                        .await?;
-                    continue;
-                }
-            };
-            let observed = observe(&paths, &content).await;
-            tracing::info!(run = %run_id, ?observed, "reconciling interrupted run");
-            match observed {
-                Observed::Complete => {
-                    // RUN-05: the file was published before the crash; record
-                    // it instead of creating a second one.
-                    discard_staging(&paths).await;
-                    self.store.complete_operation(run_id, now_ms()).await?;
-                }
-                Observed::Uncertain(reason) if paths.target().exists() => {
-                    // RUN-06: something is there but it is not provably ours.
-                    self.store
-                        .mark_needs_review(
-                            run_id,
-                            RunError::new("OutcomeUnknown", reason),
-                            now_ms(),
-                        )
-                        .await?;
-                }
-                Observed::NoEffect | Observed::Uncertain(_) => {
-                    // Nothing published (at most an unpublished staging file).
-                    discard_staging(&paths).await;
-                    if detail.cancellation_requested {
-                        self.store.finish_cancellation(run_id, now_ms()).await?;
-                    } else {
-                        self.store.requeue_reconciled(run_id, now_ms()).await?;
-                    }
+            Observed::NoEffect | Observed::Uncertain(_) => {
+                // Nothing published (at most an unpublished staging file).
+                discard_staging(&paths).await;
+                if detail.cancellation_requested {
+                    self.store.finish_cancellation(run_id, now_ms()).await?;
+                } else {
+                    self.store.requeue_reconciled(run_id, now_ms()).await?;
                 }
             }
         }
-        self.wake.notify_one();
         Ok(())
     }
 
@@ -914,10 +812,37 @@ impl Runtime {
             _ => pending_approval,
         };
 
+        // ADR-ACTION-001: what kind of effect it is, how its success is
+        // proven, and whether it was (or can be) undone.
+        let undone_at_ms = d
+            .run
+            .outcome_json
+            .as_deref()
+            .and_then(|o| serde_json::from_str::<serde_json::Value>(o).ok())
+            .and_then(|o| o.get("undone_at_ms").and_then(serde_json::Value::as_i64));
+        let can_undo = document.is_some()
+            && d.run.state == RunState::Succeeded
+            && undone_at_ms.is_none()
+            && d.action.as_ref().is_some_and(|a| {
+                registry::by_id(&a.tool_id)
+                    .is_some_and(|t| t.compensation == registry::Compensation::DeleteIfUnchanged)
+            });
         RunView {
             run_id: d.run.id,
             title,
             status: status(d.run.state),
+            effect_class: d
+                .action
+                .as_ref()
+                .and_then(|a| a.effect_class)
+                .map(|c| c.as_str().to_string()),
+            evidence: d
+                .action
+                .as_ref()
+                .and_then(|a| a.evidence)
+                .map(|e| e.as_str().to_string()),
+            undone_at_ms,
+            can_undo,
             revision: d.run.revision,
             failure: d.run.error_code.as_ref().map(|code| RunFailure {
                 code: code.clone(),

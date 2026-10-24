@@ -115,6 +115,8 @@ mod tests {
             ts::export::<nexus_protocol::ScoreBandView>(&conf),
             ts::export::<nexus_protocol::SourceCountView>(&conf),
             ts::export::<nexus_protocol::CauseCountView>(&conf),
+            ts::export::<nexus_protocol::Acceptance>(&conf),
+            ts::export::<nexus_protocol::TurnView>(&conf),
             ts::export::<nexus_protocol::AdsHandlingView>(&conf),
             ts::export::<nexus_protocol::JobResultsView>(&conf),
             ts::export::<nexus_protocol::SaveInboxRequest>(&conf),

@@ -11,6 +11,7 @@ use crate::ids::{
 };
 use crate::memory::MemoryScope;
 use crate::runs::RunFailure;
+use crate::runs::RunStatus;
 
 /// The user's speed/quality choice, where the model supports it (Gemini
 /// 3.x). Ignored for a model that does not.
@@ -129,6 +130,36 @@ pub struct ChatMessageView {
     /// What the agent did for this reply, in order (empty for the user's
     /// own messages).
     pub steps: Vec<AgentStepView>,
+    /// The turn this reply belongs to (ADR-TASK-001); `None` for the user's
+    /// own messages.
+    pub turn: Option<TurnView>,
+}
+
+/// Whether the user kept what the agent did in a turn (ADR-TASK-001): a
+/// turn that succeeded is accepted once its review window (7 days) passes
+/// with nothing of it rejected, undone, corrected or stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub enum Acceptance {
+    /// The turn did not succeed (failed, stopped, waiting or running).
+    NotApplicable,
+    InReview,
+    Accepted,
+    NotAccepted,
+}
+
+/// One turn of the agent: a request and every reply to it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct TurnView {
+    pub run_id: RunId,
+    pub status: RunStatus,
+    /// Why it failed, from ADR-TASK-001's closed list.
+    pub failure_cause: Option<String>,
+    pub acceptance: Acceptance,
+    /// When the review window ends, for a turn still in review.
+    pub review_until_ms: Option<i64>,
+    /// What the user did about it, oldest first: Approved, Rejected, Undo,
+    /// Correction, Retry or Stopped.
+    pub interventions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]

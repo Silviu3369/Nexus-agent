@@ -646,6 +646,11 @@ try {
   Click-Button $win "Approve" 20
   Check (Wait-Text $win "The letter is saved in Jobs." 20) "after the approval the letter is written and the task continues"
   Check (Test-Path $letter) "the Word file exists in the shared folder"
+  Click-Button $win "Tasks"
+  $letterTask = Wait-Like $win "Write my cover letter for Acme"
+  if ($letterTask) { Invoke-Element $letterTask }
+  Check ($null -ne (Wait-Contains $win "Changes something outside Nexus; can be undone")) "the letter's run says it changes something outside Nexus and can be undone"
+  Check ($null -ne (Find-Named $win "Undo" ([System.Windows.Automation.ControlType]::Button))) "the letter can be undone from its task"
   Click-Button $win "Jobs"
   Click-Button $win "Import"
   Click-Button $win "Preview" 15

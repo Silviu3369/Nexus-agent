@@ -119,6 +119,15 @@ pub struct RunView {
     pub run_id: RunId,
     pub title: String,
     pub status: RunStatus,
+    /// ADR-ACTION-001: the class of its effect (Read, InternalReversible,
+    /// ExternalReversible, ExternalIrreversible) and the evidence its
+    /// success has (Verified, Reported, Unverifiable).
+    pub effect_class: Option<String>,
+    pub evidence: Option<String>,
+    /// When the user undid its effect (a document Nexus created).
+    pub undone_at_ms: Option<i64>,
+    /// Its effect can be undone now.
+    pub can_undo: bool,
     pub revision: i64,
     pub failure: Option<RunFailure>,
     pub pending_approval: Option<PendingApproval>,

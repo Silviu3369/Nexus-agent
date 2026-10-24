@@ -157,13 +157,13 @@ async fn state_columns_accept_exactly_the_domain_states() {
 
             for (i, state) in ActionState::ALL.iter().enumerate() {
                 conn.execute(
-                    "INSERT INTO actions VALUES (?1, 'r0', ?2, 'tool', 1, ?3, '{}', 'h', 1, 0, 0)",
+                    "INSERT INTO actions (id, run_id, operation_id, tool_id, tool_version, state, manifest_json, manifest_sha256, revision, created_at_ms, updated_at_ms) VALUES (?1, 'r0', ?2, 'tool', 1, ?3, '{}', 'h', 1, 0, 0)",
                     (format!("a{i}"), format!("op{i}"), state.as_str()),
                 )?;
             }
             if conn
                 .execute(
-                    "INSERT INTO actions VALUES ('ax', 'r0', 'opx', 'tool', 1, 'Approved=true', '{}', 'h', 1, 0, 0)",
+                    "INSERT INTO actions (id, run_id, operation_id, tool_id, tool_version, state, manifest_json, manifest_sha256, revision, created_at_ms, updated_at_ms) VALUES ('ax', 'r0', 'opx', 'tool', 1, 'Approved=true', '{}', 'h', 1, 0, 0)",
                     [],
                 )
                 .is_err()
@@ -243,7 +243,7 @@ async fn approval_cannot_be_consumed_without_an_approved_decision() {
         .call(|conn| {
             conn.execute_batch(
                 "INSERT INTO runs (id, task_id, state, revision, error_code, error_message, created_at_ms, updated_at_ms) VALUES ('r1', 't1', 'AwaitingApproval', 1, NULL, NULL, 0, 0);
-                 INSERT INTO actions VALUES ('a1', 'r1', 'op1', 'tool', 1, 'AwaitingApproval', '{}', 'h', 1, 0, 0);",
+                 INSERT INTO actions (id, run_id, operation_id, tool_id, tool_version, state, manifest_json, manifest_sha256, revision, created_at_ms, updated_at_ms) VALUES ('a1', 'r1', 'op1', 'tool', 1, 'AwaitingApproval', '{}', 'h', 1, 0, 0);",
             )?;
             conn.execute(
                 "INSERT INTO approvals VALUES ('ap1', 'a1', 'h', 0, 'Denied', 5, 6, NULL)",

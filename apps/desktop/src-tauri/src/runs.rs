@@ -95,6 +95,11 @@ pub async fn cancel_run(connection: State<'_>, run_id: RunId) -> Result<RunView,
 }
 
 #[tauri::command]
+pub async fn undo_effect(connection: State<'_>, run_id: RunId) -> Result<RunView, BridgeError> {
+    connection.call(async |c| c.undo_effect(run_id).await).await
+}
+
+#[tauri::command]
 pub async fn artifact_content(
     connection: State<'_>,
     artifact_id: ArtifactId,

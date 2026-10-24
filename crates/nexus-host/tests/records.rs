@@ -364,6 +364,16 @@ async fn an_update_by_the_agent_is_undone_and_the_earlier_values_return() {
     )
     .await;
     let reply = settled(&client, &sent).await;
+    let turn = reply.turn.clone().expect("a reply belongs to a turn");
+    assert_eq!(
+        (turn.status, turn.acceptance),
+        (
+            nexus_protocol::RunStatus::Succeeded,
+            nexus_protocol::Acceptance::InReview
+        ),
+        "a turn that succeeded is in review for 7 days"
+    );
+    assert!(turn.review_until_ms.is_some());
     let AgentStepDetail::RecordChanged {
         action,
         fields,
@@ -397,6 +407,16 @@ async fn an_update_by_the_agent_is_undone_and_the_earlier_values_return() {
     assert!(!detail.record.values.contains_key("next_step"));
     assert_eq!(detail.history[0].kind, RecordChangeKind::Undo);
     assert!(detail.history[1].undone);
+    // The undo is recorded against the turn: it is no longer accepted.
+    let task = client.conversation(sent.conversation_id).await.unwrap();
+    let turn = task
+        .messages
+        .iter()
+        .rev()
+        .find_map(|m| m.turn.clone())
+        .unwrap();
+    assert_eq!(turn.acceptance, nexus_protocol::Acceptance::NotAccepted);
+    assert_eq!(turn.interventions, ["Undo"]);
     let results = client.job_results(register.register_id).await.unwrap();
     assert_eq!(
         (results.sent, results.interviews, results.waiting),

@@ -32,9 +32,6 @@ const HIGH_SCORE: i64 = 70;
 /// Sources shown by name; the rest are added up as "Other".
 const MAX_SOURCES: usize = 5;
 const MAX_RECORDS: u32 = 20_000;
-/// How long after the agent's change a correction by the user still counts
-/// against it (ADR-TASK-001).
-const REVIEW_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 
 /// Days since 1970-01-01 of a `YYYY-MM-DD` calendar day.
 fn day_number(date: &str) -> Option<i64> {
@@ -145,7 +142,7 @@ pub(super) fn results(
                 .count(),
         ),
         partial,
-        ads: ads_handling(&[], &[]),
+        ads: ads_handling(&[], &[], 0),
     };
     let mut days_to_answer = Vec::new();
     let mut bands = [
@@ -277,7 +274,11 @@ pub(super) fn results(
 /// application kept, or with nothing recorded), failed (by cause), still
 /// waiting; tokens, an estimated cost from the user's prices, and the
 /// median time per ad.
-pub(super) fn ads_handling(items: &[IntakeItemRow], prices: &[PriceRow]) -> AdsHandlingView {
+pub(super) fn ads_handling(
+    items: &[IntakeItemRow],
+    prices: &[PriceRow],
+    now: i64,
+) -> AdsHandlingView {
     let mut out = AdsHandlingView {
         seen: count(items.len()),
         finished: 0,
@@ -286,6 +287,8 @@ pub(super) fn ads_handling(items: &[IntakeItemRow], prices: &[PriceRow]) -> AdsH
         failed: 0,
         waiting: 0,
         corrected: 0,
+        accepted: 0,
+        in_review: 0,
         failure_causes: Vec::new(),
         prompt_tokens: 0,
         output_tokens: 0,
@@ -302,8 +305,17 @@ pub(super) fn ads_handling(items: &[IntakeItemRow], prices: &[PriceRow]) -> AdsH
                 } else {
                     out.nothing_recorded += 1;
                 }
-                if item.undone > 0 || item.corrections > 0 {
-                    out.corrected += 1;
+                let state = item
+                    .run_state
+                    .as_deref()
+                    .and_then(|s| s.parse::<nexus_core::RunState>().ok())
+                    .unwrap_or(nexus_core::RunState::Succeeded);
+                let ended = item.run_updated_ms.unwrap_or(0);
+                match super::acceptance::acceptance(state, ended, &item.interventions, now).0 {
+                    nexus_protocol::Acceptance::NotAccepted => out.corrected += 1,
+                    nexus_protocol::Acceptance::Accepted => out.accepted += 1,
+                    nexus_protocol::Acceptance::InReview => out.in_review += 1,
+                    nexus_protocol::Acceptance::NotApplicable => {}
                 }
                 if let (Some(start), Some(end)) = (item.run_started_ms, item.run_updated_ms) {
                     seconds.push(u32::try_from((end - start).max(0) / 1000).unwrap_or(u32::MAX));
@@ -373,14 +385,14 @@ impl Runtime {
             .map_err(to_nexus_error)?;
         let items = self
             .store
-            .intake_handling(register_id, REVIEW_MS)
+            .intake_handling(register_id)
             .await
             .map_err(to_nexus_error)?;
         let prices = self.store.model_prices().await.map_err(to_nexus_error)?;
         let mut view = results(&records, &changes, &today(), ads_read, partial, |ms| {
             schedule::local_date(ms, None)
         });
-        view.ads = ads_handling(&items, &prices);
+        view.ads = ads_handling(&items, &prices, nexus_storage::now_ms());
         Ok(view)
     }
 }
@@ -594,7 +606,13 @@ mod tests {
             usage: vec![("Gemini".into(), "flash".into(), false, 1_000_000, 100_000)],
             agent_changes: changes.0,
             undone: changes.1,
-            corrections: changes.2,
+            // A correction (third number) on the turn, one day after it.
+            interventions: (0..changes.2)
+                .map(|_| (nexus_core::InterventionKind::Correction, 31_000 + DAY_MS))
+                .chain(
+                    (0..changes.1).map(|_| (nexus_core::InterventionKind::Undo, 31_000 + DAY_MS)),
+                )
+                .collect(),
         }
     }
 
@@ -616,10 +634,17 @@ mod tests {
             input_per_million: 0.5,
             output_per_million: 2.0,
         };
-        let v = ads_handling(&items, &[price]);
+        let v = ads_handling(&items, &[price], 31_000 + 2 * DAY_MS);
         assert_eq!((v.seen, v.finished, v.failed, v.waiting), (8, 4, 2, 2));
         // The fourth: its only change was undone, so nothing was kept.
         assert_eq!((v.recorded, v.nothing_recorded, v.corrected), (2, 2, 2));
+        // The other two finished ads are still in their review window.
+        assert_eq!((v.accepted, v.in_review), (0, 2));
+        let later = ads_handling(&items, &[], 31_000 + 8 * DAY_MS);
+        assert_eq!(
+            (later.corrected, later.accepted, later.in_review),
+            (2, 2, 0)
+        );
         let causes: Vec<(&str, u32)> = v
             .failure_causes
             .iter()
@@ -631,11 +656,11 @@ mod tests {
         assert!((v.estimated_cost_usd.unwrap() - 2.8).abs() < 1e-9);
         assert_eq!(v.median_seconds, Some(30));
 
-        let unpriced = ads_handling(&items, &[]);
+        let unpriced = ads_handling(&items, &[], 0);
         assert_eq!(unpriced.estimated_cost_usd, None, "no price, no estimate");
         let mut free = items[0].clone();
         free.usage[0].2 = true;
-        assert_eq!(ads_handling(&[free], &[]).estimated_cost_usd, Some(0.0));
+        assert_eq!(ads_handling(&[free], &[], 0).estimated_cost_usd, Some(0.0));
     }
 
     #[test]

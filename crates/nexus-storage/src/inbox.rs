@@ -340,6 +340,14 @@ impl Store {
     ) -> Result<(), StorageError> {
         self.call(move |conn| {
             let tx = conn.transaction()?;
+            let conversation: Option<String> = tx
+                .query_row(
+                    "SELECT conversation_id FROM inbox_files WHERE id = ?1",
+                    [file_id],
+                    |r| r.get(0),
+                )
+                .optional()?
+                .flatten();
             let changed = tx.execute(
                 "UPDATE inbox_files SET status = 'Waiting', reason = NULL, retry_at_ms = NULL WHERE id = ?1
                  AND register_id = ?2 AND status = 'Failed'",
@@ -347,6 +355,28 @@ impl Store {
             )?;
             if changed == 0 {
                 return Err(StorageError::NotFound("failed inbox file"));
+            }
+            // The user tries a failed item again: about its last turn.
+            if let Some((task, _)) =
+                crate::interventions::turn_of(&tx, conversation.as_deref(), None)?
+            {
+                let turn: Option<String> = tx
+                    .query_row(
+                        "SELECT id FROM runs WHERE task_id = ?1 AND kind = 'Agent'
+                         ORDER BY created_at_ms DESC, id LIMIT 1",
+                        [&task],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                crate::interventions::record(
+                    &tx,
+                    &task,
+                    turn.as_deref(),
+                    None,
+                    nexus_core::InterventionKind::Retry,
+                    json!({"inbox_file": file_id}),
+                    now,
+                )?;
             }
             insert_event(&tx, "InboxFileRetried", &register.to_string(), 1, json!({}), now)?;
             tx.commit()?;
@@ -460,12 +490,12 @@ pub struct IntakeItemRow {
     pub run_updated_ms: Option<i64>,
     /// Tokens of the task's replies, per (provider, model, free tier).
     pub usage: Vec<(String, String, bool, i64, i64)>,
-    /// The agent's changes to records in this task, how many of them the
-    /// user undid, and the user's own changes to those records within
-    /// `review_ms` after the agent's last change.
+    /// The agent's changes to records in this task and how many of them
+    /// the user undid.
     pub agent_changes: i64,
     pub undone: i64,
-    pub corrections: i64,
+    /// What the user did about the latest turn, oldest first.
+    pub interventions: Vec<(nexus_core::InterventionKind, i64)>,
 }
 
 impl Store {
@@ -474,7 +504,6 @@ impl Store {
     pub async fn intake_handling(
         &self,
         register: RegisterId,
-        review_ms: i64,
     ) -> Result<Vec<IntakeItemRow>, StorageError> {
         self.call(move |conn| {
             let tx = conn.transaction()?;
@@ -498,17 +527,25 @@ impl Store {
                     usage: Vec::new(),
                     agent_changes: 0,
                     undone: 0,
-                    corrections: 0,
+                    interventions: Vec::new(),
                 };
                 if let Some(conversation) = conversation {
-                    if let Some((state, cause, started, updated)) = tx
+                    if let Some((run, state, cause, started, updated)) = tx
                         .query_row(
-                            "SELECT r.state, r.failure_cause, r.created_at_ms, r.updated_at_ms
+                            "SELECT r.id, r.state, r.failure_cause, r.created_at_ms, r.updated_at_ms
                              FROM runs r JOIN tasks t ON t.id = r.task_id
                              WHERE t.conversation_id = ?1 AND r.kind = 'Agent'
                              ORDER BY r.created_at_ms DESC, r.id LIMIT 1",
                             [&conversation],
-                            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                            |r| {
+                                Ok((
+                                    r.get::<_, String>(0)?,
+                                    r.get(1)?,
+                                    r.get(2)?,
+                                    r.get(3)?,
+                                    r.get(4)?,
+                                ))
+                            },
                         )
                         .optional()?
                     {
@@ -516,6 +553,15 @@ impl Store {
                         item.failure_cause = cause;
                         item.run_started_ms = Some(started);
                         item.run_updated_ms = Some(updated);
+                        let mut stmt = tx.prepare(
+                            "SELECT kind, at_ms FROM interventions WHERE run_id = ?1 ORDER BY at_ms, id",
+                        )?;
+                        item.interventions = stmt
+                            .query_map([&run], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
+                            .collect::<Result<Vec<_>, _>>()?
+                            .into_iter()
+                            .map(|(kind, at)| Ok((crate::repo::parse_state(&kind)?, at)))
+                            .collect::<Result<_, StorageError>>()?;
                     }
                     let mut stmt = tx.prepare(
                         "SELECT c.provider, coalesce(m.model, ''), c.free_tier,
@@ -529,24 +575,14 @@ impl Store {
                             Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? == 1, r.get(3)?, r.get(4)?))
                         })?
                         .collect::<Result<_, _>>()?;
-                    let (changes, undone, first, last): (i64, i64, Option<i64>, Option<i64>) = tx.query_row(
-                        "SELECT count(*), coalesce(sum(undone_at_ms IS NOT NULL), 0), min(at_ms), max(at_ms)
+                    let (changes, undone): (i64, i64) = tx.query_row(
+                        "SELECT count(*), coalesce(sum(undone_at_ms IS NOT NULL), 0)
                          FROM record_changes WHERE conversation_id = ?1 AND actor = 'Agent'",
                         [&conversation],
-                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                        |r| Ok((r.get(0)?, r.get(1)?)),
                     )?;
                     item.agent_changes = changes;
                     item.undone = undone;
-                    if let (Some(first), Some(last)) = (first, last) {
-                        item.corrections = tx.query_row(
-                            "SELECT count(*) FROM record_changes u
-                             WHERE u.actor = 'User' AND u.kind = 'Updated' AND u.at_ms BETWEEN ?2 AND ?3
-                               AND u.record_id IN (SELECT record_id FROM record_changes
-                                                   WHERE conversation_id = ?1 AND actor = 'Agent')",
-                            params![conversation, first, last + review_ms],
-                            |r| r.get(0),
-                        )?;
-                    }
                 }
                 items.push(item);
             }

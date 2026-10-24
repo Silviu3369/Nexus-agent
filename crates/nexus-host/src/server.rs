@@ -164,6 +164,11 @@ impl NexusService for HostServer {
         self.runtime.decide(request).await
     }
 
+    async fn undo_effect(self, _ctx: Context, run_id: RunId) -> Result<RunView, NexusError> {
+        self.require_session()?;
+        self.runtime.undo_effect(run_id).await
+    }
+
     async fn cancel_run(self, _ctx: Context, run_id: RunId) -> Result<RunView, NexusError> {
         self.require_session()?;
         self.runtime.cancel(run_id).await

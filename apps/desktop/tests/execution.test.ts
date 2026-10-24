@@ -15,6 +15,8 @@ import {
   noteItems,
   stepStatus,
   taskRows,
+  effectText,
+  turnLine,
 } from "../src/model/execution.ts";
 
 const T0 = 1_800_000_000_000;
@@ -729,4 +731,32 @@ test("inbox events refresh the registers, so the inbox panel reads again", () =>
   for (const kind of ["InboxUpdated", "InboxFileSeen", "InboxFileHandled", "InboxFileRetried"]) {
     assert.deepEqual([...invalidatedBy([ev(kind)])], ["registers"], kind);
   }
+});
+
+test("a turn's line says whether the user kept what the agent did", () => {
+  const base = { run_id: "r", status: "Succeeded", failure_cause: null, review_until_ms: null, interventions: [] } as const;
+  assert.equal(turnLine(null), null);
+  assert.equal(turnLine({ ...base, acceptance: "NotApplicable" }), null);
+  assert.equal(turnLine({ ...base, acceptance: "Accepted" }), "Accepted: kept for 7 days without being undone or corrected");
+  assert.match(
+    turnLine({ ...base, acceptance: "InReview", review_until_ms: Date.UTC(2026, 9, 27, 12) }) ?? "",
+    /^In review until 27 Oct/,
+  );
+  assert.equal(
+    turnLine({ ...base, acceptance: "NotAccepted", interventions: ["Approved", "Correction", "Undo", "Correction"] }),
+    "Not accepted: you corrected, undid what it did",
+  );
+});
+
+test("a run says what kind of effect it has and how its success is proven", () => {
+  assert.equal(
+    effectText("ExternalReversible", "Verified"),
+    "Changes something outside Nexus; can be undone · proven by reading the result back",
+  );
+  assert.equal(
+    effectText("ExternalIrreversible", "Reported"),
+    "Changes something outside Nexus; cannot be undone · as the service reported it, not checked independently",
+  );
+  assert.equal(effectText(null, "Verified"), null);
+  assert.equal(effectText("InternalReversible", null), "Changes only Nexus's own data; can be undone");
 });
