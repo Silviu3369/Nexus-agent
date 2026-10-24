@@ -222,6 +222,14 @@ async fn a_job_ad_put_in_the_inbox_becomes_an_application_once() {
     assert_eq!(record.created_by, nexus_protocol::RecordActor::Agent);
     let task = client.conversation(conversation).await.unwrap();
     assert_eq!(task.title, "Job ad · TopJobs vacature.pdf");
+    assert_eq!(
+        task.requested_by,
+        Some(nexus_protocol::ActorView {
+            kind: "Intake".into(),
+            name: "Inbox".into(),
+        }),
+        "the inbox asked for the task (ADR-IDENTITY-001)"
+    );
     let asked = &task.messages[0].text;
     assert!(
         asked.contains("\"Ads\" as \"TopJobs vacature.pdf\"")

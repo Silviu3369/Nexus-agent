@@ -9,12 +9,11 @@
 
 use std::sync::Arc;
 
-use nexus_core::TaskOrigin;
 use nexus_protocol::{
     AutomationId, AutomationRunStatus, AutomationRunView, AutomationView, ConversationId,
     ErrorCode, NexusError, SaveAutomationRequest, Schedule, SendMessageRequest,
 };
-use nexus_storage::{AutomationRow, AutomationRunRow, NewAutomation, now_ms};
+use nexus_storage::{AutomationRow, AutomationRunRow, NewAutomation, Requester, now_ms};
 
 use super::chat::MAX_MESSAGE_BYTES;
 use super::{Runtime, to_nexus_error};
@@ -399,7 +398,7 @@ impl Runtime {
                     text: row.prompt.clone(),
                 },
                 Some(title),
-                TaskOrigin::Automation,
+                Requester::Automation(row.id),
                 None,
             )
             .await;

@@ -38,6 +38,7 @@ async fn env() -> Env {
 async fn submit(env: &Env, key: &str, hash: &str) -> Result<SubmitOutcome, StorageError> {
     env.store
         .submit_task(
+            nexus_storage::EffectRequester::User,
             env.project,
             key.to_string(),
             r#"{"title":"t"}"#.to_string(),

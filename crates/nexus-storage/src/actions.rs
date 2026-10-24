@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::repo::{insert_event, parse_state, parse_uuid, transition_action};
-use crate::{StorageError, Store};
+use crate::{Actor, StorageError, Store};
 
 fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
@@ -20,11 +20,12 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// Inserts an action already in `state` (one executed in this very
-/// transaction, or a proposal waiting outside the approval queue).
+/// Inserts an action by `actor` already in `state` (one executed in this
+/// very transaction, or a proposal waiting outside the approval queue).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn record(
     tx: &Transaction,
+    actor: Actor,
     run: &str,
     tool: &str,
     version: i64,
@@ -40,8 +41,8 @@ pub(crate) fn record(
     tx.execute(
         "INSERT INTO actions (id, run_id, operation_id, tool_id, tool_version, state, manifest_json,
                               manifest_sha256, revision, created_at_ms, updated_at_ms, effect_class, evidence,
-                              compensates_action_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9, ?9, ?10, ?11, ?12)",
+                              compensates_action_id, actor_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9, ?9, ?10, ?11, ?12, ?13)",
         params![
             id.to_string(),
             run,
@@ -54,7 +55,8 @@ pub(crate) fn record(
             now,
             effect.as_str(),
             evidence.as_str(),
-            compensates
+            compensates,
+            crate::actors::id_of(tx, actor)?
         ],
     )?;
     insert_event(
@@ -207,6 +209,7 @@ impl Store {
             }
             let id = record(
                 &tx,
+                crate::Actor::LocalUser,
                 &run.to_string(),
                 &tool,
                 version,
@@ -249,6 +252,7 @@ impl Store {
                 )?;
                 crate::interventions::record_on_effect(
                     &tx,
+                    crate::Actor::LocalUser,
                     &run,
                     InterventionKind::Undo,
                     json!({"action": action.to_string()}),

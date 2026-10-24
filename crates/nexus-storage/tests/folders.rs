@@ -98,7 +98,7 @@ async fn migrating_to_v12_keeps_every_step_and_accepts_the_new_ones() {
     let ex = s
         .append_exchange(
             NewExchange {
-                origin: nexus_core::TaskOrigin::User,
+                requester: nexus_storage::Requester::User,
                 pack: None,
                 conversation_id: None,
                 project_id: None,

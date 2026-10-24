@@ -9,8 +9,9 @@ use nexus_protocol::{ConversationId, RunId};
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
+use crate::actors::id_of;
 use crate::repo::{insert_event, parse_state, parse_uuid};
-use crate::{StorageError, Store};
+use crate::{Actor, StorageError, Store};
 
 /// The task and turn a message belongs to.
 fn turn_of_message(
@@ -67,9 +68,11 @@ pub(crate) fn turn_of_effect(
         .optional()?)
 }
 
-/// Records one intervention (and an event, so views refresh).
+/// Records one intervention by `actor` (and an event, so views refresh).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn record(
     tx: &Transaction,
+    actor: Actor,
     task: &str,
     run: Option<&str>,
     effect_run: Option<&str>,
@@ -78,15 +81,16 @@ pub(crate) fn record(
     now: i64,
 ) -> Result<(), StorageError> {
     tx.execute(
-        "INSERT INTO interventions (task_id, run_id, effect_run_id, kind, detail_json, at_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO interventions (task_id, run_id, effect_run_id, kind, detail_json, at_ms, actor_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             task,
             run,
             effect_run,
             kind.as_str(),
             detail.to_string(),
-            now
+            now,
+            id_of(tx, actor)?
         ],
     )?;
     insert_event(
@@ -104,13 +108,23 @@ pub(crate) fn record(
 /// proposal, its rejection, its cancellation, its undo).
 pub(crate) fn record_on_effect(
     tx: &Transaction,
+    actor: Actor,
     effect: &str,
     kind: InterventionKind,
     detail: Value,
     now: i64,
 ) -> Result<(), StorageError> {
     if let Some((task, turn)) = turn_of_effect(tx, effect)? {
-        record(tx, &task, Some(&turn), Some(effect), kind, detail, now)?;
+        record(
+            tx,
+            actor,
+            &task,
+            Some(&turn),
+            Some(effect),
+            kind,
+            detail,
+            now,
+        )?;
     }
     Ok(())
 }

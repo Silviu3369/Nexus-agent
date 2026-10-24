@@ -265,6 +265,7 @@ impl Store {
             {
                 crate::actions::record(
                     &tx,
+                    crate::Actor::Agent,
                     &turn,
                     "MemoryFact",
                     1,
@@ -360,6 +361,7 @@ impl Store {
                 {
                     crate::interventions::record(
                         &tx,
+                        crate::Actor::LocalUser,
                         &task,
                         run.as_deref(),
                         None,

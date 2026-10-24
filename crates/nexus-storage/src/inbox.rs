@@ -370,6 +370,7 @@ impl Store {
                     .optional()?;
                 crate::interventions::record(
                     &tx,
+                    crate::Actor::LocalUser,
                     &task,
                     turn.as_deref(),
                     None,

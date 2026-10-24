@@ -138,8 +138,20 @@ pub struct RunView {
     pub kind: RunKind,
     /// For an MCP call: which, with what.
     pub call: Option<McpCallView>,
+    /// ADR-IDENTITY-001: who asked for it (the user or the agent) and who
+    /// decided its approval, once decided.
+    pub requested_by: Option<ActorView>,
+    pub decided_by: Option<ActorView>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+}
+
+/// Who did or asked for something (ADR-IDENTITY-001).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct ActorView {
+    /// User, Agent, Automation, Intake, Channel or System.
+    pub kind: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]

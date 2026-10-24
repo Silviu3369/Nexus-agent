@@ -19,9 +19,10 @@ pub mod usage;
 pub mod version;
 
 pub use runs::{
-    ApprovalDecision, ArtifactSummary, BackupSummary, DecideApprovalRequest, EventView, EventsPage,
-    McpCallPreview, McpCallView, NotePreview, PendingApproval, RunFailure, RunKind, RunOrigin,
-    RunStatus, RunView, Snapshot, SubmitNoteRequest, SubmitNoteResponse, SystemStatusView,
+    ActorView, ApprovalDecision, ArtifactSummary, BackupSummary, DecideApprovalRequest, EventView,
+    EventsPage, McpCallPreview, McpCallView, NotePreview, PendingApproval, RunFailure, RunKind,
+    RunOrigin, RunStatus, RunView, Snapshot, SubmitNoteRequest, SubmitNoteResponse,
+    SystemStatusView,
 };
 
 pub use automation::{
@@ -37,9 +38,9 @@ pub use error::{ErrorCode, NexusError};
 pub use files::{FolderEntryView, FolderView, SaveFolderRequest};
 pub use handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse, HealthStatus};
 pub use ids::{
-    ActionId, AgentStepId, ApprovalId, ArtifactId, AutomationId, ConnectionId, ConversationId,
-    EventId, FolderId, McpServerId, MemoryId, MessageId, OperationId, ProjectId, RecordId,
-    RegisterId, RequestId, RunId, StepId, TaskId,
+    ActionId, ActorId, AgentStepId, ApprovalId, ArtifactId, AutomationId, ConnectionId,
+    ConversationId, EventId, FolderId, McpServerId, MemoryId, MessageId, OperationId, ProjectId,
+    RecordId, RegisterId, RequestId, RunId, StepId, TaskId,
 };
 pub use mcp::{McpServerView, McpToolView, SaveMcpServerRequest};
 pub use memory::{

@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::StorageError;
 
-pub const SUPPORTED_VERSION: i64 = 17;
+pub const SUPPORTED_VERSION: i64 = 18;
 
 /// Version 1: everything M1 persists. State columns are closed lists that a
 /// test keeps identical to the `nexus-core` enums. Times are UTC unix ms.
@@ -826,6 +826,64 @@ UPDATE actions SET
         ELSE 'Verified' END;
 "#;
 
+/// Version 18 (ADR-IDENTITY-001): who does what, by a stable id. The actors
+/// are the local user, the agent, the Host, the inbox and every automation
+/// (a channel gets one when it is bound, M4). An actor is never deleted,
+/// only disabled, so old entries still name it. A task names who asked for
+/// it, an action who did it, an approval and an intervention who decided.
+/// The `User`/`Agent` words already in records and memory stay: they name
+/// the user or the agent, and who asked for the agent's work is its turn's
+/// task. Existing rows are filled in from what they already say; a task
+/// started by an automation since deleted keeps no requester.
+const V18: &str = r#"
+CREATE TABLE actors (
+    id             TEXT    PRIMARY KEY,
+    kind           TEXT    NOT NULL CHECK (kind IN ('User', 'Agent', 'Automation', 'Intake', 'Channel', 'System')),
+    -- What the actor is, for the Host to find it: `user:local`, `agent`,
+    -- `host`, `intake:inbox`, `automation:<id>`.
+    ref            TEXT    NOT NULL UNIQUE CHECK (length(ref) BETWEEN 1 AND 128),
+    name           TEXT    NOT NULL CHECK (length(name) BETWEEN 1 AND 100),
+    created_at_ms  INTEGER NOT NULL,
+    disabled_at_ms INTEGER
+) STRICT;
+
+CREATE TEMP TABLE v18_actors AS
+SELECT kind, ref, name, created_at_ms, lower(hex(randomblob(16))) AS h FROM (
+    SELECT 'User' AS kind, 'user:local' AS ref, 'Local user' AS name,
+           CAST(strftime('%s', 'now') AS INTEGER) * 1000 AS created_at_ms
+    UNION ALL SELECT 'Agent', 'agent', 'Nexus', CAST(strftime('%s', 'now') AS INTEGER) * 1000
+    UNION ALL SELECT 'System', 'host', 'Nexus Host', CAST(strftime('%s', 'now') AS INTEGER) * 1000
+    UNION ALL SELECT 'Intake', 'intake:inbox', 'Inbox', CAST(strftime('%s', 'now') AS INTEGER) * 1000
+    UNION ALL SELECT 'Automation', 'automation:' || id, name, created_at_ms FROM automations);
+INSERT INTO actors (id, kind, ref, name, created_at_ms)
+SELECT substr(h, 1, 8) || '-' || substr(h, 9, 4) || '-4' || substr(h, 14, 3) || '-a' || substr(h, 18, 3) || '-' || substr(h, 21, 12),
+       kind, ref, name, created_at_ms
+FROM v18_actors;
+DROP TABLE v18_actors;
+
+ALTER TABLE tasks ADD COLUMN requested_by TEXT REFERENCES actors (id);
+ALTER TABLE actions ADD COLUMN actor_id TEXT REFERENCES actors (id);
+ALTER TABLE approvals ADD COLUMN decided_by TEXT REFERENCES actors (id);
+ALTER TABLE interventions ADD COLUMN actor_id TEXT REFERENCES actors (id);
+
+UPDATE tasks SET requested_by = CASE origin
+    WHEN 'Agent' THEN (SELECT id FROM actors WHERE ref = 'agent')
+    WHEN 'Intake' THEN (SELECT id FROM actors WHERE ref = 'intake:inbox')
+    WHEN 'Automation' THEN (
+        SELECT a.id FROM automation_runs ar JOIN actors a ON a.ref = 'automation:' || ar.automation_id
+        WHERE ar.conversation_id = tasks.conversation_id LIMIT 1)
+    ELSE (SELECT id FROM actors WHERE ref = 'user:local') END;
+-- The user undoes, and sends a note directly; everything else the agent did.
+UPDATE actions SET actor_id = CASE
+    WHEN compensates_action_id IS NOT NULL
+         OR (SELECT t.origin FROM runs r JOIN tasks t ON t.id = r.task_id WHERE r.id = actions.run_id) = 'Direct'
+        THEN (SELECT id FROM actors WHERE ref = 'user:local')
+    ELSE (SELECT id FROM actors WHERE ref = 'agent') END;
+UPDATE approvals SET decided_by = (SELECT id FROM actors WHERE ref = 'user:local')
+WHERE decision IS NOT NULL;
+UPDATE interventions SET actor_id = (SELECT id FROM actors WHERE ref = 'user:local');
+"#;
+
 struct Migration {
     sql: &'static str,
     /// Rebuilds a table other tables refer to (see [`V5`]).
@@ -899,6 +957,10 @@ const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         sql: V17,
+        rebuilds_parent_table: false,
+    },
+    Migration {
+        sql: V18,
         rebuilds_parent_table: false,
     },
 ];

@@ -142,7 +142,10 @@ impl NexusService for HostServer {
         request: SubmitNoteRequest,
     ) -> Result<SubmitNoteResponse, NexusError> {
         self.require_session()?;
-        self.runtime.submit_note(request).await
+        // The dashboard's session is the local user (ADR-IDENTITY-001).
+        self.runtime
+            .submit_note(request, nexus_storage::EffectRequester::User)
+            .await
     }
 
     async fn get_snapshot(self, _ctx: Context, limit: u32) -> Result<Snapshot, NexusError> {

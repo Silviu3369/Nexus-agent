@@ -10,8 +10,8 @@ use crate::ids::{
     AgentStepId, ConnectionId, ConversationId, MemoryId, MessageId, ProjectId, RecordId, RunId,
 };
 use crate::memory::MemoryScope;
-use crate::runs::RunFailure;
 use crate::runs::RunStatus;
+use crate::runs::{ActorView, RunFailure};
 
 /// The user's speed/quality choice, where the model supports it (Gemini
 /// 3.x). Ignored for a model that does not.
@@ -314,6 +314,9 @@ pub struct ConversationView {
     pub conversation_id: ConversationId,
     pub project_id: Option<ProjectId>,
     pub title: String,
+    /// Who asked for its task: the user, an automation or the inbox
+    /// (ADR-IDENTITY-001; `None` when no longer known).
+    pub requested_by: Option<ActorView>,
     pub messages: Vec<ChatMessageView>,
 }
 

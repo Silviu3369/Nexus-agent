@@ -134,7 +134,7 @@ async fn migrating_to_v9_keeps_every_message() {
         let ex = store
             .append_exchange(
                 NewExchange {
-                    origin: nexus_core::TaskOrigin::User,
+                    requester: nexus_storage::Requester::User,
                     pack: None,
                     conversation_id: None,
                     project_id: None,

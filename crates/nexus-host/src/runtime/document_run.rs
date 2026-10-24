@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 use nexus_core::{AgentStepKind, AgentStepStatus, RunState};
 use nexus_protocol::{FolderId, MessageId, NexusError, NotePreview, OperationId, RunId};
 use nexus_storage::{
-    FolderRow, NewOperation, RunDetail, RunError, StorageError, SubmitOutcome, now_ms,
+    EffectRequester, FolderRow, NewOperation, RunDetail, RunError, StorageError, SubmitOutcome,
+    now_ms,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -225,6 +226,7 @@ impl Runtime {
         let outcome = self
             .store
             .submit_task(
+                EffectRequester::Agent,
                 project,
                 idempotency_key,
                 request_json,

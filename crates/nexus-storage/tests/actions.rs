@@ -13,7 +13,6 @@ use std::path::PathBuf;
 
 use nexus_core::{
     ActionState, EffectClass, Evidence, MemoryScope, MemorySource, MessageStatus, RecordActor,
-    TaskOrigin,
 };
 use nexus_protocol::{ConversationId, OperationId, RunId};
 use nexus_storage::{
@@ -65,7 +64,7 @@ async fn exchange(store: &Store, conversation: Option<ConversationId>, key: &str
                 model: "gemini-test".into(),
                 persona_version: 1,
                 title: None,
-                origin: TaskOrigin::User,
+                requester: nexus_storage::Requester::User,
                 pack: None,
             },
             2,
@@ -261,7 +260,14 @@ async fn the_agents_writes_and_proposals_are_actions_of_its_turn() {
 async fn done_effect(s: &Store, ex: &Exchange, key: &str) -> RunId {
     let project = s.ensure_default_project(0).await.unwrap();
     let run = match s
-        .submit_task(project, key.into(), "{}".into(), key.into(), 3)
+        .submit_task(
+            nexus_storage::EffectRequester::Agent,
+            project,
+            key.into(),
+            "{}".into(),
+            key.into(),
+            3,
+        )
         .await
         .unwrap()
     {
@@ -447,6 +453,7 @@ async fn migrating_to_v17_classes_the_actions_already_recorded() {
     let ex = exchange(s, None, "m").await;
     let run = done_effect(s, &ex, "old").await;
     s.call(|c| {
+        common::undo_v18(c)?;
         c.execute_batch(
             "DROP INDEX actions_by_run; DROP INDEX actions_by_compensated;
              ALTER TABLE actions DROP COLUMN compensates_action_id;

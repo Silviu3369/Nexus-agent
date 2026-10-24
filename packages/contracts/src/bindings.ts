@@ -77,7 +77,12 @@ export type RunKind = "Note" | "McpCall" | "Document"
  */
 export type McpCallView = { server: string; url: string; tool: string; arguments_json: string; result_chars: number | null; truncated: boolean | null; duration_ms: number | null }
 
-export type RunView = { run_id: RunId; title: string; status: RunStatus; effect_class: string | null; evidence: string | null; undone_at_ms: number | null; can_undo: boolean; revision: number; failure: RunFailure | null; pending_approval: PendingApproval | null; artifact: ArtifactSummary | null; origin: RunOrigin | null; kind: RunKind; call: McpCallView | null; created_at_ms: number; updated_at_ms: number }
+/**
+ * Who did or asked for something (ADR-IDENTITY-001).
+ */
+export type ActorView = { kind: string; name: string }
+
+export type RunView = { run_id: RunId; title: string; status: RunStatus; effect_class: string | null; evidence: string | null; undone_at_ms: number | null; can_undo: boolean; revision: number; failure: RunFailure | null; pending_approval: PendingApproval | null; artifact: ArtifactSummary | null; origin: RunOrigin | null; kind: RunKind; call: McpCallView | null; requested_by: ActorView | null; decided_by: ActorView | null; created_at_ms: number; updated_at_ms: number }
 
 export type Snapshot = { runs: RunView[]; watermark: number }
 
@@ -146,7 +151,7 @@ export type ChatMessageView = { message_id: MessageId; role: ChatRole; text: str
 
 export type ConversationSummary = { conversation_id: ConversationId; project_id: ProjectId | null; title: string; updated_at_ms: number }
 
-export type ConversationView = { conversation_id: ConversationId; project_id: ProjectId | null; title: string; messages: ChatMessageView[] }
+export type ConversationView = { conversation_id: ConversationId; project_id: ProjectId | null; title: string; requested_by: ActorView | null; messages: ChatMessageView[] }
 
 export type SendMessageResponse = { conversation_id: ConversationId; user_message_id: MessageId; reply_message_id: MessageId }
 

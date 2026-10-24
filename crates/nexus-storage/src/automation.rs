@@ -141,6 +141,7 @@ impl Store {
                 ],
             )?;
             insert_event(&tx, "AutomationCreated", &id.to_string(), 1, json!({"enabled": new.enabled}), now)?;
+            crate::actors::add_automation(&tx, id, &new.name, now)?;
             let row = load_automation(&tx, id)?;
             tx.commit()?;
             Ok(row)
@@ -179,6 +180,7 @@ impl Store {
                     id.to_string()
                 ],
             )?;
+            crate::actors::rename(&tx, crate::Actor::Automation(id), &new.name)?;
             insert_event(
                 &tx,
                 "AutomationUpdated",
@@ -200,6 +202,7 @@ impl Store {
             let tx = conn.transaction()?;
             let current = load_automation(&tx, id)?;
             tx.execute("DELETE FROM automations WHERE id = ?1", [id.to_string()])?;
+            crate::actors::disable(&tx, crate::Actor::Automation(id), now)?;
             insert_event(
                 &tx,
                 "AutomationDeleted",

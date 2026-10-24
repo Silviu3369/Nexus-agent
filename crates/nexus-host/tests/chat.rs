@@ -226,6 +226,26 @@ async fn ai02_a_proposed_note_waits_for_approval_and_other_tools_are_ignored() {
     assert_eq!(origin.message_id, sent.reply_message_id);
     assert_eq!(origin.conversation_id, sent.conversation_id);
     assert_eq!(origin.conversation_title, "Salvează planul ca notă");
+    let actor = |kind: &str, name: &str| {
+        Some(nexus_protocol::ActorView {
+            kind: kind.into(),
+            name: name.into(),
+        })
+    };
+    assert_eq!(
+        (waiting.requested_by.clone(), waiting.decided_by.clone()),
+        (actor("Agent", "Nexus"), None),
+        "the agent asked for it; nobody decided yet"
+    );
+    assert_eq!(
+        client
+            .conversation(sent.conversation_id)
+            .await
+            .unwrap()
+            .requested_by,
+        actor("User", "Local user"),
+        "the user asked for the task"
+    );
     let pending = waiting.pending_approval.expect("it waits for the user");
     assert_eq!(pending.preview.unwrap().content, "# Plan\n\npasul 1\n");
     assert!(
@@ -253,7 +273,9 @@ async fn ai02_a_proposed_note_waits_for_approval_and_other_tools_are_ignored() {
         })
         .await
         .unwrap();
-    assert!(client.run(direct.run_id).await.unwrap().origin.is_none());
+    let direct = client.run(direct.run_id).await.unwrap();
+    assert!(direct.origin.is_none());
+    assert_eq!(direct.requested_by, actor("User", "Local user"));
 
     client
         .decide_approval(DecideApprovalRequest {
@@ -263,7 +285,12 @@ async fn ai02_a_proposed_note_waits_for_approval_and_other_tools_are_ignored() {
         })
         .await
         .unwrap();
-    wait_run(&client, run, RunStatus::Succeeded).await;
+    let done = wait_run(&client, run, RunStatus::Succeeded).await;
+    assert_eq!(
+        (done.requested_by, done.decided_by),
+        (actor("Agent", "Nexus"), actor("User", "Local user")),
+        "the dashboard's session decided: the local user"
+    );
     assert_eq!(note_files(host.profile.path()).len(), 1);
     host.shutdown().await;
 }

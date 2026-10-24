@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use nexus_core::{ActionState, EffectClass, Evidence, OperationState, RunState};
+use nexus_core::{ActionState, EffectClass, Evidence, OperationState, RunState, TaskOrigin};
 use nexus_protocol::{
     ActionId, ApprovalId, ArtifactId, ConversationId, EventId, MessageId, OperationId, ProjectId,
     RunId, TaskId,
@@ -14,7 +14,7 @@ use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::{StorageError, Store};
+use crate::{Actor, ActorRow, StorageError, Store};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decision {
@@ -145,6 +145,10 @@ pub struct RunDetail {
     /// The reply that proposed this run; `None` for a note the user
     /// submitted directly.
     pub origin: Option<RunOrigin>,
+    /// Who asked for it (the user or the agent) and who decided its
+    /// approval (ADR-IDENTITY-001).
+    pub requested_by: Option<ActorRow>,
+    pub decided_by: Option<ActorRow>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -165,6 +169,14 @@ pub enum SubmitOutcome {
         task_id: TaskId,
         run_id: RunId,
     },
+}
+
+/// Who asks for an effect: the user (a note sent directly) or the agent
+/// (an effect it proposed during a turn).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffectRequester {
+    User,
+    Agent,
 }
 
 /// Fields of an action the host has prepared for approval.
@@ -238,6 +250,7 @@ impl Store {
     /// the same key with a different request is a conflict, never a new run.
     pub async fn submit_task(
         &self,
+        requester: EffectRequester,
         project_id: ProjectId,
         idempotency_key: String,
         request_json: String,
@@ -264,12 +277,26 @@ impl Store {
                 });
             }
 
+            let (origin, requester) = match requester {
+                EffectRequester::User => (TaskOrigin::Direct, Actor::LocalUser),
+                EffectRequester::Agent => (TaskOrigin::Agent, Actor::Agent),
+            };
             let task_id = TaskId::new();
             let run_id = RunId::new();
             tx.execute(
-                "INSERT INTO tasks (id, project_id, idempotency_key, request_json, request_sha256, created_at_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![task_id.to_string(), project_id.to_string(), idempotency_key, request_json, request_sha256, now],
+                "INSERT INTO tasks (id, project_id, idempotency_key, request_json, request_sha256, created_at_ms,
+                                    origin, requested_by)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    task_id.to_string(),
+                    project_id.to_string(),
+                    idempotency_key,
+                    request_json,
+                    request_sha256,
+                    now,
+                    origin.as_str(),
+                    crate::actors::id_of(&tx, requester)?
+                ],
             )?;
             tx.execute(
                 "INSERT INTO runs (id, task_id, state, revision, created_at_ms, updated_at_ms)
@@ -326,8 +353,10 @@ impl Store {
             let approval_id = ApprovalId::new();
             tx.execute(
                 "INSERT INTO actions (id, run_id, operation_id, tool_id, tool_version, state, manifest_json,
-                                      manifest_sha256, revision, created_at_ms, updated_at_ms, effect_class, evidence)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 'AwaitingApproval', ?6, ?7, 1, ?8, ?8, ?9, ?10)",
+                                      manifest_sha256, revision, created_at_ms, updated_at_ms, effect_class, evidence,
+                                      actor_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'AwaitingApproval', ?6, ?7, 1, ?8, ?8, ?9, ?10,
+                         (SELECT t.requested_by FROM runs r JOIN tasks t ON t.id = r.task_id WHERE r.id = ?2))",
                 params![
                     action_id.to_string(),
                     run_id.to_string(),
@@ -396,8 +425,13 @@ impl Store {
             }
 
             tx.execute(
-                "UPDATE approvals SET decision = ?1, decided_at_ms = ?2 WHERE id = ?3",
-                params![decision.as_str(), now, approval_id.to_string()],
+                "UPDATE approvals SET decision = ?1, decided_at_ms = ?2, decided_by = ?3 WHERE id = ?4",
+                params![
+                    decision.as_str(),
+                    now,
+                    crate::actors::id_of(&tx, crate::Actor::LocalUser)?,
+                    approval_id.to_string()
+                ],
             )?;
             insert_event(
                 &tx,
@@ -409,6 +443,7 @@ impl Store {
             )?;
             crate::interventions::record_on_effect(
                 &tx,
+                crate::Actor::LocalUser,
                 &action.run_id.to_string(),
                 match decision {
                     Decision::Approved => nexus_core::InterventionKind::Approved,
@@ -815,6 +850,7 @@ impl Store {
             ) {
                 crate::interventions::record_on_effect(
                     &tx,
+                    crate::Actor::LocalUser,
                     &run_id.to_string(),
                     nexus_core::InterventionKind::Stopped,
                     json!({}),
@@ -1442,6 +1478,19 @@ fn load_detail(tx: &Transaction, run_id: RunId) -> Result<RunDetail, StorageErro
         |r| r.get(0),
     )?;
     let origin = load_origin(tx, run_id)?;
+    let requester: Option<String> = tx.query_row(
+        "SELECT requested_by FROM tasks WHERE id = ?1",
+        [task.id.to_string()],
+        |r| r.get(0),
+    )?;
+    let decider: Option<String> = match &approval {
+        Some(a) => tx.query_row(
+            "SELECT decided_by FROM approvals WHERE id = ?1",
+            [a.id.to_string()],
+            |r| r.get(0),
+        )?,
+        None => None,
+    };
     Ok(RunDetail {
         run,
         task,
@@ -1451,6 +1500,8 @@ fn load_detail(tx: &Transaction, run_id: RunId) -> Result<RunDetail, StorageErro
         artifact,
         cancellation_requested,
         origin,
+        requested_by: crate::actors::load(tx, requester.as_deref())?,
+        decided_by: crate::actors::load(tx, decider.as_deref())?,
     })
 }
 

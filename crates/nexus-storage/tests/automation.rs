@@ -68,7 +68,7 @@ async fn task(store: &Store, key: &str) -> ConversationId {
     store
         .append_exchange(
             NewExchange {
-                origin: nexus_core::TaskOrigin::User,
+                requester: nexus_storage::Requester::User,
                 pack: None,
                 conversation_id: None,
                 project_id: None,

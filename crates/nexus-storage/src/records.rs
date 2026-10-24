@@ -503,6 +503,7 @@ impl Store {
                 if let Some((original, turn)) = crate::actions::of_record_change(&tx, change.id)? {
                     crate::actions::record(
                         &tx,
+                        crate::Actor::LocalUser,
                         &turn,
                         "UndoRecordChange",
                         1,
@@ -695,6 +696,7 @@ fn insert_change(
     {
         crate::actions::record(
             tx,
+            crate::Actor::Agent,
             &turn,
             "RecordWrite",
             1,
@@ -904,7 +906,16 @@ fn agent_intervention(
     if let Some((task, run)) =
         crate::interventions::turn_of(tx, conversation.as_deref(), message.as_deref())?
     {
-        crate::interventions::record(tx, &task, run.as_deref(), None, kind, detail, now)?;
+        crate::interventions::record(
+            tx,
+            crate::Actor::LocalUser,
+            &task,
+            run.as_deref(),
+            None,
+            kind,
+            detail,
+            now,
+        )?;
     }
     Ok(())
 }

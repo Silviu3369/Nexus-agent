@@ -72,7 +72,7 @@ fn exchange(
     connection: ConnectionId,
 ) -> NewExchange {
     NewExchange {
-        origin: nexus_core::TaskOrigin::User,
+        requester: nexus_storage::Requester::User,
         pack: None,
         conversation_id: conversation,
         project_id: None,
@@ -93,7 +93,14 @@ async fn an_existing_database_is_migrated_forward_keeping_its_data() {
         let store = Store::open(&path).unwrap();
         let project = store.ensure_default_project(1).await.unwrap();
         store
-            .submit_task(project, "k".into(), "{}".into(), "h".into(), 2)
+            .submit_task(
+                nexus_storage::EffectRequester::User,
+                project,
+                "k".into(),
+                "{}".into(),
+                "h".into(),
+                2,
+            )
             .await
             .unwrap();
         // Roll the file back to version 1 as an M1 host would have left it.

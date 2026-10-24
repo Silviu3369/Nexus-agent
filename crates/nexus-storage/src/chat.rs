@@ -3,12 +3,14 @@
 //! like the M1 repository.
 
 use nexus_core::{FailureCause, MessageRole, MessageStatus, RunState, TaskOrigin, ThinkingLevel};
-use nexus_protocol::{ConnectionId, ConversationId, MessageId, ProjectId, RunId, TaskId};
+use nexus_protocol::{
+    AutomationId, ConnectionId, ConversationId, MessageId, ProjectId, RunId, TaskId,
+};
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::json;
 
 use crate::repo::{insert_event, parse_state, parse_uuid};
-use crate::{StorageError, Store};
+use crate::{Actor, StorageError, Store};
 
 const ACTIVE_CONNECTION: &str = "active_connection";
 const BACKUP_MODEL: &str = "backup_model";
@@ -88,10 +90,37 @@ pub struct NewExchange {
     pub persona_version: i64,
     /// The title of a new conversation (`None`: from the text).
     pub title: Option<String>,
-    /// What started a new conversation's task; ignored for a follow-up.
-    pub origin: TaskOrigin,
+    /// Who asked for a new conversation's task; ignored for a follow-up.
+    pub requester: Requester,
     /// The pack or flow it belongs to (an intake's register), if any.
     pub pack: Option<String>,
+}
+
+/// Who asks for a conversation's task (ADR-IDENTITY-001): the user, an
+/// automation or the inbox.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Requester {
+    User,
+    Automation(AutomationId),
+    Inbox,
+}
+
+impl Requester {
+    fn origin(self) -> TaskOrigin {
+        match self {
+            Requester::User => TaskOrigin::User,
+            Requester::Automation(_) => TaskOrigin::Automation,
+            Requester::Inbox => TaskOrigin::Intake,
+        }
+    }
+
+    fn actor(self) -> Actor {
+        match self {
+            Requester::User => Actor::LocalUser,
+            Requester::Automation(id) => Actor::Automation(id),
+            Requester::Inbox => Actor::Inbox,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -542,7 +571,7 @@ impl Store {
                 [conversation_id.to_string()],
                 |r| r.get(0),
             )?;
-            let task = agent_task(&tx, conversation_id, new.origin, new.pack.as_deref(), now)?;
+            let task = agent_task(&tx, conversation_id, new.requester, new.pack.as_deref(), now)?;
             let run = RunId::new();
             tx.execute(
                 "INSERT INTO runs (id, task_id, state, revision, created_at_ms, updated_at_ms, kind)
@@ -1303,7 +1332,7 @@ fn conversation_from_raw(raw: RawConversation) -> Result<ConversationRow, Storag
 fn agent_task(
     tx: &Transaction,
     conversation: ConversationId,
-    origin: TaskOrigin,
+    requester: Requester,
     pack: Option<&str>,
     now: i64,
 ) -> Result<TaskId, StorageError> {
@@ -1326,17 +1355,18 @@ fn agent_task(
     let id = TaskId::new();
     tx.execute(
         "INSERT INTO tasks (id, project_id, idempotency_key, request_json, request_sha256, created_at_ms,
-                            origin, conversation_id, pack)
-         VALUES (?1, ?2, ?3, ?4, '', ?5, ?6, ?7, ?8)",
+                            origin, conversation_id, pack, requested_by)
+         VALUES (?1, ?2, ?3, ?4, '', ?5, ?6, ?7, ?8, ?9)",
         params![
             id.to_string(),
             project,
             format!("agent:{conversation}"),
             json!({"conversation_id": conversation.to_string()}).to_string(),
             now,
-            origin.as_str(),
+            requester.origin().as_str(),
             conversation.to_string(),
-            pack
+            pack,
+            crate::actors::id_of(tx, requester.actor())?
         ],
     )?;
     Ok(id)
@@ -1384,6 +1414,7 @@ fn settle_turn(
         )?;
         crate::interventions::record(
             tx,
+            crate::Actor::LocalUser,
             &task,
             Some(&run.to_string()),
             None,
@@ -1401,10 +1432,15 @@ fn settle_turn(
             "UPDATE runs SET parent_run_id = ?1 WHERE id = ?2 AND kind = 'Effect' AND parent_run_id IS NULL",
             params![run.to_string(), effect.to_string()],
         )?;
+        // Asked for by the agent from the start since version 18; this
+        // catches an effect submitted before it.
         tx.execute(
-            "UPDATE tasks SET origin = 'Agent'
+            "UPDATE tasks SET origin = 'Agent', requested_by = ?2
              WHERE origin = 'Direct' AND id = (SELECT task_id FROM runs WHERE id = ?1)",
-            [effect.to_string()],
+            params![
+                effect.to_string(),
+                crate::actors::id_of(tx, crate::Actor::Agent)?
+            ],
         )?;
     }
     Ok(())

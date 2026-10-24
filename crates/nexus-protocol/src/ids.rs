@@ -50,6 +50,7 @@ typed_id!(AgentStepId);
 typed_id!(MemoryId);
 typed_id!(McpServerId);
 typed_id!(AutomationId);
+typed_id!(ActorId);
 typed_id!(RegisterId);
 typed_id!(RecordId);
 typed_id!(FolderId);

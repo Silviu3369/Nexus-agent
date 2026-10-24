@@ -8,6 +8,7 @@ import { api, describeError } from "../api";
 import { ApprovalCard } from "../components/ApprovalCard";
 import { Timeline } from "../components/Timeline";
 import {
+  actorText,
   buildRuns,
   taskRows,
   turnLine,
@@ -248,7 +249,16 @@ function TaskDetail({
             read public web pages, and asks before writing or remembering anything.
           </Empty>
         )}
-        {taskId !== null && taskProject && <p className="muted small">Project: {taskProject.name}</p>}
+        {taskId !== null && (taskProject || view?.requested_by) && (
+          <p className="muted small task-facts">
+            {[
+              taskProject ? `Project: ${taskProject.name}` : null,
+              view?.requested_by ? `Requested by ${actorText(view.requested_by, agentName)}` : null,
+            ]
+              .filter((part) => part !== null)
+              .join(" · ")}
+          </p>
+        )}
         {runs.map((run, i) => (
           <RunBlock key={run.id} run={run} index={i + 1} agentName={agentName} onDeleted={afterRunDeleted} />
         ))}

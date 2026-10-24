@@ -14,6 +14,7 @@
 // module is the single place that maps it, so it can be replaced when it does.
 
 import type {
+  ActorView,
   AgentStepView,
   ChatMessageView,
   ConversationSummary,
@@ -1360,4 +1361,33 @@ export function effectText(effectClass: string | null, evidence: string | null):
   if (!effect) return null;
   const proof = evidence ? EVIDENCE_TEXT[evidence] : undefined;
   return proof ? `${effect} · ${proof}` : effect;
+}
+
+/** Who did or asked for something, as the user reads it (ADR-IDENTITY-001). */
+export function actorText(actor: ActorView | null, agentName: string): string | null {
+  if (!actor) return null;
+  switch (actor.kind) {
+    case "User":
+      return "you";
+    case "Agent":
+      return agentName;
+    case "Automation":
+      return `the automation “${actor.name}”`;
+    case "System":
+      return "the Nexus Host";
+    default:
+      return actor.name;
+  }
+}
+
+/** Who asked for an effect and who decided it: “Asked by Nexus · approved by you”. */
+export function actorsLine(run: RunView, agentName: string): string | null {
+  const asked = actorText(run.requested_by, agentName);
+  const decided = actorText(run.decided_by, agentName);
+  const parts: string[] = [];
+  if (asked) parts.push(`Asked by ${asked}`);
+  if (decided) parts.push(`${run.status === "Denied" ? "rejected" : "approved"} by ${decided}`);
+  if (parts.length === 0) return null;
+  const line = parts.join(" · ");
+  return line.charAt(0).toUpperCase() + line.slice(1);
 }

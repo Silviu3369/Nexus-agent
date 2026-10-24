@@ -572,6 +572,7 @@ try {
   Click-Button $win "Open task" 20
   Check (Wait-Text $win "Your morning summary is ready." 20) "it ran as a task with the model's reply"
   Check ($null -ne (Wait-Like $win "Morning summary · ")) "the task is named after the automation and its time"
+  Check ($null -ne (Wait-Contains $win "Requested by the automation")) "the task names the automation that asked for it"
   Click-Button $win "Automations"
   Click-Button $win "History"
   Check (Wait-Text $win "History, newest first") "the history lists the run"
@@ -650,6 +651,8 @@ try {
   $letterTask = Wait-Like $win "Write my cover letter for Acme"
   if ($letterTask) { Invoke-Element $letterTask }
   Check ($null -ne (Wait-Contains $win "Changes something outside Nexus; can be undone")) "the letter's run says it changes something outside Nexus and can be undone"
+  Check ($null -ne (Wait-Contains $win "Requested by you")) "the letter's task says you asked for it"
+  Check ($null -ne (Wait-Contains $win "approved by you")) "the letter's run says who asked for it and that you approved it"
   Check ($null -ne (Find-Named $win "Undo" ([System.Windows.Automation.ControlType]::Button))) "the letter can be undone from its task"
   Click-Button $win "Jobs"
   Click-Button $win "Import"

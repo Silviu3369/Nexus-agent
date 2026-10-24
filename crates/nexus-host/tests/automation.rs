@@ -237,6 +237,18 @@ async fn a_due_time_sends_one_task_named_after_the_automation() {
         format!("Daily notes · {}", schedule::local_label(at, None))
     );
     assert_eq!((status, text.as_str()), (ChatStatus::Complete, "Done."));
+    assert_eq!(
+        client
+            .conversation(run.conversation_id.unwrap())
+            .await
+            .unwrap()
+            .requested_by,
+        Some(nexus_protocol::ActorView {
+            kind: "Automation".into(),
+            name: "Daily notes".into(),
+        }),
+        "the task names the automation that asked for it (ADR-IDENTITY-001)"
+    );
     let generations = fake.generations();
     assert_eq!(generations.len(), 1);
     assert!(generations[0].json().to_string().contains(PROMPT));
@@ -476,7 +488,7 @@ async fn a_run_sent_just_before_a_stop_is_recorded_not_sent_again() {
         let exchange = store
             .append_exchange(
                 NewExchange {
-                    origin: nexus_core::TaskOrigin::User,
+                    requester: nexus_storage::Requester::User,
                     pack: None,
                     conversation_id: None,
                     project_id: None,

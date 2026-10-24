@@ -55,7 +55,7 @@ async fn exchange(store: &Store, conversation: Option<ConversationId>, key: &str
     store
         .append_exchange(
             NewExchange {
-                origin: nexus_core::TaskOrigin::User,
+                requester: nexus_storage::Requester::User,
                 pack: None,
                 conversation_id: conversation,
                 project_id: None,
@@ -75,7 +75,14 @@ async fn exchange(store: &Store, conversation: Option<ConversationId>, key: &str
 async fn new_run(store: &Store, key: &str) -> RunId {
     let project = store.ensure_default_project(0).await.unwrap();
     match store
-        .submit_task(project, key.into(), "{}".into(), key.into(), 3)
+        .submit_task(
+            nexus_storage::EffectRequester::Agent,
+            project,
+            key.into(),
+            "{}".into(),
+            key.into(),
+            3,
+        )
         .await
         .unwrap()
     {

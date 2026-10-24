@@ -277,6 +277,18 @@ closed_enum!(TaskOrigin {
     Agent,
 });
 
+// Who does or asks for something (ADR-IDENTITY-001): the user, the agent,
+// an automation, an intake source (the inbox), a channel (M4), or the Host
+// itself (recovery, expiry). Only a `User` decides.
+closed_enum!(ActorKind {
+    User,
+    Agent,
+    Automation,
+    Intake,
+    Channel,
+    System,
+});
+
 // A run is either an effect with its own action (M1: a note, a document, an
 // MCP call) or one turn of the agent: a request and every reply to it.
 closed_enum!(RunType { Effect, Agent });

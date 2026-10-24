@@ -8,8 +8,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use nexus_core::{
-    AgentStepKind, AgentStepStatus, MemoryScope, MemorySource, MessageRole, MessageStatus,
-    RunState, TaskOrigin,
+    AgentStepKind, AgentStepStatus, MemoryScope, MemorySource, MessageRole, MessageStatus, RunState,
 };
 use nexus_protocol::{
     AgentStepDetail, AgentStepId, AgentStepView, BackupModelView, ChatMessageView, ChatRole,
@@ -23,8 +22,9 @@ use nexus_providers::{
     ProviderRequest, Role, ToolDeclaration, detect_provider,
 };
 use nexus_storage::{
-    AgentStepRow, ConnectionRow, Continuation, Deleted, Exchange, MemoryRow, MessageRow,
-    NewExchange, NewMemory, Pause, PersonaRow, RunDetail, Settlement, now_ms,
+    AgentStepRow, ConnectionRow, Continuation, Deleted, EffectRequester, Exchange, MemoryRow,
+    MessageRow, NewExchange, NewMemory, Pause, PersonaRow, Requester, RunDetail, Settlement,
+    now_ms,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -503,10 +503,16 @@ impl Runtime {
             .iter()
             .map(|row| (row.run_id, super::acceptance::turn_view(row, now)))
             .collect();
+        let requested_by = self
+            .store
+            .task_requester(id)
+            .await
+            .map_err(to_nexus_error)?;
         Ok(ConversationView {
             conversation_id: conversation.id,
             project_id: conversation.project_id,
             title: conversation.title,
+            requested_by: requested_by.as_ref().map(super::actor_view),
             messages: messages
                 .iter()
                 .map(|m| {
@@ -574,18 +580,19 @@ impl Runtime {
         self: &Arc<Self>,
         request: SendMessageRequest,
     ) -> Result<SendMessageResponse, NexusError> {
-        self.start_message(request, None, TaskOrigin::User, None)
+        self.start_message(request, None, Requester::User, None)
             .await
     }
 
     /// Sends a message as the user would; `title` names a new task (an
-    /// automation's run) instead of its first words; `origin` and `pack`
-    /// say what started a new task (ADR-TASK-001).
+    /// automation's run) instead of its first words; `requester` and
+    /// `pack` say who asked for a new task and in which flow (ADR-TASK-001,
+    /// ADR-IDENTITY-001).
     pub(crate) async fn start_message(
         self: &Arc<Self>,
         request: SendMessageRequest,
         title: Option<String>,
-        origin: TaskOrigin,
+        requester: Requester,
         pack: Option<String>,
     ) -> Result<SendMessageResponse, NexusError> {
         if self.paused {
@@ -637,7 +644,7 @@ impl Runtime {
             .store
             .append_exchange(
                 NewExchange {
-                    origin,
+                    requester,
                     pack,
                     conversation_id: request.conversation_id,
                     project_id,
@@ -1640,11 +1647,14 @@ impl Runtime {
             return None;
         };
         match self
-            .submit_note(SubmitNoteRequest {
-                idempotency_key: format!("chat-proposal-{reply}"),
-                title: title.to_string(),
-                body: body.to_string(),
-            })
+            .submit_note(
+                SubmitNoteRequest {
+                    idempotency_key: format!("chat-proposal-{reply}"),
+                    title: title.to_string(),
+                    body: body.to_string(),
+                },
+                EffectRequester::Agent,
+            )
             .await
         {
             Ok(submitted) => {

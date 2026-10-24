@@ -42,6 +42,7 @@ mod tests {
             ts::export::<nexus_protocol::RunOrigin>(&conf),
             ts::export::<nexus_protocol::RunKind>(&conf),
             ts::export::<nexus_protocol::McpCallView>(&conf),
+            ts::export::<nexus_protocol::ActorView>(&conf),
             ts::export::<nexus_protocol::RunView>(&conf),
             ts::export::<nexus_protocol::Snapshot>(&conf),
             ts::export::<nexus_protocol::SubmitNoteResponse>(&conf),

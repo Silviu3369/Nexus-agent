@@ -13,12 +13,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use nexus_core::TaskOrigin;
 use nexus_protocol::{
     ErrorCode, FolderId, InboxFileStatus, InboxFileView, InboxView, NexusError, RegisterId,
     SaveInboxRequest, SendMessageRequest,
 };
-use nexus_storage::{FolderRow, InboxFileRow, InboxSettle, now_ms};
+use nexus_storage::{FolderRow, InboxFileRow, InboxSettle, Requester, now_ms};
 
 use super::records::{JOB_APPLICATIONS, Register};
 use super::{Runtime, to_nexus_error};
@@ -538,7 +537,7 @@ impl Runtime {
                     ),
                 },
                 Some(format!("{} · {}", inbox_title(register), file.path)),
-                TaskOrigin::Intake,
+                Requester::Inbox,
                 Some(register.row.key.clone()),
             )
             .await;

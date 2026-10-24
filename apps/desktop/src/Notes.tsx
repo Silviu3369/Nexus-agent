@@ -1,8 +1,9 @@
-import { effectText } from "./model/execution.ts";
+import { actorsLine, effectText } from "./model/execution.ts";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { RunId, RunStatus, RunView } from "@nexus/contracts";
 import { api, describeError } from "./api";
 import { CheckCircleIcon, NotesIcon } from "./icons";
+import { useDerived } from "./state/store";
 
 const POLL_MS = 2000;
 
@@ -224,6 +225,7 @@ export function RunDetail({ summary, onChanged }: { summary: RunView; onChanged:
   const [error, setError] = useState<string | null>(null);
   const [content, setContent] = useState<string | null>(null);
   const [confirmUndo, setConfirmUndo] = useState(false);
+  const { agentName } = useDerived();
   // Several details can be on screen (chat proposals), so ids are unique.
   const headingId = useId();
 
@@ -267,6 +269,7 @@ export function RunDetail({ summary, onChanged }: { summary: RunView; onChanged:
       {effectText(view.effect_class, view.evidence) && (
         <p className="muted effect-line">{effectText(view.effect_class, view.evidence)}</p>
       )}
+      {actorsLine(view, agentName) && <p className="muted actors-line">{actorsLine(view, agentName)}</p>}
 
       {view.failure && (
         <p className={view.status === "Cancelled" ? "muted" : "error"}>

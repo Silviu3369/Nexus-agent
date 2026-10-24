@@ -3,6 +3,7 @@
 //! locks in the callers (`ARHITECTURA_NEXUS_RO.md` §5, §7).
 
 mod actions;
+mod actors;
 mod automation;
 mod chat;
 mod folders;
@@ -17,10 +18,11 @@ mod steps;
 mod usage;
 
 pub use actions::CompensationRow;
+pub use actors::{Actor, ActorRow};
 pub use automation::{AutomationRow, AutomationRunRow, NewAutomation};
 pub use chat::{
     ConnectionRow, Continuation, ConversationRow, DEFAULT_PERSONA_NAME, Deleted, Exchange,
-    MessageRow, NewExchange, Pause, PersonaRow, Settlement,
+    MessageRow, NewExchange, Pause, PersonaRow, Requester, Settlement,
 };
 pub use folders::FolderRow;
 pub use inbox::{InboxFileRow, InboxRow, InboxSettle, IntakeItemRow};
@@ -31,8 +33,8 @@ pub use records::{
     AgentOrigin, RecordChangeRow, RecordFilter, RecordRow, RecordWrite, RegisterRow, Values,
 };
 pub use repo::{
-    ActionRow, ApprovalRow, ArtifactRow, Decision, EventRow, NewAction, NewOperation, OperationRow,
-    RunDetail, RunError, RunOrigin, RunRow, SubmitOutcome, TaskRow,
+    ActionRow, ApprovalRow, ArtifactRow, Decision, EffectRequester, EventRow, NewAction,
+    NewOperation, OperationRow, RunDetail, RunError, RunOrigin, RunRow, SubmitOutcome, TaskRow,
 };
 pub use steps::AgentStepRow;
 pub use usage::{PriceRow, UsageRow};

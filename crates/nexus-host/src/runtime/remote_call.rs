@@ -12,7 +12,9 @@ use std::sync::Mutex;
 use nexus_core::RunState;
 use nexus_protocol::{McpCallPreview, McpCallView, NexusError, OperationId, RunId};
 use nexus_providers::mcp::{McpError, ToolOutput};
-use nexus_storage::{NewOperation, RunDetail, RunError, StorageError, SubmitOutcome, now_ms};
+use nexus_storage::{
+    EffectRequester, NewOperation, RunDetail, RunError, StorageError, SubmitOutcome, now_ms,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -210,6 +212,7 @@ impl Runtime {
         let outcome = self
             .store
             .submit_task(
+                EffectRequester::Agent,
                 project,
                 idempotency_key,
                 request_json,

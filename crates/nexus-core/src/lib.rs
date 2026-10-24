@@ -4,7 +4,7 @@
 pub mod state;
 
 pub use state::{
-    ActionState, AgentStepKind, AgentStepStatus, EffectClass, Evidence, FailureCause,
+    ActionState, ActorKind, AgentStepKind, AgentStepStatus, EffectClass, Evidence, FailureCause,
     IllegalTransition, InterventionKind, MemoryScope, MemorySource, MemoryStatus, MessageRole,
     MessageStatus, OperationState, RecordActor, RecordChangeKind, RunState, RunType, TaskOrigin,
     ThinkingLevel, UnknownState,

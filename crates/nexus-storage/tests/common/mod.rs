@@ -1,5 +1,19 @@
 //! Support shared by the storage tests.
 
+/// Takes a database from the current schema back to version 17: version
+/// 18 only added the actors and the columns naming them.
+#[allow(dead_code)]
+pub fn undo_v18(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "ALTER TABLE tasks DROP COLUMN requested_by;
+         ALTER TABLE actions DROP COLUMN actor_id;
+         ALTER TABLE approvals DROP COLUMN decided_by;
+         ALTER TABLE interventions DROP COLUMN actor_id;
+         DROP TABLE actors;
+         PRAGMA user_version = 17;",
+    )
+}
+
 /// Takes a database from the current schema back to version 14 (version
 /// 16 only added the interventions table, version 17 columns of actions),
 /// so an older
@@ -11,6 +25,7 @@
 #[allow(dead_code)]
 pub fn undo_v15(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
     let v14 = v14_tables();
+    undo_v18(conn)?;
     conn.execute_batch(
         "DROP TABLE IF EXISTS interventions;
          DELETE FROM actions WHERE compensates_action_id IS NOT NULL

@@ -12,11 +12,11 @@ mod common;
 
 use std::path::PathBuf;
 
-use nexus_core::{MessageStatus, TaskOrigin};
+use nexus_core::MessageStatus;
 use nexus_protocol::{AutomationRunStatus, ConversationId, MessageId, RunId, Schedule};
 use nexus_storage::{
-    AutomationRunRow, Exchange, NewAutomation, NewExchange, Pause, SUPPORTED_VERSION, Settlement,
-    Store, SubmitOutcome,
+    AutomationRunRow, Exchange, NewAutomation, NewExchange, Pause, Requester, SUPPORTED_VERSION,
+    Settlement, Store, SubmitOutcome,
 };
 
 struct Env {
@@ -42,7 +42,7 @@ async fn exchange(
     store: &Store,
     conversation: Option<ConversationId>,
     key: &str,
-    origin: TaskOrigin,
+    requester: Requester,
     pack: Option<&str>,
 ) -> Exchange {
     store.persona(0).await.unwrap();
@@ -68,7 +68,7 @@ async fn exchange(
                 model: "gemini-test".into(),
                 persona_version: 1,
                 title: None,
-                origin,
+                requester,
                 pack: pack.map(str::to_string),
             },
             2,
@@ -95,7 +95,14 @@ async fn settle(store: &Store, ex: &Exchange, status: MessageStatus, code: Optio
 async fn effect_run(store: &Store, key: &str) -> RunId {
     let project = store.ensure_default_project(0).await.unwrap();
     match store
-        .submit_task(project, key.into(), "{}".into(), key.into(), 3)
+        .submit_task(
+            nexus_storage::EffectRequester::Agent,
+            project,
+            key.into(),
+            "{}".into(),
+            key.into(),
+            3,
+        )
         .await
         .unwrap()
     {
@@ -184,7 +191,7 @@ fn turn(ex: &Exchange) -> RunId {
 async fn a_request_is_a_run_of_its_task_and_ends_with_its_reply() {
     let env = env();
     let s = &env.store;
-    let first = exchange(s, None, "a", TaskOrigin::User, None).await;
+    let first = exchange(s, None, "a", Requester::User, None).await;
     let conversation = first.conversation_id;
     let (task, origin, pack) = task_of(s, conversation).await;
     assert_eq!((origin.as_str(), pack), ("User", None));
@@ -196,7 +203,7 @@ async fn a_request_is_a_run_of_its_task_and_ends_with_its_reply() {
     settle(s, &first, MessageStatus::Complete, None).await;
     assert_eq!(run(s, a).await.1, "Succeeded");
 
-    let second = exchange(s, Some(conversation), "b", TaskOrigin::Automation, None).await;
+    let second = exchange(s, Some(conversation), "b", Requester::Inbox, None).await;
     assert_eq!(
         task_of(s, conversation).await.0,
         task,
@@ -220,7 +227,7 @@ async fn a_request_is_a_run_of_its_task_and_ends_with_its_reply() {
         )
     );
 
-    let third = exchange(s, Some(conversation), "c", TaskOrigin::User, None).await;
+    let third = exchange(s, Some(conversation), "c", Requester::User, None).await;
     settle(s, &third, MessageStatus::Cancelled, None).await;
     assert_eq!(run(s, turn(&third)).await.1, "Cancelled");
     // A second settlement changes nothing (the reply settles once).
@@ -236,7 +243,7 @@ async fn a_request_is_a_run_of_its_task_and_ends_with_its_reply() {
     );
     assert_eq!(run(s, turn(&third)).await.1, "Cancelled");
 
-    let fourth = exchange(s, Some(conversation), "d", TaskOrigin::User, None).await;
+    let fourth = exchange(s, Some(conversation), "d", Requester::User, None).await;
     assert_eq!(s.fail_interrupted_messages(7).await.unwrap(), 1);
     assert_eq!(
         run(s, turn(&fourth)).await,
@@ -262,7 +269,7 @@ async fn a_request_is_a_run_of_its_task_and_ends_with_its_reply() {
 async fn a_turn_waits_on_its_proposal_then_goes_on_or_ends_when_the_user_moves_on() {
     let env = env();
     let s = &env.store;
-    let ex = exchange(s, None, "w", TaskOrigin::Intake, Some("job_applications")).await;
+    let ex = exchange(s, None, "w", Requester::Inbox, Some("job_applications")).await;
     let (_, origin, pack) = task_of(s, ex.conversation_id).await;
     assert_eq!(
         (origin.as_str(), pack.as_deref()),
@@ -270,7 +277,11 @@ async fn a_turn_waits_on_its_proposal_then_goes_on_or_ends_when_the_user_moves_o
     );
     let agent = turn(&ex);
     let effect = effect_run(s, "w-effect").await;
-    assert_eq!(origin_of_run_task(s, effect).await, "Direct");
+    assert_eq!(
+        origin_of_run_task(s, effect).await,
+        "Agent",
+        "asked for by the agent from the start (ADR-IDENTITY-001)"
+    );
     pause(s, &ex, effect).await;
     assert_eq!(run(s, agent).await.1, "AwaitingApproval");
     assert_eq!(
@@ -307,11 +318,11 @@ async fn a_turn_waits_on_its_proposal_then_goes_on_or_ends_when_the_user_moves_o
     assert_eq!(run(s, agent).await.1, "Succeeded");
 
     // A turn left waiting ends when the user sends a new request instead.
-    let waiting = exchange(s, Some(ex.conversation_id), "w2", TaskOrigin::User, None).await;
+    let waiting = exchange(s, Some(ex.conversation_id), "w2", Requester::User, None).await;
     let effect2 = effect_run(s, "w2-effect").await;
     pause(s, &waiting, effect2).await;
     assert_eq!(run(s, turn(&waiting)).await.1, "AwaitingApproval");
-    let next = exchange(s, Some(ex.conversation_id), "w3", TaskOrigin::User, None).await;
+    let next = exchange(s, Some(ex.conversation_id), "w3", Requester::User, None).await;
     assert_eq!(run(s, turn(&waiting)).await.1, "Cancelled");
     assert_eq!(run(s, turn(&next)).await.1, "Running");
 
@@ -356,15 +367,15 @@ async fn migrating_to_v15_turns_the_history_into_tasks_and_runs() {
     let s = &env.store;
     // A chat with a reply that succeeded, one that failed (busy provider)
     // and one waiting on a proposal.
-    let chat = exchange(s, None, "m1", TaskOrigin::User, None).await;
+    let chat = exchange(s, None, "m1", Requester::User, None).await;
     settle(s, &chat, MessageStatus::Complete, None).await;
-    let failed = exchange(s, Some(chat.conversation_id), "m2", TaskOrigin::User, None).await;
+    let failed = exchange(s, Some(chat.conversation_id), "m2", Requester::User, None).await;
     settle(s, &failed, MessageStatus::Failed, Some("Busy")).await;
-    let paused = exchange(s, Some(chat.conversation_id), "m3", TaskOrigin::User, None).await;
+    let paused = exchange(s, Some(chat.conversation_id), "m3", Requester::User, None).await;
     let effect = effect_run(s, "m3-effect").await;
     pause(s, &paused, effect).await;
     // An automation's task and an intake's task.
-    let auto = exchange(s, None, "m4", TaskOrigin::User, None).await;
+    let auto = exchange(s, None, "m4", Requester::User, None).await;
     settle(s, &auto, MessageStatus::Complete, None).await;
     let automation = s.create_automation(daily(), 1).await.unwrap();
     s.record_automation_runs(
@@ -385,7 +396,7 @@ async fn migrating_to_v15_turns_the_history_into_tasks_and_runs() {
     )
     .await
     .unwrap();
-    let ad = exchange(s, None, "m5", TaskOrigin::User, None).await;
+    let ad = exchange(s, None, "m5", Requester::User, None).await;
     settle(s, &ad, MessageStatus::Complete, None).await;
     let register = s
         .ensure_register(

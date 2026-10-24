@@ -460,6 +460,23 @@ Consecințe:
 - conturi și roluri acum (operator, aprobator): nu există încă al doilea om; tabelul le lasă loc (M7);
 - SID-ul Windows ca identitate: se schimbă la mutarea pe alt PC, iar pipe-ul verifică deja contul.
 
+**Implementare (2026-10-25, pasul 1 din ADR-POLICY-001):**
+
+- **Schema v18:** tabelul `actors` și coloanele `tasks.requested_by`, `actions.actor_id`, `approvals.decided_by`, `interventions.actor_id`, completate la migrare din ce spuneau deja rândurile.
+  - Un task pornit de o automatizare ștearsă înainte de v18 rămâne fără cel care l-a cerut: nu mai există nimic din care să fie dedus.
+- **Două precizări față de textul de mai sus:**
+  - inboxul are tipul propriu `Intake`, nu `Automation`: e o sursă de intake, nu o automatizare (ADR-INTAKE-001 va adăuga și alte surse);
+  - evidențele și memoria nu primesc o coloană nouă. Cuvintele `User`/`Agent` din ele numesc deja unul dintre cei doi actori, iar cine a cerut munca agentului se citește din task-ul turei.
+- **Cod:**
+  - `nexus-storage/src/actors.rs`;
+  - în stocare, cel care cere un task de conversație e un tip închis (`Requester`: tu, o automatizare, inboxul), la fel cel care cere un efect (`EffectRequester`: tu sau agentul);
+  - un efect propus de agent e al agentului din momentul trimiterii, nu doar după ce tura se oprește;
+  - o automatizare primește actorul la creare, îl redenumește odată cu ea și îl dezactivează la ștergere.
+- **Ce se vede:**
+  - în Tasks: „Requested by you / the automation «…» / Inbox”;
+  - la fiecare efect: „Asked by Nexus · approved by you”.
+- Politica (tabelul `policy_rules`) vine la pasul 2, într-o versiune separată a schemei.
+
 ### ADR-POLICY-001 — politica de aprobare ca date (acceptat 2026-10-25)
 
 **Context.** Azi politica e cod:

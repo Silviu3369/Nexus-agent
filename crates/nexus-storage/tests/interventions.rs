@@ -8,9 +8,7 @@ mod common;
 
 use std::path::PathBuf;
 
-use nexus_core::{
-    InterventionKind, MemoryScope, MemorySource, MessageStatus, RecordActor, TaskOrigin,
-};
+use nexus_core::{InterventionKind, MemoryScope, MemorySource, MessageStatus, RecordActor};
 use nexus_protocol::{ConversationId, OperationId, RunId};
 use nexus_storage::{
     AgentOrigin, Decision, Exchange, InboxSettle, NewAction, NewExchange, NewMemory, Pause,
@@ -61,7 +59,7 @@ async fn exchange(store: &Store, conversation: Option<ConversationId>, key: &str
                 model: "gemini-test".into(),
                 persona_version: 1,
                 title: None,
-                origin: TaskOrigin::User,
+                requester: nexus_storage::Requester::User,
                 pack: None,
             },
             2,
@@ -115,7 +113,14 @@ async fn register(store: &Store) -> nexus_protocol::RegisterId {
 async fn proposed_effect(store: &Store, ex: &Exchange, key: &str) -> RunId {
     let project = store.ensure_default_project(0).await.unwrap();
     let run = match store
-        .submit_task(project, key.into(), "{}".into(), key.into(), 3)
+        .submit_task(
+            nexus_storage::EffectRequester::Agent,
+            project,
+            key.into(),
+            "{}".into(),
+            key.into(),
+            3,
+        )
         .await
         .unwrap()
     {
@@ -456,6 +461,7 @@ async fn migrating_to_v16_carries_over_the_decisions_already_recorded() {
     assert_eq!(interventions(s).await.len(), 2);
 
     s.call(|c| {
+        common::undo_v18(c)?;
         c.execute_batch(
             "DROP TABLE interventions;
              DELETE FROM actions WHERE compensates_action_id IS NOT NULL

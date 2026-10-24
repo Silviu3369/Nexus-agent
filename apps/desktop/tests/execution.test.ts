@@ -17,6 +17,8 @@ import {
   taskRows,
   effectText,
   turnLine,
+  actorText,
+  actorsLine,
 } from "../src/model/execution.ts";
 
 const T0 = 1_800_000_000_000;
@@ -759,4 +761,20 @@ test("a run says what kind of effect it has and how its success is proven", () =
   );
   assert.equal(effectText(null, "Verified"), null);
   assert.equal(effectText("InternalReversible", null), "Changes only Nexus's own data; can be undone");
+});
+
+test("a run and a task say who asked for them and who decided", () => {
+  const you = { kind: "User", name: "Local user" };
+  const agent = { kind: "Agent", name: "Nexus" };
+  assert.equal(actorText(you, "Ada"), "you");
+  assert.equal(actorText(agent, "Ada"), "Ada", "the agent goes by the name the user gave it");
+  assert.equal(actorText({ kind: "Automation", name: "Morning" }, "Ada"), "the automation “Morning”");
+  assert.equal(actorText({ kind: "Intake", name: "Inbox" }, "Ada"), "Inbox");
+  assert.equal(actorText(null, "Ada"), null);
+
+  const proposed = noteRun("AwaitingApproval", { requested_by: agent, decided_by: null });
+  assert.equal(actorsLine(proposed, "Ada"), "Asked by Ada");
+  assert.equal(actorsLine({ ...proposed, status: "Succeeded", decided_by: you }, "Ada"), "Asked by Ada · approved by you");
+  assert.equal(actorsLine({ ...proposed, status: "Denied", decided_by: you }, "Ada"), "Asked by Ada · rejected by you");
+  assert.equal(actorsLine(noteRun("Queued", { requested_by: null, decided_by: null }), "Ada"), null);
 });

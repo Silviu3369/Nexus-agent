@@ -8,13 +8,14 @@ use std::time::Duration;
 
 use nexus_core::{ActionState, OperationState, RunState};
 use nexus_protocol::{
-    ApprovalDecision, ArtifactId, ArtifactSummary, BackupSummary, DecideApprovalRequest, ErrorCode,
-    EventView, EventsPage, NexusError, NotePreview, OperationId, PendingApproval, RunFailure,
-    RunId, RunKind, RunOrigin, RunStatus, RunView, Snapshot, SubmitNoteRequest, SubmitNoteResponse,
-    SystemStatusView,
+    ActorView, ApprovalDecision, ArtifactId, ArtifactSummary, BackupSummary, DecideApprovalRequest,
+    ErrorCode, EventView, EventsPage, NexusError, NotePreview, OperationId, PendingApproval,
+    RunFailure, RunId, RunKind, RunOrigin, RunStatus, RunView, Snapshot, SubmitNoteRequest,
+    SubmitNoteResponse, SystemStatusView,
 };
 use nexus_storage::{
-    Decision, NewOperation, RunDetail, RunError, StorageError, Store, SubmitOutcome, now_ms,
+    ActorRow, Decision, EffectRequester, NewOperation, RunDetail, RunError, StorageError, Store,
+    SubmitOutcome, now_ms,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Notify, watch};
@@ -542,9 +543,12 @@ impl Runtime {
 
     // ---- RPC surface ----
 
+    /// A note to create, asked for by the user (sent directly) or by the
+    /// agent (a proposal in a turn).
     pub async fn submit_note(
         &self,
         request: SubmitNoteRequest,
+        requester: EffectRequester,
     ) -> Result<SubmitNoteResponse, NexusError> {
         let key = request.idempotency_key.trim();
         if key.is_empty() || key.len() > MAX_IDEMPOTENCY_KEY {
@@ -577,6 +581,7 @@ impl Runtime {
         let outcome = self
             .store
             .submit_task(
+                requester,
                 project,
                 key.to_string(),
                 request_json,
@@ -871,9 +876,19 @@ impl Runtime {
             call: call
                 .as_ref()
                 .map(|c| remote_call::call_view(c, d.run.outcome_json.as_deref())),
+            requested_by: d.requested_by.as_ref().map(actor_view),
+            decided_by: d.decided_by.as_ref().map(actor_view),
             created_at_ms: d.run.created_at_ms,
             updated_at_ms: d.run.updated_at_ms,
         }
+    }
+}
+
+/// An actor as the dashboard shows it (ADR-IDENTITY-001).
+pub(crate) fn actor_view(actor: &ActorRow) -> ActorView {
+    ActorView {
+        kind: actor.kind.as_str().to_string(),
+        name: actor.name.clone(),
     }
 }
 

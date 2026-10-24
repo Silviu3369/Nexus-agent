@@ -338,7 +338,7 @@ async fn projects_are_explicit_and_the_default_one_takes_new_tasks_until_another
         .store
         .append_exchange(
             NewExchange {
-                origin: nexus_core::TaskOrigin::User,
+                requester: nexus_storage::Requester::User,
                 pack: None,
                 conversation_id: None,
                 project_id: Some(side.id),

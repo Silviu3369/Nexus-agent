@@ -280,7 +280,14 @@ async fn data02_full_database_refuses_the_write_and_keeps_state_consistent() {
 
     let big = format!("{{\"body\":\"{}\"}}", "x".repeat(64 * 1024));
     let result = store
-        .submit_task(project, "k".to_string(), big, "h".to_string(), 1)
+        .submit_task(
+            nexus_storage::EffectRequester::User,
+            project,
+            "k".to_string(),
+            big,
+            "h".to_string(),
+            1,
+        )
         .await;
     match result {
         Err(StorageError::Sqlite(rusqlite::Error::SqliteFailure(e, _))) => {
@@ -322,6 +329,7 @@ async fn data02_busy_database_returns_an_explicit_error_then_recovers() {
 
     let blocked = store
         .submit_task(
+            nexus_storage::EffectRequester::User,
             project,
             "k".to_string(),
             "{}".to_string(),
@@ -347,6 +355,7 @@ async fn data02_busy_database_returns_an_explicit_error_then_recovers() {
     drop(other);
     store
         .submit_task(
+            nexus_storage::EffectRequester::User,
             project,
             "k".to_string(),
             "{}".to_string(),
