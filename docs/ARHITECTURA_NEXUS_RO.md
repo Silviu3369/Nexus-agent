@@ -262,6 +262,8 @@ Pentru mai mulți utilizatori se adaugă un proiect explicit de identitate, sepa
 | ADR-RELEASE-001 | Installer, semnare, actualizare și compatibilitate | De calificat în M6 |
 | ADR-TASK-001 | Un singur model al muncii agentului: Task → Run → Step → Action, cu rezultat, cost și intervenții | **Implementat** (schema v15 și v16, 2026-10-21) |
 | ADR-ACTION-001 | Un singur broker pentru efecte; clase de efect; descriptorul de instrument din contracte §6 | **Implementat** (schema v17, 2026-10-21) |
+| ADR-IDENTITY-001 | Actori cu identificator stabil: tu, agentul, automatizările, inboxul, Host-ul, ulterior canalele | **Acceptat** (2026-10-25), de implementat |
+| ADR-POLICY-001 | Politica de aprobare ca date, cu limite fixe; aprobări în lot; confirmare de încredere pentru efectele externe | **Acceptat** (2026-10-25), de implementat |
 
 Rezultatele ADR-urilor se înregistrează în acest document, cu alternativa aleasă, motiv, dependențe, limitări și probe. Progresul rămâne în plan; aici se schimbă deciziile de proiectare.
 
@@ -413,3 +415,128 @@ Clasa efectului e implicită în cod, verificarea există doar pentru fișiere, 
   - apoi se șterge fișierul și se verifică absența lui;
   - după o cădere se decide din fișier, fără repetare oarbă.
 - `nexus-storage` folosește `sha2` (deja în proiect, aprobat în M1) pentru hash-ul manifestelor interne.
+
+### ADR-IDENTITY-001 — actori cu identificator stabil (acceptat 2026-10-25)
+
+**Context.** Azi „cine a făcut” e un cuvânt fix, scris în mai multe locuri:
+
+- `records.created_by`, `record_changes.actor` și `memory_items.source` spun doar `User` sau `Agent`;
+- `tasks.origin` spune categoria: Direct, User, Automation, Intake, Agent;
+- intervențiile nu au actor (sunt implicit ale tale), iar aprobările nu spun cine a decis.
+
+Consecințe:
+
+- o scriere a agentului cerută de tine în chat și una pornită de o automatizare arată la fel („Agent”);
+- nu se poate spune ce automatizare a pornit munca;
+- odată cu Telegram și emailul (M4), „User” ar însemna și „tu în aplicație”, și „un cont de Telegram legat de tine”;
+- separarea operator/aprobator dintr-un pilot nu are pe ce să se sprijine.
+
+**Decizie.**
+
+1. **Tabel `actors`.** Fiecare actor are:
+   - un id stabil (UUID);
+   - tipul: `User`, `Agent`, `Automation`, `Channel` sau `System`;
+   - numele afișat și referința lui (automatizarea, legătura de canal);
+   - momentul creării și, eventual, al dezactivării.
+
+   Un actor nu se șterge, doar se dezactivează, ca auditul vechi să rămână citibil. La migrare se creează: tu (utilizatorul local), agentul Nexus, Host-ul (recuperare, expirare, reconciliere), inboxul și câte un actor pentru fiecare automatizare. Canalele primesc actori când apar (M4).
+2. **Fiecare faptă durabilă își numește actorul:**
+   - task-ul: cine l-a cerut (`requested_by`): tu, o automatizare, inboxul, ulterior un canal; `origin` rămâne categoria;
+   - intervențiile și deciziile pe aprobări: cine a decis;
+   - acțiunile și scrierile în evidențe și în memorie: cine le-a făcut, agentul sau tu.
+3. **Actorul se derivă din sesiune, niciodată din payload** (contracte §2, neschimbat). Conexiunea autentificată a dashboardului înseamnă tu. Munca Host-ului aparține agentului, Host-ului sau automatizării care a pornit-o. Nicio comandă IPC nu primește un câmp „actor”.
+4. **Invariant în cod, nu în configurare:** doar un actor activ de tip `User` poate decide o aprobare, face Undo, corecta sau schimba politica. Agentul, automatizările, inboxul și Host-ul nu pot. Ce va putea decide un canal stabilește ADR-POLICY-001 când apare canalul (M4).
+5. **Migrarea e aditivă:**
+   - coloane noi, completate din cele vechi: `User` devine tu, `Agent` devine agentul;
+   - task-urile din automatizări primesc actorul automatizării, cele din inbox actorul inboxului;
+   - coloanele vechi rămân și se scriu în continuare, ca să nu reconstruim pe baza ta tabele la care se referă alte tabele.
+6. **Ce se vede:** în istoricul unei înregistrări, în Activity și sub fiecare tură apar cine a făcut și cine a cerut: „tu”, „Nexus”, „Nexus, pentru automatizarea «…»”, „Host, la recuperarea după oprire”.
+
+**Ce nu se schimbă:** un singur utilizator Windows și un profil; autentificarea pipe-ului (ADR-IPC-001); fără conturi, parole sau roluri.
+
+**Alternative respinse:**
+
+- texte libere în loc de tabel: o automatizare redenumită ar deveni alt actor;
+- conturi și roluri acum (operator, aprobator): nu există încă al doilea om; tabelul le lasă loc (M7);
+- SID-ul Windows ca identitate: se schimbă la mutarea pe alt PC, iar pipe-ul verifică deja contul.
+
+### ADR-POLICY-001 — politica de aprobare ca date (acceptat 2026-10-25)
+
+**Context.** Azi politica e cod:
+
+- `needs_approval` din registru: efectele externe cer mereu aprobare, cele interne după unealtă (faptul de memorie da, scrierea în evidențe nu), citirile niciodată;
+- fiecare efect are cardul lui; nu există aprobare în lot;
+- o cerere de aprobare expiră după 10 minute, iar același termen acoperă și decizia, și execuția. O propunere făcută de inbox sau de o automatizare cât lipsești expiră înainte s-o vezi;
+- nu există prag: o tură care, după un document cu instrucțiuni ascunse, schimbă 200 de înregistrări le schimbă direct; Undo există, dar câte una;
+- decizia ajunge la Host ca apel IPC din fereastră, aceeași fereastră care afișează conținut de la model și din documente. CSP-ul strict și afișarea ca text reduc riscul, dar un apel IPC nu dovedește un click al tău (§11, contracte §4, APPROVAL-01).
+
+Cu emailul (M4), fișierele și Excelul (M3a) și intake-ul în volum (M5), asta duce fie la „aprob tot”, fie la propuneri expirate.
+
+**Decizie.**
+
+1. **Politica devine date, evaluate de Host.**
+   - O regulă se aplică unei unelte, opțional doar pe un flux (pachet, de exemplu `jobs`) sau pe un proiect. Decizia ei e `Auto`, `Ask` sau `Deny`; unde are sens, regula are un prag și un termen de așteptare.
+   - Regula cea mai specifică se aplică. Un pachet poate doar strânge.
+   - Modelul, documentele, emailurile și pachetele nu pot relaxa nimic. Doar tu, din Settings, prin calea de încredere (punctul 5).
+   - Fiecare regulă are o revizie. Acțiunea reține ce a decis-o: regula și revizia ei, sau decizia ta.
+   - La schimbarea politicii, cererile în așteptare se reevaluează: cele interzise acum se închid.
+2. **Limite fixe, în cod.** Datele nu le pot depăși:
+
+   | Clasă | Implicit | Ce se poate schimba |
+   | --- | --- | --- |
+   | `Read` | Auto | doar `Deny` (unealta oprită pe un flux) |
+   | `InternalReversible`, scrieri în evidențe | Auto până la un prag pe tură, apoi Ask în lot | pragul; `Ask` mereu; `Deny` |
+   | `InternalReversible`, fapte de memorie | Ask | doar `Deny`. Un fapt intră în toate conversațiile viitoare, deci nu se aprobă automat |
+   | `ExternalReversible` | Ask | doar `Deny` |
+   | `ExternalIrreversible` | Ask | doar `Deny` (decizia ta din 2026-10-20) |
+
+   În această versiune, singura relaxare posibilă e pragul scrierilor în evidențe. Restul regulilor doar strâng.
+3. **Pragul pentru scrierile agentului în evidențe:** 10 înregistrări pe tură.
+   - Până la prag, totul rămâne ca azi: scriere directă, auditată, cu Undo.
+   - Peste prag, tura se oprește. Scrierile rămase devin o cerere în lot, cu înainte → după pe fiecare câmp.
+4. **Aprobări în lot.** Cererile aceleiași unelte, din aceeași tură sau din același flux, apar într-un singur card:
+   - fiecare element arată efectul exact: la o creare, destinația și conținutul; la o schimbare, înainte → după. Ce diferă între elemente e evidențiat;
+   - aprobi tot sau o selecție, ori respingi;
+   - fiecare element își păstrează manifestul, hash-ul și consumul unic. Lotul e doar o decizie comună, scrisă într-o singură tranzacție. Dacă un element a expirat sau s-a schimbat, se refuză tot lotul și cardul se reafișează;
+   - maximum 25 de elemente pe lot (propunere).
+5. **Calea de confirmare de încredere** (până acum o notă în §11, de acum cerință).
+   - Pentru efectele externe (ambele clase `External`) și pentru orice relaxare a politicii, fereastra doar cere confirmarea. Aplicația, adică partea ei Rust, nu pagina web, citește cererea direct de la Host. Apoi afișează un dialog Windows nativ: unealta, destinația, numărul de elemente și ce date pleacă unde.
+   - Butonul implicit al dialogului e „Nu”, ca un Enter apăsat din reflex să nu aprobe. Doar „Da” din dialog trimite decizia. Un lot cere un singur dialog.
+   - Host-ul refuză o aprobare pentru un efect extern care nu vine pe această cale. Asta e proba APPROVAL-01, adusă din M3 în M2.
+   - Respingerea rămâne în fereastră: nu produce niciun efect.
+   - Folosim `MessageBoxW` din `windows-sys`, dependență deja aprobată, cu o funcționalitate în plus a ei (`Win32_UI_WindowsAndMessaging`). Nu se adaugă niciun pachet.
+6. **Așteptarea cererii, separată de valabilitatea aprobării:**
+   - o cerere așteaptă decizia ta implicit 24 de ore, configurabil pe flux, ca propunerile din inbox și din automatizări să nu expire cât lipsești;
+   - aprobarea dată trebuie folosită în 10 minute, ca acum. Precondițiile se reverifică înainte de efect, ca acum.
+7. **Stocarea** (schema v18, împreună cu ADR-IDENTITY-001):
+   - tabelul `policy_rules`: unealta, fluxul sau proiectul, decizia, pragul, așteptarea, revizia, cine a schimbat-o și când, revocarea;
+   - acțiunile rețin regula și revizia;
+   - aprobările rețin cine a decis și pe ce cale: fereastra sau dialogul de încredere.
+8. **Ce se vede:**
+   - Settings → Permisiuni: fiecare unealtă, cu clasa ei, decizia actuală, ce se poate schimba și ce nu;
+   - în Jobs, scrisorile propuse pentru mai multe anunțuri se aprobă dintr-un singur card, iar propunerile din inbox nu mai expiră peste noapte.
+
+**Ordinea implementării**, fiecare pas verificat înaintea următorului:
+
+1. actorii și schema v18, fără schimbare de comportament;
+2. evaluatorul de politică în locul lui `needs_approval`, cu implicitele de azi, plus așteptarea de 24 de ore;
+3. dialogul de încredere și proba APPROVAL-01;
+4. aprobările în lot;
+5. pragul scrierilor în evidențe;
+6. pagina Permisiuni.
+
+**Ce nu se schimbă:**
+
+- manifestul, hash-ul și consumul unic al fiecărei aprobări;
+- reconcilierea;
+- emailul și orice efect ireversibil cer aprobare de fiecare dată;
+- citirile nu cer aprobare.
+
+**Alternative respinse:**
+
+- politica în fișiere de configurare editate de mână: nu poate fi auditată și ar ocoli calea de încredere;
+- „aprobă tot ce vine de la acest flux” pentru efecte externe: exact oboseala pe care lotul cu diferențe o evită fără să cedeze controlul;
+- Windows Hello la fiecare aprobare: prea greu pentru folosirea zilnică; rămâne o opțiune pentru relaxarea politicii, mai târziu;
+- o a doua fereastră Tauri pentru confirmare: tot o pagină web care afișează conținut extern.
+
+**Răspunsurile tale (2026-10-25):** pragul e de 10 înregistrări pe tură; o cerere așteaptă 24 de ore; efectele externe se confirmă prin dialogul Windows nativ.
