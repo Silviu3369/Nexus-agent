@@ -31,6 +31,7 @@ mod acceptance;
 mod automation;
 mod broker;
 mod chat;
+mod data_policy;
 mod document_run;
 mod files;
 mod inbox;

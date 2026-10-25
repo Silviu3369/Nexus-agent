@@ -264,7 +264,7 @@ Pentru mai mulți utilizatori se adaugă un proiect explicit de identitate, sepa
 | ADR-ACTION-001 | Un singur broker pentru efecte; clase de efect; descriptorul de instrument din contracte §6 | **Implementat** (schema v17, 2026-10-21) |
 | ADR-IDENTITY-001 | Actori cu identificator stabil: tu, agentul, automatizările, inboxul, Host-ul, ulterior canalele | **Implementat** (schema v18, 2026-10-25) |
 | ADR-POLICY-001 | Politica de aprobare ca date, cu limite fixe; aprobări în lot; confirmare de încredere pentru efectele externe | **Implementat** (schema v19–v21, 2026-10-25); rămân selecția pe elemente în lot și regulile pe flux (cu pachetele) |
-| ADR-PROVIDER-002 | Ce date pot pleca la ce furnizor: clase de date pe surse, profilul conexiunii, refuz în Host | **Acceptat** (2026-10-25), de implementat |
+| ADR-PROVIDER-002 | Ce date pot pleca la ce furnizor: clase de date pe surse, profilul conexiunii, refuz în Host | **Implementat** (schema v22, 2026-10-25); rămân regiunea UE pentru pilot, mascarea, modelul local |
 
 Rezultatele ADR-urilor se înregistrează în acest document, cu alternativa aleasă, motiv, dependențe, limitări și probe. Progresul rămâne în plan; aici se schimbă deciziile de proiectare.
 
@@ -716,3 +716,31 @@ Revizuirea de produs cere, pentru un pilot: date de business doar la furnizori p
 - un singur comutator global: ar amesteca CV-ul tău cu documentele unui client.
 
 **Răspunsurile tale (2026-10-25):** folosești Nexus din SEE, deci cota gratuită Gemini poate primi `Personal`; ce împarți e `Personal` implicit, iar `Business` marchezi tu.
+
+**Implementare (2026-10-25, pașii 1–3 împreună):**
+
+- **Faptele furnizorilor** sunt în `nexus-host/src/data_terms.rs`, cu data și sursa fiecăruia. Între timp am confirmat din paginile oficiale:
+  - Anthropic: nu antrenează pe conținutul clienților, iar DPA-ul e inclus în termenii comerciali;
+  - OpenAI: datele API nu se folosesc pentru antrenare, dar DPA-ul se semnează separat;
+  - DeepSeek rămâne neconfirmat, deci primește doar `Public`.
+- **Regula** e în `nexus-core/src/data.rs` (`connection_class`):
+  - `Business` cere nivel plătit, DPA (inclus sau semnat, cum spui tu) și date nefolosite pentru îmbunătățire;
+  - `Personal` cere date nefolosite pentru îmbunătățire, sau acordul tău;
+  - altfel, doar `Public`.
+- **Schema v22:** clasa folderelor, evidențelor și serverelor MCP (`Personal` implicit), iar la conexiuni DPA-ul semnat și acordul pentru îmbunătățire. Faptul că folosești Nexus din SEE e o setare spusă de tine, nedată implicit.
+- **Aplicarea** e în `nexus-host/src/runtime/data_policy.rs`. Clasa turei pornește de la `Personal` (conversația) și urcă la `Business` când citește o sursă `Business`.
+  - Înaintea fiecărui apel către model, conexiunea trebuie să poată primi clasa turei; altfel răspunsul se oprește cu motivul și cu ce ai de făcut.
+  - O sursă peste ce poate primi conexiunea nu se citește: folderul sau evidența e refuzată, iar serverul MCP nu e oferit.
+  - Modelul de rezervă preia doar dacă poate primi clasa turei.
+- **Ce se vede:** Models → „Data sent to AI providers”:
+  - bifa SEE;
+  - la fiecare conexiune: ce poate primi, de ce, sursa termenilor, iar unde e cazul DPA-ul semnat și acordul;
+  - la fiecare sursă: „Your own data” sau „Other people's data”.
+
+  Ce lasă să plece mai multe date (SEE bifat, DPA semnat, acord dat, o sursă înapoi la ale tale) trece doar prin dialogul Windows; restul se face din fereastră.
+- **Pentru conexiunea ta Gemini gratuită:** până bifezi SEE (o dată, prin dialog), poate primi doar `Public`, deci conversațiile se opresc cu mesajul care spune ce ai de făcut.
+- **Rămâne:**
+  - regiunea UE ca cerință pentru un pilot (cu pachetele);
+  - mascarea;
+  - modelul local;
+  - proba reală a unui furnizor plătit, cu cheia ta.

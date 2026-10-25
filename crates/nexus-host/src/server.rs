@@ -8,8 +8,8 @@ use nexus_protocol::service::NexusService;
 use nexus_protocol::{
     AddMemoryRequest, AgentStepView, ArtifactId, AutomationId, AutomationRunView, AutomationView,
     BackupModelView, BackupSummary, ConnectionId, ConnectionView, ConversationId,
-    ConversationSummary, ConversationView, DecideApprovalRequest, DeletedView, ErrorCode,
-    EventsPage, ExportView, FolderEntryView, FolderId, FolderView, GetHealthResponse,
+    ConversationSummary, ConversationView, DataPolicyView, DecideApprovalRequest, DeletedView,
+    ErrorCode, EventsPage, ExportView, FolderEntryView, FolderId, FolderView, GetHealthResponse,
     HandshakeRequest, HandshakeResponse, HealthStatus, ImportPreviewView, ImportRequest,
     ImportResultView, InboxView, JobResultsView, McpServerId, McpServerView, MemoryContextView,
     MemoryId, MemoryItemView, MemoryQuery, MessageId, ModelPrice, ModelView, NexusError,
@@ -17,8 +17,8 @@ use nexus_protocol::{
     RecordId, RecordQuery, RecordView, RegisterId, RegisterView, RunId, RunView,
     SaveAutomationRequest, SaveConnectionRequest, SaveFolderRequest, SaveInboxRequest,
     SaveMcpServerRequest, SavePersonaRequest, SaveProjectRequest, SaveRecordRequest,
-    SendMessageRequest, SendMessageResponse, SetPermissionRequest, Snapshot, SubmitNoteRequest,
-    SubmitNoteResponse, SystemStatusView, ThinkingLevel, UsageView,
+    SendMessageRequest, SendMessageResponse, SetDataPolicyRequest, SetPermissionRequest, Snapshot,
+    SubmitNoteRequest, SubmitNoteResponse, SystemStatusView, ThinkingLevel, UsageView,
 };
 use tarpc::context::Context;
 use tarpc::server::{BaseChannel, Channel};
@@ -165,6 +165,20 @@ impl NexusService for HostServer {
     ) -> Result<RunView, NexusError> {
         self.require_session()?;
         self.runtime.decide(request).await
+    }
+
+    async fn data_policy(self, _ctx: Context) -> Result<DataPolicyView, NexusError> {
+        self.require_session()?;
+        self.runtime.data_policy().await
+    }
+
+    async fn set_data_policy(
+        self,
+        _ctx: Context,
+        request: SetDataPolicyRequest,
+    ) -> Result<DataPolicyView, NexusError> {
+        self.require_session()?;
+        self.runtime.set_data_policy(request).await
     }
 
     async fn permissions(self, _ctx: Context) -> Result<Vec<PermissionView>, NexusError> {

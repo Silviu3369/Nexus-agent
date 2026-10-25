@@ -8,6 +8,7 @@ use crate::chat::{
     DeletedView, ModelView, PersonaView, SaveConnectionRequest, SavePersonaRequest,
     SendMessageRequest, SendMessageResponse, ThinkingLevel,
 };
+use crate::data::{DataPolicyView, SetDataPolicyRequest};
 use crate::error::NexusError;
 use crate::files::{FolderEntryView, FolderView, SaveFolderRequest};
 use crate::handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse};
@@ -213,6 +214,14 @@ pub trait NexusService {
     async fn set_permission(
         request: SetPermissionRequest,
     ) -> Result<Vec<PermissionView>, NexusError>;
+
+    /// What data may leave for which connection, and why
+    /// (ADR-PROVIDER-002).
+    async fn data_policy() -> Result<DataPolicyView, NexusError>;
+
+    /// One change; letting more data leave is accepted only from the native
+    /// Windows dialog.
+    async fn set_data_policy(request: SetDataPolicyRequest) -> Result<DataPolicyView, NexusError>;
 
     /// Folders the user shared with Nexus.
     async fn list_folders() -> Result<Vec<FolderView>, NexusError>;

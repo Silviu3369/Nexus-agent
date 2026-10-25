@@ -92,6 +92,27 @@ export type RecordChangePreview = { register_key: string; register_name: string;
  */
 export type PermissionView = { tool_id: string; label: string; effect_class: string; sends: string; enabled: boolean; decision: string; max_auto: number | null; default_max_auto: number | null; changed_at_ms: number | null }
 
+/**
+ * What one connection may receive, and why.
+ */
+export type ConnectionDataView = { connection_id: ConnectionId; display_name: string; provider: string; free_tier: boolean; can_receive: string; reason: string; terms_url: string; dpa: string; dpa_signed: boolean; allows_training: boolean }
+
+/**
+ * A source the agent may read and send: a shared folder, a register, an
+ * MCP server.
+ */
+export type SourceDataView = { kind: string; id: string; name: string; data_class: string }
+
+/**
+ * What leaves Nexus, and for which connection.
+ */
+export type DataPolicyView = { in_eea: boolean; terms_checked: string; connections: ConnectionDataView[]; sources: SourceDataView[] }
+
+/**
+ * One change to what data may leave.
+ */
+export type DataChange = { InEea: { in_eea: boolean } } | { Connection: { connection_id: ConnectionId; dpa_signed: boolean; allows_training: boolean } } | { Source: { kind: string; id: string; data_class: string } }
+
 export type RunView = { run_id: RunId; title: string; status: RunStatus; effect_class: string | null; evidence: string | null; undone_at_ms: number | null; can_undo: boolean; revision: number; failure: RunFailure | null; pending_approval: PendingApproval | null; artifact: ArtifactSummary | null; origin: RunOrigin | null; kind: RunKind; call: McpCallView | null; requested_by: ActorView | null; decided_by: ActorView | null; created_at_ms: number; updated_at_ms: number }
 
 export type Snapshot = { runs: RunView[]; watermark: number }

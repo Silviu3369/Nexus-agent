@@ -16,6 +16,8 @@ import type {
   ConversationId,
   ConversationSummary,
   ConversationView,
+  DataChange,
+  DataPolicyView,
   DeletedView,
   ErrorCode,
   EventsPage,
@@ -81,6 +83,11 @@ export const api = {
       : invoke<RunView>("decide_approval", { approvalId, manifestSha256, approve: true }),
   cancelRun: (runId: RunId) => invoke<RunView>("cancel_run", { runId }),
   listPermissions: () => invoke<PermissionView[]>("list_permissions"),
+  getDataPolicy: () => invoke<DataPolicyView>("get_data_policy"),
+  /** Keeps more data in, from the window (the Host refuses the reverse). */
+  setDataPolicy: (change: DataChange) => invoke<DataPolicyView>("set_data_policy", { change }),
+  /** Lets more data leave after a Windows dialog; `null` when the user said No. */
+  relaxDataPolicy: (change: DataChange) => invoke<DataPolicyView | null>("relax_data_policy", { change }),
   /** Tightens a tool from the window (the Host refuses a loosening this way). */
   setPermission: (toolId: string, enabled: boolean, maxAuto: number | null) =>
     invoke<PermissionView[]>("set_permission", { toolId, enabled, maxAuto }),

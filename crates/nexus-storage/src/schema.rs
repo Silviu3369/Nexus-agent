@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::StorageError;
 
-pub const SUPPORTED_VERSION: i64 = 21;
+pub const SUPPORTED_VERSION: i64 = 22;
 
 /// Version 1: everything M1 persists. State columns are closed lists that a
 /// test keeps identical to the `nexus-core` enums. Times are UTC unix ms.
@@ -935,6 +935,19 @@ CREATE TABLE policy_rules (
 CREATE UNIQUE INDEX policy_rules_in_force ON policy_rules (tool_id) WHERE revoked_at_ms IS NULL;
 "#;
 
+/// Version 22 (ADR-PROVIDER-002): what data may leave for which provider.
+/// Each shared folder, register and MCP server has a class: the user's own
+/// data (`Personal`, the default) or someone else's (`Business`). A
+/// connection keeps what the user says about it: a signed data processing
+/// addendum, consent to the provider using their own data (both off).
+const V22: &str = r#"
+ALTER TABLE folders ADD COLUMN data_class TEXT NOT NULL DEFAULT 'Personal' CHECK (data_class IN ('Personal', 'Business'));
+ALTER TABLE registers ADD COLUMN data_class TEXT NOT NULL DEFAULT 'Personal' CHECK (data_class IN ('Personal', 'Business'));
+ALTER TABLE mcp_servers ADD COLUMN data_class TEXT NOT NULL DEFAULT 'Personal' CHECK (data_class IN ('Personal', 'Business'));
+ALTER TABLE provider_connections ADD COLUMN dpa_signed INTEGER NOT NULL DEFAULT 0 CHECK (dpa_signed IN (0, 1));
+ALTER TABLE provider_connections ADD COLUMN allows_training INTEGER NOT NULL DEFAULT 0 CHECK (allows_training IN (0, 1));
+"#;
+
 struct Migration {
     sql: &'static str,
     /// Rebuilds a table other tables refer to (see [`V5`]).
@@ -1024,6 +1037,10 @@ const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         sql: V21,
+        rebuilds_parent_table: false,
+    },
+    Migration {
+        sql: V22,
         rebuilds_parent_table: false,
     },
 ];

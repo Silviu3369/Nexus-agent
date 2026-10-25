@@ -1,9 +1,25 @@
 //! Support shared by the storage tests.
 
+/// Takes a database from the current schema back to version 21: version
+/// 22 only added the data classes and what the user says about connections.
+#[allow(dead_code)]
+pub fn undo_v22(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "ALTER TABLE folders DROP COLUMN data_class;
+         ALTER TABLE registers DROP COLUMN data_class;
+         ALTER TABLE mcp_servers DROP COLUMN data_class;
+         ALTER TABLE provider_connections DROP COLUMN dpa_signed;
+         ALTER TABLE provider_connections DROP COLUMN allows_training;
+         DELETE FROM settings WHERE key = 'data.in_eea';
+         PRAGMA user_version = 21;",
+    )
+}
+
 /// Takes a database from the current schema back to version 20: version
 /// 21 only added the user's policy rules.
 #[allow(dead_code)]
 pub fn undo_v21(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    undo_v22(conn)?;
     conn.execute_batch("DROP TABLE policy_rules; PRAGMA user_version = 20;")
 }
 

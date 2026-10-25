@@ -15,7 +15,9 @@ pub fn gemini(key: &str) -> SaveConnectionRequest {
         display_name: Some("Google AI Studio".to_string()),
         // Test keys do not follow Google's format, so the provider is named.
         provider: Some(ProviderChoice::Gemini),
-        free_tier: true,
+        // A paid key: what a free one may receive depends on where the user
+        // is (ADR-PROVIDER-002), tested on its own.
+        free_tier: false,
         api_key: Some(key.to_string()),
     }
 }

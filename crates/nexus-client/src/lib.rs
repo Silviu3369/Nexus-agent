@@ -188,6 +188,21 @@ impl NexusClient {
             .await??)
     }
 
+    /// What data may leave for which connection (ADR-PROVIDER-002).
+    pub async fn data_policy(&self) -> Result<nexus_protocol::DataPolicyView, CallError> {
+        Ok(self.client.data_policy(context::current()).await??)
+    }
+
+    pub async fn set_data_policy(
+        &self,
+        request: nexus_protocol::SetDataPolicyRequest,
+    ) -> Result<nexus_protocol::DataPolicyView, CallError> {
+        Ok(self
+            .client
+            .set_data_policy(context::current(), request)
+            .await??)
+    }
+
     /// Every tool the agent can use and what the approval policy lets it do.
     pub async fn permissions(&self) -> Result<Vec<nexus_protocol::PermissionView>, CallError> {
         Ok(self.client.permissions(context::current()).await??)

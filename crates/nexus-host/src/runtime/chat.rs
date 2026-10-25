@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex};
 
 use nexus_core::policy;
 use nexus_core::{
-    AgentStepKind, AgentStepStatus, MemoryScope, MemorySource, MessageRole, MessageStatus,
-    PolicyDecision, RunState,
+    AgentStepKind, AgentStepStatus, DataClass, MemoryScope, MemorySource, MessageRole,
+    MessageStatus, PolicyDecision, RunState,
 };
 use nexus_protocol::{
     AgentStepDetail, AgentStepId, AgentStepView, BackupModelView, ChatMessageView, ChatRole,
@@ -26,12 +26,13 @@ use nexus_providers::{
 use nexus_storage::{
     AgentStepRow, ConnectionRow, Continuation, Deleted, EffectRequester, Exchange, MemoryRow,
     MessageRow, NewExchange, NewMemory, Pause, PersonaRow, Requester, RunDetail, Settlement,
-    now_ms,
+    Source, now_ms,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use zeroize::Zeroizing;
 
+use super::data_policy;
 use super::document_run::{self, DOC_TOOL};
 use super::files::{self, LIST_TOOL, MAX_LISTS, MAX_READS, READ_TOOL};
 use super::record_batch::{BatchItem, BatchRequest};
@@ -937,6 +938,10 @@ impl Runtime {
             .map_err(to_nexus_error)?;
         // The user's approval rules (ADR-POLICY-001), read once per reply.
         let permissions = self.permissions_in_force().await?;
+        // What the connection in use may receive (ADR-PROVIDER-002).
+        let data = self.store.data_settings().await.map_err(to_nexus_error)?;
+        let mut route_row = connection.clone();
+        let mut allowed = data_policy::allowed(&route_row, &data);
         // The user's enabled MCP tools, read once per reply, without those
         // the user turned off in Permissions.
         let mut mcp_offer = self.mcp_offer().await;
@@ -945,7 +950,7 @@ impl Runtime {
                 crate::tools::registry::MCP_CALL_ID
             } else {
                 crate::tools::registry::MCP_READ_ID
-            })
+            }) && data_policy::may_use(allowed, data.class_of(Source::McpServer(o.server.id)))
         });
         // The user's registers (job applications first), with their fields.
         let registers = match self.registers().await {
@@ -995,6 +1000,12 @@ impl Runtime {
             }
             // The user's daily token budget holds between the steps too.
             self.check_daily_budget().await?;
+            let holds = data_policy::held(budget.business);
+            if !data_policy::may_use(allowed, holds) {
+                return Err(data_policy::refused_reply(
+                    &route_row, &data, allowed, holds,
+                ));
+            }
             let mut offered = Offered {
                 memory_items: memory.len(),
                 ..Offered::default()
@@ -1052,12 +1063,31 @@ impl Runtime {
                 Ok(call) => call,
                 Err(failure) if failure.outage && !route.backup => {
                     match self.backup_route(connection, &route.model).await {
-                        Some(backup) => {
+                        Some((backup, row)) => {
+                            let backup_allowed = data_policy::allowed(&row, &data);
+                            if !data_policy::may_use(
+                                backup_allowed,
+                                data_policy::held(budget.business),
+                            ) {
+                                tracing::warn!(
+                                    backup = %backup.model,
+                                    "the backup model may not receive what this task holds; it does not take over"
+                                );
+                                return Err(failure.error);
+                            }
                             tracing::warn!(
                                 model = %route.model,
                                 backup = %backup.model,
                                 "the model stayed unavailable; the backup model takes over"
                             );
+                            allowed = backup_allowed;
+                            route_row = row;
+                            mcp_offer.retain(|o| {
+                                data_policy::may_use(
+                                    allowed,
+                                    data.class_of(Source::McpServer(o.server.id)),
+                                )
+                            });
                             route = backup;
                             continue; // the same step, on the backup model
                         }
@@ -1137,6 +1167,21 @@ impl Runtime {
                     .collect();
                 file_calls.sort_by_key(|c| c.order);
                 for c in file_calls {
+                    let folder = c
+                        .arguments
+                        .get("folder")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    let class = files::named(&folders, folder)
+                        .ok()
+                        .map(|f| data.class_of(Source::Folder(f.id)));
+                    if let Some(class) = class {
+                        if !data_policy::may_use(allowed, class) {
+                            handled.push((c, data_policy::refused_source(folder, allowed)));
+                            continue;
+                        }
+                        budget.business |= class == DataClass::Business;
+                    }
                     let response = if c.name == LIST_TOOL {
                         if budget.file_lists >= MAX_LISTS {
                             json!({ "error": BUDGET_SPENT })
@@ -1176,6 +1221,22 @@ impl Runtime {
                     .collect();
                 record_calls.sort_by_key(|c| c.order);
                 for c in record_calls {
+                    let key = c
+                        .arguments
+                        .get("register")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    if let Some(register) = registers.iter().find(|r| r.row.key == key) {
+                        let class = data.class_of(Source::Register(register.row.id));
+                        if !data_policy::may_use(allowed, class) {
+                            handled.push((
+                                c,
+                                data_policy::refused_source(&register.row.name, allowed),
+                            ));
+                            continue;
+                        }
+                        budget.business |= class == DataClass::Business;
+                    }
                     let response = if c.name == FIND_TOOL {
                         if budget.record_reads >= MAX_RECORD_READS {
                             json!({ "error": BUDGET_SPENT })
@@ -1482,7 +1543,11 @@ impl Runtime {
     }
 
     /// The user's backup model, unless it is the very model that failed.
-    async fn backup_route(&self, primary: &ConnectionRow, failed_model: &str) -> Option<Route> {
+    async fn backup_route(
+        &self,
+        primary: &ConnectionRow,
+        failed_model: &str,
+    ) -> Option<(Route, ConnectionRow)> {
         let (row, model) = match self.store.backup_model().await {
             Ok(Some(backup)) => backup,
             Ok(None) => return None,
@@ -1495,14 +1560,17 @@ impl Runtime {
             return None;
         }
         match self.client(&row) {
-            Ok(client) => Some(Route {
-                client,
-                provider: row.provider.clone(),
-                free_tier: row.free_tier,
-                model,
-                thinking_level: row.thinking_level,
-                backup: true,
-            }),
+            Ok(client) => Some((
+                Route {
+                    client,
+                    provider: row.provider.clone(),
+                    free_tier: row.free_tier,
+                    model,
+                    thinking_level: row.thinking_level,
+                    backup: true,
+                },
+                row,
+            )),
             Err(err) => {
                 tracing::warn!(error = %err.message, "the backup model cannot be used");
                 None
@@ -2382,6 +2450,9 @@ struct TurnBudget {
     /// Batches of register changes this turn asked the user to decide.
     #[serde(default)]
     batches: u32,
+    /// The turn read someone else's data (ADR-PROVIDER-002).
+    #[serde(default)]
+    business: bool,
     #[serde(default)]
     file_lists: u32,
     #[serde(default)]

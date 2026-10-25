@@ -80,7 +80,9 @@ async fn ai01_reply_streams_from_the_selected_model_with_persona_and_history() {
     let client = host.client().await;
 
     let saved = client.save_connection(gemini(KEY)).await.unwrap();
-    assert!(saved.has_key && saved.active && saved.free_tier);
+    // The tests' key is a paid one (what a free one may receive depends on
+    // where the user is: tests/data_policy.rs).
+    assert!(saved.has_key && saved.active && !saved.free_tier);
     assert_eq!(saved.model, None);
     let models = client.list_models(saved.connection_id).await.unwrap();
     assert_eq!(

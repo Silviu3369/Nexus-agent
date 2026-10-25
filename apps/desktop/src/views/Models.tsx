@@ -7,6 +7,7 @@ import { PROVIDERS } from "../model/catalog.ts";
 import { modelStats } from "../model/execution.ts";
 import { ago, seconds } from "../model/format.ts";
 import { BackupModelCard, ConnectionsCard } from "../Settings";
+import { DataPolicyPanel } from "../components/DataPolicyPanel";
 import { UsagePanel } from "../components/UsagePanel";
 import { useDerived, useNexus, useNow } from "../state/store";
 import { Empty, Panel, StatusPill } from "../ui";
@@ -136,6 +137,7 @@ export function ModelsView() {
 
       <ConnectionsCard />
       <BackupModelCard connections={d.connections ?? []} onChange={setBackup} />
+      <DataPolicyPanel />
     </div>
   );
 }

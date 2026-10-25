@@ -387,6 +387,16 @@ try {
   Check (Wait-Text $win "gemini-fake-flash") "the chosen model is shown on the connection"
   Check ($null -ne (Wait-Contains $win "Chosen by you")) "routing says why this model is used"
 
+  # --- data sent to AI providers: a free Gemini quota gets your data only in the EEA ---
+  Check ($null -ne (Wait-Contains $win "Can receive: Only public data")) "a free Gemini quota may receive only public data until you say where you use Nexus"
+  $eea = Find-Check $win "I use Nexus from the European Economic Area"
+  Check ($null -ne $eea) "you can say you use Nexus from the EEA"
+  if ($eea) { Invoke-Element $eea }
+  $confirm = Wait-Confirm $win
+  Check ($null -ne $confirm) "saying so lets more data leave, so Windows asks"
+  if ($confirm) { Answer-Confirm $confirm "Yes" }
+  Check ($null -ne (Wait-Contains $win "Can receive: Your own data, not other people's")) "after Yes the free quota may receive your own data"
+
   # --- persona version ---
   Click-Button $win "Settings"
   Set-Field $win "Assistant name" "Ada"

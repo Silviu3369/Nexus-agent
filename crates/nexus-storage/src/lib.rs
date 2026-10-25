@@ -6,6 +6,7 @@ mod actions;
 mod actors;
 mod automation;
 mod chat;
+mod data;
 mod folders;
 mod inbox;
 mod interventions;
@@ -25,6 +26,7 @@ pub use chat::{
     ConnectionRow, Continuation, ConversationRow, DEFAULT_PERSONA_NAME, Deleted, Exchange,
     MessageRow, NewExchange, Pause, PersonaRow, Requester, Settlement,
 };
+pub use data::{ConnectionData, DataSettings, Source};
 pub use folders::FolderRow;
 pub use inbox::{InboxFileRow, InboxRow, InboxSettle, IntakeItemRow};
 pub use interventions::TurnReviewRow;

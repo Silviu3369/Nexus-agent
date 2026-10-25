@@ -264,9 +264,8 @@ async fn a_job_ad_put_in_the_inbox_becomes_an_application_once() {
     );
     assert!(handled.median_seconds.is_some());
     assert_eq!(
-        handled.estimated_cost_usd,
-        Some(0.0),
-        "the test connection is on the free tier: nothing to pay"
+        handled.estimated_cost_usd, None,
+        "the test connection is paid and no price was entered: no estimate"
     );
 
     // The same content again (a copy) is not read twice.

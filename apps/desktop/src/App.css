@@ -3247,3 +3247,21 @@ button.ghost.danger-ghost {
   width: 5em;
   margin-left: 8px;
 }
+
+/* Data sent to AI providers (ADR-PROVIDER-002): one connection per row. */
+.data-connections {
+  margin: 10px 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.data-connections li {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.data-connections p {
+  margin: 4px 0 0;
+}

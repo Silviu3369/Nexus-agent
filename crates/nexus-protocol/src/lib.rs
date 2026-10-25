@@ -5,6 +5,7 @@
 
 pub mod automation;
 pub mod chat;
+pub mod data;
 pub mod error;
 pub mod files;
 pub mod handshake;
@@ -19,6 +20,9 @@ pub mod service;
 pub mod usage;
 pub mod version;
 
+pub use data::{
+    ConnectionDataView, DataChange, DataPolicyView, SetDataPolicyRequest, SourceDataView,
+};
 pub use permissions::{PermissionView, SetPermissionRequest};
 pub use runs::{
     ActorView, ApprovalDecision, ApprovalPath, ArtifactSummary, BackupSummary,

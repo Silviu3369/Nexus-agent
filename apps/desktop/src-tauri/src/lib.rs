@@ -3,6 +3,7 @@ mod autostart;
 mod bindings;
 mod chat;
 mod confirm;
+mod data;
 mod files;
 mod host;
 mod mcp;
@@ -30,6 +31,9 @@ pub fn run() {
             permissions::list_permissions,
             permissions::set_permission,
             permissions::relax_permission,
+            data::get_data_policy,
+            data::set_data_policy,
+            data::relax_data_policy,
             runs::cancel_run,
             runs::undo_effect,
             runs::artifact_content,

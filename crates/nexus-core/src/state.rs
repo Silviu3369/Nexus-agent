@@ -327,6 +327,15 @@ closed_enum!(EffectClass {
 // out, ask the user first, or refuse it.
 closed_enum!(PolicyDecision { Auto, Ask, Deny });
 
+// What leaves Nexus for an AI provider (ADR-PROVIDER-002), lowest first:
+// public pages, the user's own data, other people's or companies' data.
+// Secrets (keys, tokens) are not a class: they never leave.
+closed_enum!(DataClass {
+    Public,
+    Personal,
+    Business,
+});
+
 // Where the user's decision was made (ADR-POLICY-001): in the dashboard's
 // window, which shows content from the model and documents, or in the
 // native Windows dialog the app shows itself, outside that page.
