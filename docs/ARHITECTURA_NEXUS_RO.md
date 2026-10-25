@@ -264,6 +264,7 @@ Pentru mai mulți utilizatori se adaugă un proiect explicit de identitate, sepa
 | ADR-ACTION-001 | Un singur broker pentru efecte; clase de efect; descriptorul de instrument din contracte §6 | **Implementat** (schema v17, 2026-10-21) |
 | ADR-IDENTITY-001 | Actori cu identificator stabil: tu, agentul, automatizările, inboxul, Host-ul, ulterior canalele | **Implementat** (schema v18, 2026-10-25) |
 | ADR-POLICY-001 | Politica de aprobare ca date, cu limite fixe; aprobări în lot; confirmare de încredere pentru efectele externe | **Implementat** (schema v19–v21, 2026-10-25); rămân selecția pe elemente în lot și regulile pe flux (cu pachetele) |
+| ADR-PROVIDER-002 | Ce date pot pleca la ce furnizor: clase de date pe surse, profilul conexiunii, refuz în Host | **Acceptat** (2026-10-25), de implementat |
 
 Rezultatele ADR-urilor se înregistrează în acest document, cu alternativa aleasă, motiv, dependențe, limitări și probe. Progresul rămâne în plan; aici se schimbă deciziile de proiectare.
 
@@ -638,3 +639,80 @@ Cu emailul (M4), fișierele și Excelul (M3a) și intake-ul în volum (M5), asta
   - `apps/desktop/src-tauri/src/permissions.rs` (relaxarea prin dialog);
   - `apps/desktop/src/components/PermissionsPanel.tsx`.
 - **Rămâne pentru pachete (ADR-PACK-001):** reguli pe flux sau proiect, care pot doar strânge.
+
+### ADR-PROVIDER-002 — ce date pot pleca la ce furnizor (acceptat 2026-10-25)
+
+**Context.** La fiecare răspuns, Nexus trimite furnizorului AI:
+
+- conversația;
+- faptele din memorie;
+- înregistrările pe care agentul le caută;
+- textul documentelor citite din folderele împărțite (până la 40.000 de caractere), inclusiv CV-ul;
+- textul paginilor web citite;
+- răspunsurile uneltelor MCP.
+
+Pagina Permisiuni spune, pentru fiecare unealtă, ce trimite. Conexiunea știe însă doar furnizorul și dacă e nivelul gratuit, iar asta contează azi numai la cost. Nicio regulă nu spune ce date pot pleca unde.
+
+Termenii furnizorilor diferă. I-am verificat la 2026-10-25; înaintea unui pilot se reverifică din documentele oficiale:
+
+| Furnizor | Gratuit | Plătit | Regiune |
+| --- | --- | --- | --- |
+| Gemini API ([termeni](https://ai.google.dev/gemini-api/terms), în vigoare din 2026-03-23) | cererile și răspunsurile pot îmbunătăți produsele Google și pot fi citite de oameni | nefolosite pentru îmbunătățire, sub DPA | în SEE, Elveția și Marea Britanie, regulile de date ale nivelului plătit se aplică și cotei gratuite; o aplicație oferită altor utilizatori din SEE poate folosi doar servicii plătite |
+| OpenAI API ([rezidență UE](https://openai.com/index/introducing-data-residency-in-europe/)) | — | neantrenat pe date în mod implicit; DPA | proiect nou cu regiunea Europa, fără reținerea datelor |
+| Anthropic API | — | neantrenat pe date în mod implicit (surse secundare, de confirmat din termenii comerciali) | de confirmat |
+| DeepSeek API | date stocate în China, folosite pentru îmbunătățire în mod implicit (surse secundare, de confirmat) | de confirmat | China |
+
+Revizuirea de produs cere, pentru un pilot: date de business doar la furnizori plătiți, cu DPA, în regiune UE.
+
+**Decizie.**
+
+1. **Clase pentru ce pleacă:**
+   - `Public`: pagini web citite;
+   - `Personal`: conversațiile tale, CV-ul, memoria, evidențele și folderele tale;
+   - `Business`: documente și înregistrări ale altor oameni sau firme, adică ce marchezi tu ca atare (folderele unui client, într-un pilot);
+   - `Secret`: chei, tokeni, parole. Nu pleacă niciodată; asta e deja garantat.
+2. **Fiecare sursă are o clasă:**
+   - un folder împărțit, o evidență și un server MCP sunt `Personal` implicit, iar tu le poți marca `Business`;
+   - memoria și conversația sunt `Personal`;
+   - paginile web sunt `Public`.
+   - Clasa unei ture e cea mai înaltă dintre datele intrate în ea: odată citit un document `Business`, restul turei e `Business`.
+3. **Fiecare conexiune are un profil de date:**
+   - nivelul (gratuit sau plătit, cum îl spui tu);
+   - regiunea, când furnizorul o oferă (de exemplu, un proiect OpenAI în Europa);
+   - faptele furnizorului, dintr-un tabel static în cod, datat și cu sursele lui, ca registrul de unelte.
+
+   Din ele, Host-ul stabilește clasa cea mai înaltă pe care o poate primi conexiunea:
+   - `Business`: plătit, cu DPA, datele nefolosite pentru îmbunătățire (și regiune UE, când fluxul o cere, ca la un pilot);
+   - `Personal`: datele nefolosite pentru îmbunătățire. Asta înseamnă plătit, sau cota gratuită Gemini folosită din SEE, unde se aplică regulile nivelului plătit. Altfel, numai dacă accepți explicit, pe acea conexiune, ca datele tale să fie folosite pentru îmbunătățire (oprit implicit);
+   - `Public`: orice conexiune.
+
+   Un furnizor ai cărui termeni nu sunt confirmați primește doar `Public`.
+4. **Host-ul aplică regula de două ori:**
+   - la unealta care ar aduce date mai sus decât permite conexiunea (citirea unui folder `Business` pe o conexiune `Personal`), refuză citirea și spune de ce;
+   - înaintea fiecărui apel către model verifică din nou și oprește răspunsul cu o eroare clară: ce date și ce fel de conexiune ar trebui.
+   - Modelul de rezervă se folosește doar dacă poate primi clasa turei.
+5. **Ce se vede:**
+   - în Models, la fiecare conexiune: ce poate primi (Public, Personal sau Business) și de ce (nivelul, DPA, regiunea, data termenilor, legătura);
+   - la foldere, evidențe și servere MCP: alegerea Personal sau Business.
+6. **Nu intră acum:** mascarea câmpurilor și un model local (nimic nu pleacă), care ar fi un adaptor nou, cu decizia lui.
+
+**Ordinea implementării:**
+
+1. clasele surselor, profilul conexiunii și tabelul cu faptele furnizorilor (schema v22);
+2. refuzul la unelte și la apelul către model, inclusiv la modelul de rezervă;
+3. ce se vede în Models și la surse;
+4. proba reală a unui furnizor plătit (cu cheia ta).
+
+**Ce nu se schimbă:**
+
+- cheile rămân în Credential Manager și nu pleacă niciodată;
+- alegerea furnizorului rămâne a ta, iar modelul de rezervă rămâne explicit;
+- limita de 120 s și cea de 40.000 de caractere (amânate, la cererea ta).
+
+**Alternative respinse:**
+
+- „niciodată nivelul gratuit” pentru orice: în SEE, cota gratuită Gemini are regulile de date ale nivelului plătit, iar azi o folosești chiar pentru datele tale;
+- clasificarea automată a conținutului de către model: modelul ar decide singur ce date pleacă unde;
+- un singur comutator global: ar amesteca CV-ul tău cu documentele unui client.
+
+**Răspunsurile tale (2026-10-25):** folosești Nexus din SEE, deci cota gratuită Gemini poate primi `Personal`; ce împarți e `Personal` implicit, iar `Business` marchezi tu.
