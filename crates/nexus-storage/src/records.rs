@@ -512,6 +512,7 @@ impl Store {
                         ActionState::Verified,
                         json!({"record": change.record_id.to_string(), "change": change.id}),
                         Some(&original),
+                        None,
                         now,
                     )?;
                 }
@@ -711,6 +712,8 @@ fn insert_change(
                 "revision_after": revision_after,
             }),
             None,
+            // Written at once: the policy let it run without asking.
+            Some(nexus_core::PolicyDecision::Auto),
             now,
         )?;
     }

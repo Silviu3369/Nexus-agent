@@ -1,9 +1,23 @@
 //! Support shared by the storage tests.
 
+/// Takes a database from the current schema back to version 18: version
+/// 19 only added what the policy decided and the approval's grant.
+#[allow(dead_code)]
+pub fn undo_v19(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "ALTER TABLE actions DROP COLUMN policy_decision;
+         ALTER TABLE actions DROP COLUMN policy_revision;
+         ALTER TABLE approvals DROP COLUMN grant_ms;
+         ALTER TABLE approvals DROP COLUMN use_by_ms;
+         PRAGMA user_version = 18;",
+    )
+}
+
 /// Takes a database from the current schema back to version 17: version
 /// 18 only added the actors and the columns naming them.
 #[allow(dead_code)]
 pub fn undo_v18(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    undo_v19(conn)?;
     conn.execute_batch(
         "ALTER TABLE tasks DROP COLUMN requested_by;
          ALTER TABLE actions DROP COLUMN actor_id;

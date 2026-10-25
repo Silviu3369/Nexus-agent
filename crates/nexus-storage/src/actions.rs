@@ -4,7 +4,7 @@
 //! naming the action it reverses, with its intent written before the
 //! effect.
 
-use nexus_core::{ActionState, EffectClass, Evidence, InterventionKind};
+use nexus_core::{ActionState, EffectClass, Evidence, InterventionKind, PolicyDecision};
 use nexus_protocol::{ActionId, OperationId, RunId};
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
@@ -34,6 +34,7 @@ pub(crate) fn record(
     state: ActionState,
     manifest: Value,
     compensates: Option<&str>,
+    policy: Option<PolicyDecision>,
     now: i64,
 ) -> Result<ActionId, StorageError> {
     let id = ActionId::new();
@@ -41,8 +42,8 @@ pub(crate) fn record(
     tx.execute(
         "INSERT INTO actions (id, run_id, operation_id, tool_id, tool_version, state, manifest_json,
                               manifest_sha256, revision, created_at_ms, updated_at_ms, effect_class, evidence,
-                              compensates_action_id, actor_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9, ?9, ?10, ?11, ?12, ?13)",
+                              compensates_action_id, actor_id, policy_decision, policy_revision)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![
             id.to_string(),
             run,
@@ -56,7 +57,9 @@ pub(crate) fn record(
             effect.as_str(),
             evidence.as_str(),
             compensates,
-            crate::actors::id_of(tx, actor)?
+            crate::actors::id_of(tx, actor)?,
+            policy.map(PolicyDecision::as_str),
+            policy.map(|_| nexus_core::policy::BUILT_IN_REVISION)
         ],
     )?;
     insert_event(
@@ -218,6 +221,8 @@ impl Store {
                 ActionState::Executing,
                 manifest,
                 Some(&original),
+                // The user's own undo: their act, not the policy's.
+                None,
                 now,
             )?;
             tx.commit()?;

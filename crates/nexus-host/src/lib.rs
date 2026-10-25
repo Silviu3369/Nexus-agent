@@ -8,5 +8,5 @@ pub mod system;
 pub mod tools;
 pub mod vault;
 
-pub use runtime::{DEFAULT_APPROVAL_TTL, Runtime, RuntimeConfig};
+pub use runtime::{DEFAULT_APPROVAL_GRANT, DEFAULT_APPROVAL_TTL, Runtime, RuntimeConfig};
 pub use server::{HostServer, bind_first_instance, serve_forever};

@@ -12,7 +12,8 @@ mod common;
 use std::path::PathBuf;
 
 use nexus_core::{
-    ActionState, EffectClass, Evidence, MemoryScope, MemorySource, MessageStatus, RecordActor,
+    ActionState, EffectClass, Evidence, MemoryScope, MemorySource, MessageStatus, PolicyDecision,
+    RecordActor,
 };
 use nexus_protocol::{ConversationId, OperationId, RunId};
 use nexus_storage::{
@@ -238,6 +239,16 @@ async fn the_agents_writes_and_proposals_are_actions_of_its_turn() {
         Some(actions[1].id),
         "the undo names the change it reverses"
     );
+    let auto = Some(PolicyDecision::Auto);
+    let ask = Some(PolicyDecision::Ask);
+    assert_eq!(
+        actions
+            .iter()
+            .map(|a| a.policy_decision)
+            .collect::<Vec<_>>(),
+        [auto, auto, None, ask, ask],
+        "writes ran without asking, facts were asked for, the user's undo is theirs"
+    );
     let manifest: serde_json::Value = serde_json::from_str(&actions[1].manifest_json).unwrap();
     assert_eq!(manifest["fields"], json!(["status"]));
     assert_eq!(actions[1].manifest_sha256.len(), 64);
@@ -296,6 +307,7 @@ async fn done_effect(s: &Store, ex: &Exchange, key: &str) -> RunId {
             manifest_json: "{}".into(),
             manifest_sha256: format!("sha-{key}"),
             approval_expires_at_ms: i64::MAX,
+            approval_grant_ms: 600_000,
         },
         6,
     )
@@ -474,5 +486,92 @@ async fn migrating_to_v17_classes_the_actions_already_recorded() {
             Some(EffectClass::ExternalReversible),
             Some(Evidence::Verified)
         )
+    );
+}
+
+#[tokio::test]
+async fn migrating_to_v19_records_what_the_policy_decided_for_each_action() {
+    let env = env();
+    let path = env.dir.join("nexus.db");
+    let s = &env.store;
+    let register = s
+        .ensure_register(
+            "job_applications".into(),
+            "Jobs".into(),
+            "{}".into(),
+            "status".into(),
+            None,
+            1,
+        )
+        .await
+        .unwrap()
+        .id;
+    let ex = exchange(s, None, "m").await;
+    let turn = ex.model_message.run_id.unwrap();
+    let added = s
+        .add_record(
+            register,
+            values(&[("company", "Acme"), ("role", "IT")]),
+            RecordActor::Agent,
+            Some(AgentOrigin {
+                conversation_id: ex.conversation_id,
+                message_id: ex.model_message.id,
+                read_hosts: Vec::new(),
+            }),
+            10,
+        )
+        .await
+        .unwrap();
+    s.undo_record_change(added.change_id, 11).await.unwrap();
+    s.add_memory(
+        NewMemory {
+            scope: MemoryScope::Personal,
+            project_id: None,
+            content: "Lives in Springfield".into(),
+            source: MemorySource::Agent,
+            conversation_id: Some(ex.conversation_id),
+            message_id: Some(ex.model_message.id),
+            influences: Vec::new(),
+        },
+        12,
+    )
+    .await
+    .unwrap();
+    let next = exchange(s, Some(ex.conversation_id), "m2").await;
+    let effect = done_effect(s, &next, "note").await;
+
+    s.call(|c| {
+        common::undo_v19(c)?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let s = Store::open(&path).unwrap();
+    assert_eq!(s.schema_version().await.unwrap(), SUPPORTED_VERSION);
+    let decisions: Vec<(String, Option<PolicyDecision>, Option<i64>)> = s
+        .turn_actions(turn)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|a| (a.tool_id, a.policy_decision, a.policy_revision))
+        .collect();
+    assert_eq!(
+        decisions,
+        [
+            ("RecordWrite".into(), Some(PolicyDecision::Auto), Some(1)),
+            ("UndoRecordChange".into(), None, None),
+            ("MemoryFact".into(), Some(PolicyDecision::Ask), Some(1)),
+        ]
+    );
+    let detail = s.run_detail(effect).await.unwrap();
+    assert_eq!(
+        detail.action.unwrap().policy_decision,
+        Some(PolicyDecision::Ask)
+    );
+    let approval = detail.approval.unwrap();
+    assert_eq!(
+        approval.use_by_ms,
+        Some(approval.expires_at_ms),
+        "an approval decided before keeps its old limit"
     );
 }

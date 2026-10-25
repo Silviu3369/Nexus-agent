@@ -12,14 +12,14 @@
 
 use std::path::PathBuf;
 
-use nexus_core::ActionState;
+use nexus_core::{ActionState, PolicyDecision};
 use nexus_protocol::{ErrorCode, NexusError, OperationId, RunId, RunStatus, RunView};
 use nexus_storage::{CompensationRow, NewAction, RunDetail, RunError, StorageError, now_ms};
 use serde_json::{Value, json};
 
 use super::document_run::{self, DocumentRequest};
 use super::remote_call::{self, McpCallRequest};
-use super::{MANIFEST_VERSION, Manifest, POLICY_REVISION, Runtime, note_content, to_nexus_error};
+use super::{MANIFEST_VERSION, Manifest, Runtime, note_content, to_nexus_error};
 use crate::fault;
 use crate::tools::markdown_artifact::{NoteContent, sha256_hex};
 use crate::tools::registry::{self, Execution, ToolDescriptor};
@@ -80,7 +80,9 @@ pub(super) fn route(
 
 /// Whether a call ends the step and waits for the user's approval.
 pub(super) fn waits_for_approval(tool: Option<&'static ToolDescriptor>) -> bool {
-    tool.is_some_and(|t| t.execution == Execution::EffectRun && registry::needs_approval(t))
+    tool.is_some_and(|t| {
+        t.execution == Execution::EffectRun && registry::decide(t) == PolicyDecision::Ask
+    })
 }
 
 fn file_sha256(path: &std::path::Path) -> Option<String> {
@@ -111,7 +113,7 @@ impl Runtime {
             destination: &target.destination,
             content_sha256: target.content_sha256,
             content_size: target.content_size,
-            policy_revision: POLICY_REVISION,
+            policy_revision: nexus_core::policy::BUILT_IN_REVISION,
             single_use: true,
             expires_at_ms,
         };
@@ -130,6 +132,7 @@ impl Runtime {
                     manifest_json,
                     manifest_sha256,
                     approval_expires_at_ms: expires_at_ms,
+                    approval_grant_ms: self.approval_grant_ms,
                 },
                 now,
             )

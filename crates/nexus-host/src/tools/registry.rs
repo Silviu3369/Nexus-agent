@@ -5,7 +5,8 @@
 //! only choose among these tools and make a policy stricter, never add a
 //! tool; the model's own claims about risk count for nothing.
 
-use nexus_core::{EffectClass, Evidence};
+use nexus_core::policy::{self, ToolPolicy};
+use nexus_core::{EffectClass, Evidence, PolicyDecision};
 
 use super::{document_file, markdown_artifact};
 
@@ -229,20 +230,30 @@ pub fn by_model_name(name: &str) -> Option<&'static ToolDescriptor> {
     TOOLS.iter().find(|t| t.model_names.contains(&name))
 }
 
-/// The policy (ADR-ACTION-001): an external effect always needs the user's
-/// approval in this version; an internal one only when its tool says so; a
-/// read never.
-pub fn needs_approval(tool: &ToolDescriptor) -> bool {
-    match tool.effect {
-        EffectClass::ExternalReversible | EffectClass::ExternalIrreversible => true,
-        EffectClass::InternalReversible => tool.approval,
-        EffectClass::Read => false,
+impl ToolDescriptor {
+    /// What the approval policy knows about it (ADR-POLICY-001).
+    pub fn policy(&self) -> ToolPolicy {
+        ToolPolicy {
+            class: self.effect,
+            asks: self.approval,
+        }
     }
+}
+
+/// What the approval policy decides for a call of `tool` (ADR-POLICY-001).
+/// No rule exists yet, so it is the tool's default within the fixed limits.
+pub fn decide(tool: &ToolDescriptor) -> PolicyDecision {
+    policy::decide(tool.policy(), None)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The model can call it (the user's own undo is not offered).
+    fn offered_to_model(tool: &ToolDescriptor) -> bool {
+        !tool.model_names.is_empty() || tool.id == MCP_READ_ID || tool.id == MCP_CALL_ID
+    }
 
     #[test]
     fn every_tool_is_registered_once_with_a_consistent_policy() {
@@ -255,22 +266,29 @@ mod tests {
             }
             match a.effect {
                 EffectClass::Read => {
-                    assert!(!needs_approval(a) && !a.approval, "{}", a.id);
+                    assert!(!a.approval, "{}", a.id);
                     assert_eq!(a.compensation, Compensation::None, "{}", a.id);
                     assert_eq!(a.execution, Execution::Immediate, "{}", a.id);
                     assert_eq!(a.retry, Retry::ReadOnly, "{}", a.id);
                 }
                 EffectClass::ExternalIrreversible | EffectClass::ExternalReversible => {
-                    assert!(needs_approval(a) && a.approval, "{}", a.id);
+                    assert!(a.approval, "{}", a.id);
+                    assert_eq!(decide(a), PolicyDecision::Ask, "{}", a.id);
                 }
-                EffectClass::InternalReversible => {
-                    assert_eq!(needs_approval(a), a.approval, "{}", a.id);
-                }
+                EffectClass::InternalReversible => {}
             }
-            if a.execution == Execution::EffectRun {
-                assert!(
-                    needs_approval(a),
-                    "an effect run waits for approval: {}",
+            // What the model calls runs as the policy decides: at once when
+            // it needs no asking, otherwise as a proposal or an effect run.
+            if offered_to_model(a) {
+                let asks = a.execution != Execution::Immediate;
+                assert_eq!(
+                    decide(a),
+                    if asks {
+                        PolicyDecision::Ask
+                    } else {
+                        PolicyDecision::Auto
+                    },
+                    "{}",
                     a.id
                 );
             }

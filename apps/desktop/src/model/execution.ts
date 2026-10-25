@@ -26,7 +26,7 @@ import type {
   RunView,
   TurnView,
 } from "@nexus/contracts";
-import { hostOf, kib, median, seconds } from "./format.ts";
+import { hostOf, kib, median, seconds, weekdayClock } from "./format.ts";
 
 export type ExecStatus =
   | "queued"
@@ -463,7 +463,7 @@ function callItems(run: RunView): TimelineItem[] {
     outcome,
     facts: compact([
       ["Action", what],
-      ["Expires", run.pending_approval ? new Date(run.pending_approval.expires_at_ms).toLocaleTimeString("en-US") : null],
+      ["Waits until", run.pending_approval ? weekdayClock(run.pending_approval.expires_at_ms) : null],
       ["Manifest", run.pending_approval?.manifest_sha256 ?? null],
     ]),
   });
@@ -545,7 +545,7 @@ export function noteItems(run: RunView): TimelineItem[] {
     outcome,
     facts: compact([
       ["Action", isDocument ? `Create file ${run.title}` : `Create note "${run.title}"`],
-      ["Expires", run.pending_approval ? new Date(run.pending_approval.expires_at_ms).toLocaleTimeString("en-US") : null],
+      ["Waits until", run.pending_approval ? weekdayClock(run.pending_approval.expires_at_ms) : null],
       ["Manifest", run.pending_approval?.manifest_sha256 ?? null],
     ]),
   });

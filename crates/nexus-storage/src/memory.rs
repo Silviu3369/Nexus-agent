@@ -274,6 +274,8 @@ impl Store {
                     nexus_core::ActionState::AwaitingApproval,
                     json!({"memory": id.to_string(), "scope": new.scope.as_str()}),
                     None,
+                    // A fact is always asked for (ADR-POLICY-001).
+                    Some(nexus_core::PolicyDecision::Ask),
                     now,
                 )?;
             }

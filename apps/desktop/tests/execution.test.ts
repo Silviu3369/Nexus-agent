@@ -20,6 +20,7 @@ import {
   actorText,
   actorsLine,
 } from "../src/model/execution.ts";
+import { timeLeft, weekdayClock } from "../src/model/format.ts";
 
 const T0 = 1_800_000_000_000;
 const CONV = "c-1";
@@ -777,4 +778,12 @@ test("a run and a task say who asked for them and who decided", () => {
   assert.equal(actorsLine({ ...proposed, status: "Succeeded", decided_by: you }, "Ada"), "Asked by Ada · approved by you");
   assert.equal(actorsLine({ ...proposed, status: "Denied", decided_by: you }, "Ada"), "Asked by Ada · rejected by you");
   assert.equal(actorsLine(noteRun("Queued", { requested_by: null, decided_by: null }), "Ada"), null);
+});
+
+test("a request for approval says how long it still waits, in hours once it waits that long", () => {
+  assert.equal(timeLeft(0), "expired");
+  assert.equal(timeLeft(4 * 60_000 + 5_000), "4:05");
+  assert.equal(timeLeft(24 * 3_600_000 - 60_000), "23 h 59 min");
+  assert.equal(timeLeft(2 * 3_600_000), "2 h");
+  assert.match(weekdayClock(T0), /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{2}:\d{2}$/);
 });

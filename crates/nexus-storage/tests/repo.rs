@@ -11,6 +11,7 @@ use nexus_storage::{
 
 const T0: i64 = 1_000_000;
 const TTL: i64 = 60_000;
+const GRANT: i64 = 10_000;
 
 struct Env {
     store: Store,
@@ -58,6 +59,7 @@ fn action(manifest_sha256: &str) -> NewAction {
         manifest_json: r#"{"k":"v"}"#.to_string(),
         manifest_sha256: manifest_sha256.to_string(),
         approval_expires_at_ms: T0 + TTL,
+        approval_grant_ms: GRANT,
     }
 }
 
@@ -445,4 +447,63 @@ async fn evt01_cursor_returns_only_newer_events_and_snapshot_watermark_matches()
     assert!(!newer.is_empty());
     assert!(newer.iter().all(|e| e.seq > watermark));
     assert_eq!(newer[0].kind, "RunCreated");
+}
+
+#[tokio::test]
+async fn a_request_waits_until_its_deadline_and_an_approval_is_used_within_its_grant() {
+    let env = env().await;
+
+    // Decided just before the request's deadline, used within the grant.
+    let late = awaiting_approval(&env, "late").await;
+    let action = late.action.as_ref().unwrap();
+    assert_eq!(
+        (action.policy_decision, action.policy_revision),
+        (Some(nexus_core::PolicyDecision::Ask), Some(1)),
+        "the policy asked, under the built-in revision"
+    );
+    let decided_at = T0 + TTL - 1;
+    let decided = env
+        .store
+        .decide_approval(
+            approval_id(&late),
+            "m1".into(),
+            Decision::Approved,
+            decided_at,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        decided.approval.unwrap().use_by_ms,
+        Some(decided_at + GRANT)
+    );
+    env.store
+        .claim_next_queued_run(decided_at + 1)
+        .await
+        .unwrap()
+        .unwrap();
+    env.store
+        .claim_effect(late.run.id, operation("p/late.md"), decided_at + GRANT - 1)
+        .await
+        .expect("used within its grant, after the request's own deadline");
+
+    // Decided early, used once its grant has passed: refused, although the
+    // request itself would still have been waiting.
+    let early = awaiting_approval(&env, "early").await;
+    env.store
+        .decide_approval(approval_id(&early), "m1".into(), Decision::Approved, T0 + 1)
+        .await
+        .unwrap();
+    env.store
+        .claim_next_queued_run(T0 + 2)
+        .await
+        .unwrap()
+        .unwrap();
+    let used = T0 + 1 + GRANT;
+    assert!(used < T0 + TTL);
+    assert!(matches!(
+        env.store
+            .claim_effect(early.run.id, operation("p/early.md"), used)
+            .await,
+        Err(StorageError::ApprovalExpired)
+    ));
 }

@@ -557,3 +557,20 @@ Cu emailul (M4), fișierele și Excelul (M3a) și intake-ul în volum (M5), asta
 - o a doua fereastră Tauri pentru confirmare: tot o pagină web care afișează conținut extern.
 
 **Răspunsurile tale (2026-10-25):** pragul e de 10 înregistrări pe tură; o cerere așteaptă 24 de ore; efectele externe se confirmă prin dialogul Windows nativ.
+
+**Implementare, pasul 2 (2026-10-25):**
+
+- **Evaluatorul** e în `nexus-core/src/policy.rs`:
+  - decizia implicită a fiecărei unelte;
+  - limitele fixe din tabelul de mai sus (`permits`);
+  - decizia pentru un apel (`decide`): o regulă pe care limitele nu o permit e ignorată.
+  - Registrul de unelte decide prin el, în locul vechii `needs_approval`. Un test cere ca modul de execuție al fiecărei unelte oferite modelului să corespundă deciziei (imediat = `Auto`; propunere sau run de efect = `Ask`).
+  - Nu există încă reguli: ele vin cu pragul (pasul 5) și cu pagina Permisiuni (pasul 6).
+- **Schema v19:**
+  - fiecare acțiune reține decizia politicii și revizia ei (`BUILT_IN_REVISION` = 1). Undo-ul tău e fapta ta, nu a politicii, și nu reține niciuna;
+  - aprobarea primește `grant_ms` și `use_by_ms`;
+  - acțiunile existente primesc decizia pe care drumul lor o presupunea, iar aprobările deja decise își păstrează vechea limită.
+- **Așteptarea:**
+  - o cerere așteaptă 24 de ore (`DEFAULT_APPROVAL_TTL`);
+  - aprobarea dată se folosește în 10 minute de la decizie (`DEFAULT_APPROVAL_GRANT`), chiar dacă cererea ar mai fi avut timp;
+  - cardul arată timpul rămas în ore („23 h 59 min”), iar detaliile arată ziua și ora („Waits until Sun 01:30”).

@@ -181,6 +181,7 @@ async fn effect(
                 manifest_json: "{}".into(),
                 manifest_sha256: format!("sha-{key}"),
                 approval_expires_at_ms: i64::MAX,
+                approval_grant_ms: 600_000,
             },
             6,
         )

@@ -323,6 +323,10 @@ closed_enum!(EffectClass {
     ExternalIrreversible,
 });
 
+// What the approval policy decides for a call (ADR-POLICY-001): carry it
+// out, ask the user first, or refuse it.
+closed_enum!(PolicyDecision { Auto, Ask, Deny });
+
 // How well an action's success is proven (ADR-ACTION-001): read back and
 // checked, only reported by the service, or not checkable at all.
 closed_enum!(Evidence {

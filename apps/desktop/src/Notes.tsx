@@ -1,4 +1,5 @@
 import { actorsLine, effectText } from "./model/execution.ts";
+import { weekdayClock } from "./model/format.ts";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { RunId, RunStatus, RunView } from "@nexus/contracts";
 import { api, describeError } from "./api";
@@ -314,8 +315,8 @@ export function RunDetail({ summary, onChanged }: { summary: RunView; onChanged:
                 <dd>{preview.size_bytes} bytes</dd>
                 <dt>SHA-256</dt>
                 <dd className="hash">{preview.sha256}</dd>
-                <dt>Expires</dt>
-                <dd>{time(pending.expires_at_ms)}</dd>
+                <dt>Waits until</dt>
+                <dd>{weekdayClock(pending.expires_at_ms)}</dd>
               </dl>
               <pre className="content" aria-label="Exact content of the note">
                 {preview.content}

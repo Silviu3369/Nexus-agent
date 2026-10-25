@@ -28,6 +28,24 @@ export function shortClock(ms: number): string {
   return new Date(ms).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
+/** Time left before a deadline: "4:05" under an hour, else "23 h 59 min". */
+export function timeLeft(ms: number): string {
+  if (ms <= 0) return "expired";
+  if (ms < 3_600_000) {
+    const m = Math.floor(ms / 60_000);
+    const s = Math.floor((ms % 60_000) / 1000);
+    return `${m}:${String(s).padStart(2, "0")}`;
+  }
+  const h = Math.floor(ms / 3_600_000);
+  const m = Math.floor((ms % 3_600_000) / 60_000);
+  return m === 0 ? `${h} h` : `${h} h ${m} min`;
+}
+
+/** A moment up to a few days away, as a weekday and a time: "Sun 01:30". */
+export function weekdayClock(ms: number): string {
+  return `${new Date(ms).toLocaleDateString("en-US", { weekday: "short" })} ${shortClock(ms)}`;
+}
+
 /** "just now", "4 min ago", "2 h ago", else the date. */
 export function ago(ms: number, now: number): string {
   const d = Math.max(0, now - ms);

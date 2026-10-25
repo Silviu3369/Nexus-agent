@@ -42,13 +42,16 @@ mod records_io;
 mod remote_call;
 mod usage;
 
-pub const DEFAULT_APPROVAL_TTL: Duration = Duration::from_secs(10 * 60);
+/// How long a request for approval waits for the user's decision
+/// (ADR-POLICY-001: a proposal made while the user is away waits for them).
+pub const DEFAULT_APPROVAL_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+/// How long an approval given may wait to be used.
+pub const DEFAULT_APPROVAL_GRANT: Duration = Duration::from_secs(10 * 60);
 const IDLE_TICK: Duration = Duration::from_secs(1);
 const MAX_SNAPSHOT_RUNS: u32 = 200;
 const MAX_EVENTS_PAGE: u32 = 500;
 const MAX_IDEMPOTENCY_KEY: usize = 200;
 const MANIFEST_VERSION: u32 = 1;
-const POLICY_REVISION: u32 = 1;
 
 /// The persisted task request; normalised before hashing so equal notes
 /// produce equal idempotency hashes.
@@ -73,7 +76,7 @@ struct Manifest<'a> {
     destination: &'a str,
     content_sha256: String,
     content_size: u64,
-    policy_revision: u32,
+    policy_revision: i64,
     single_use: bool,
     expires_at_ms: i64,
 }
@@ -89,6 +92,7 @@ pub struct Runtime {
     profile: PathBuf,
     artifact_root: PathBuf,
     approval_ttl_ms: i64,
+    approval_grant_ms: i64,
     /// A restored profile: no reconciliation and no execution until a
     /// person removes the restore marker (BACKUP-01, "nicio execuție reluată").
     paused: bool,
@@ -117,7 +121,10 @@ pub struct Runtime {
 
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
+    /// How long a request for approval waits for the decision.
     pub approval_ttl: Duration,
+    /// How long an approval given may wait to be used.
+    pub approval_grant: Duration,
     /// Each provider's own endpoint in production; tests point them at
     /// local servers (each adapter refuses anything but its origin or
     /// loopback).
@@ -148,6 +155,7 @@ impl Default for RuntimeConfig {
         use nexus_providers::{ProviderKind, production_base_url};
         Self {
             approval_ttl: DEFAULT_APPROVAL_TTL,
+            approval_grant: DEFAULT_APPROVAL_GRANT,
             gemini_base_url: production_base_url(ProviderKind::Gemini).to_string(),
             openai_base_url: production_base_url(ProviderKind::OpenAi).to_string(),
             anthropic_base_url: production_base_url(ProviderKind::Anthropic).to_string(),
@@ -186,6 +194,9 @@ impl Runtime {
             profile: profile.to_path_buf(),
             artifact_root: profile.join("artifacts"),
             approval_ttl_ms: i64::try_from(config.approval_ttl.as_millis()).unwrap_or(i64::MAX),
+            approval_grant_ms: i64::try_from(config.approval_grant.as_millis())
+                .unwrap_or(i64::MAX)
+                .max(1),
             paused,
             wake: Notify::new(),
             stop,

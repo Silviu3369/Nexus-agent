@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::StorageError;
 
-pub const SUPPORTED_VERSION: i64 = 18;
+pub const SUPPORTED_VERSION: i64 = 19;
 
 /// Version 1: everything M1 persists. State columns are closed lists that a
 /// test keeps identical to the `nexus-core` enums. Times are UTC unix ms.
@@ -884,6 +884,29 @@ WHERE decision IS NOT NULL;
 UPDATE interventions SET actor_id = (SELECT id FROM actors WHERE ref = 'user:local');
 "#;
 
+/// Version 19 (ADR-POLICY-001): an action records what the approval policy
+/// decided for it (`Auto`, `Ask` or `Deny`) and under which revision; the
+/// user's own undo is their act, not the policy's, and records none. A
+/// request for approval waits for the decision (`expires_at_ms`) longer than
+/// an approval given may wait to be used: `use_by_ms`, set at the decision
+/// from `grant_ms`. Existing actions get the decision their path implied
+/// (asked when they had an approval or were a proposed fact, carried out
+/// for a register write); approvals already decided keep their old limit.
+const V19: &str = r#"
+ALTER TABLE actions ADD COLUMN policy_decision TEXT CHECK (policy_decision IS NULL OR policy_decision IN ('Auto', 'Ask', 'Deny'));
+ALTER TABLE actions ADD COLUMN policy_revision INTEGER CHECK (policy_revision IS NULL OR policy_revision >= 1);
+ALTER TABLE approvals ADD COLUMN grant_ms INTEGER CHECK (grant_ms IS NULL OR grant_ms > 0);
+ALTER TABLE approvals ADD COLUMN use_by_ms INTEGER;
+
+UPDATE actions SET policy_decision = 'Ask'
+WHERE compensates_action_id IS NULL
+  AND (tool_id = 'MemoryFact' OR EXISTS (SELECT 1 FROM approvals a WHERE a.action_id = actions.id));
+UPDATE actions SET policy_decision = 'Auto'
+WHERE compensates_action_id IS NULL AND tool_id = 'RecordWrite';
+UPDATE actions SET policy_revision = 1 WHERE policy_decision IS NOT NULL;
+UPDATE approvals SET use_by_ms = expires_at_ms WHERE decision IS NOT NULL;
+"#;
+
 struct Migration {
     sql: &'static str,
     /// Rebuilds a table other tables refer to (see [`V5`]).
@@ -961,6 +984,10 @@ const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         sql: V18,
+        rebuilds_parent_table: false,
+    },
+    Migration {
+        sql: V19,
         rebuilds_parent_table: false,
     },
 ];

@@ -5,7 +5,9 @@
 
 use std::path::PathBuf;
 
-use nexus_core::{ActionState, EffectClass, Evidence, OperationState, RunState, TaskOrigin};
+use nexus_core::{
+    ActionState, EffectClass, Evidence, OperationState, PolicyDecision, RunState, TaskOrigin,
+};
 use nexus_protocol::{
     ActionId, ApprovalId, ArtifactId, ConversationId, EventId, MessageId, OperationId, ProjectId,
     RunId, TaskId,
@@ -81,6 +83,10 @@ pub struct ActionRow {
     pub evidence: Option<Evidence>,
     /// For a compensation: the action it reverses.
     pub compensates: Option<ActionId>,
+    /// ADR-POLICY-001: what the policy decided and under which revision
+    /// (`None` for the user's own undo, and before version 19).
+    pub policy_decision: Option<PolicyDecision>,
+    pub policy_revision: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -88,11 +94,14 @@ pub struct ApprovalRow {
     pub id: ApprovalId,
     pub action_id: ActionId,
     pub manifest_sha256: String,
+    /// Until when the request waits for the decision.
     pub expires_at_ms: i64,
     pub decision: Option<Decision>,
     pub decided_at_ms: Option<i64>,
     pub consumed_at_ms: Option<i64>,
     pub revoked_at_ms: Option<i64>,
+    /// Until when an approval given may be used (ADR-POLICY-001).
+    pub use_by_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -189,7 +198,10 @@ pub struct NewAction {
     pub operation_id: OperationId,
     pub manifest_json: String,
     pub manifest_sha256: String,
+    /// Until when the request waits for the user's decision.
     pub approval_expires_at_ms: i64,
+    /// How long an approval given may wait to be used.
+    pub approval_grant_ms: i64,
 }
 
 /// Fields of the intent written before the side effect.
@@ -354,9 +366,10 @@ impl Store {
             tx.execute(
                 "INSERT INTO actions (id, run_id, operation_id, tool_id, tool_version, state, manifest_json,
                                       manifest_sha256, revision, created_at_ms, updated_at_ms, effect_class, evidence,
-                                      actor_id)
+                                      actor_id, policy_decision, policy_revision)
                  VALUES (?1, ?2, ?3, ?4, ?5, 'AwaitingApproval', ?6, ?7, 1, ?8, ?8, ?9, ?10,
-                         (SELECT t.requested_by FROM runs r JOIN tasks t ON t.id = r.task_id WHERE r.id = ?2))",
+                         (SELECT t.requested_by FROM runs r JOIN tasks t ON t.id = r.task_id WHERE r.id = ?2),
+                         'Ask', ?11)",
                 params![
                     action_id.to_string(),
                     run_id.to_string(),
@@ -367,12 +380,20 @@ impl Store {
                     action.manifest_sha256,
                     now,
                     action.effect_class.as_str(),
-                    action.evidence.as_str()
+                    action.evidence.as_str(),
+                    nexus_core::policy::BUILT_IN_REVISION
                 ],
             )?;
             tx.execute(
-                "INSERT INTO approvals (id, action_id, manifest_sha256, expires_at_ms) VALUES (?1, ?2, ?3, ?4)",
-                params![approval_id.to_string(), action_id.to_string(), action.manifest_sha256, action.approval_expires_at_ms],
+                "INSERT INTO approvals (id, action_id, manifest_sha256, expires_at_ms, grant_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    approval_id.to_string(),
+                    action_id.to_string(),
+                    action.manifest_sha256,
+                    action.approval_expires_at_ms,
+                    action.approval_grant_ms
+                ],
             )?;
             insert_event(
                 &tx,
@@ -425,7 +446,8 @@ impl Store {
             }
 
             tx.execute(
-                "UPDATE approvals SET decision = ?1, decided_at_ms = ?2, decided_by = ?3 WHERE id = ?4",
+                "UPDATE approvals SET decision = ?1, decided_at_ms = ?2, decided_by = ?3,
+                 use_by_ms = coalesce(?2 + grant_ms, expires_at_ms) WHERE id = ?4",
                 params![
                     decision.as_str(),
                     now,
@@ -510,7 +532,7 @@ impl Store {
                 Some(StorageError::ApprovalInvalidated("approval was revoked".to_string()))
             } else if approval.manifest_sha256 != action.manifest_sha256 {
                 Some(StorageError::ApprovalInvalidated("manifest changed after approval".to_string()))
-            } else if now >= approval.expires_at_ms {
+            } else if now >= approval.use_by_ms.unwrap_or(approval.expires_at_ms) {
                 Some(StorageError::ApprovalExpired)
             } else {
                 None
@@ -1286,7 +1308,7 @@ fn load_task(tx: &Transaction, task_id: TaskId) -> Result<TaskRow, StorageError>
 }
 
 const ACTION_COLUMNS: &str = "id, run_id, operation_id, tool_id, tool_version, state, manifest_json, manifest_sha256, revision,
-    effect_class, evidence, compensates_action_id";
+    effect_class, evidence, compensates_action_id, policy_decision, policy_revision";
 
 fn action_from_row(r: &rusqlite::Row) -> rusqlite::Result<Result<ActionRow, StorageError>> {
     let id: String = r.get(0)?;
@@ -1297,6 +1319,8 @@ fn action_from_row(r: &rusqlite::Row) -> rusqlite::Result<Result<ActionRow, Stor
         (r.get(3)?, r.get(4)?, r.get(6)?, r.get(7)?, r.get(8)?);
     let (effect_class, evidence, compensates): (Option<String>, Option<String>, Option<String>) =
         (r.get(9)?, r.get(10)?, r.get(11)?);
+    let (policy_decision, policy_revision): (Option<String>, Option<i64>) =
+        (r.get(12)?, r.get(13)?);
     Ok((|| {
         Ok(ActionRow {
             id: ActionId(parse_uuid(&id)?),
@@ -1315,6 +1339,8 @@ fn action_from_row(r: &rusqlite::Row) -> rusqlite::Result<Result<ActionRow, Stor
                 .map(parse_uuid)
                 .transpose()?
                 .map(ActionId),
+            policy_decision: policy_decision.as_deref().map(parse_state).transpose()?,
+            policy_revision,
         })
     })())
 }
@@ -1345,8 +1371,14 @@ fn approval_from_row(r: &rusqlite::Row) -> rusqlite::Result<Result<ApprovalRow, 
     let id: String = r.get(0)?;
     let action_id: String = r.get(1)?;
     let decision: Option<String> = r.get(4)?;
-    let (manifest_sha256, expires_at_ms, decided_at_ms, consumed_at_ms, revoked_at_ms) =
-        (r.get(2)?, r.get(3)?, r.get(5)?, r.get(6)?, r.get(7)?);
+    let (manifest_sha256, expires_at_ms, decided_at_ms, consumed_at_ms, revoked_at_ms, use_by_ms) = (
+        r.get(2)?,
+        r.get(3)?,
+        r.get(5)?,
+        r.get(6)?,
+        r.get(7)?,
+        r.get(8)?,
+    );
     Ok((|| {
         Ok(ApprovalRow {
             id: ApprovalId(parse_uuid(&id)?),
@@ -1357,11 +1389,13 @@ fn approval_from_row(r: &rusqlite::Row) -> rusqlite::Result<Result<ApprovalRow, 
             decided_at_ms,
             consumed_at_ms,
             revoked_at_ms,
+            use_by_ms,
         })
     })())
 }
 
-const APPROVAL_COLUMNS: &str = "id, action_id, manifest_sha256, expires_at_ms, decision, decided_at_ms, consumed_at_ms, revoked_at_ms";
+const APPROVAL_COLUMNS: &str = "id, action_id, manifest_sha256, expires_at_ms, decision, decided_at_ms, consumed_at_ms, revoked_at_ms,
+    use_by_ms";
 
 fn load_approval(tx: &Transaction, approval_id: ApprovalId) -> Result<ApprovalRow, StorageError> {
     tx.query_row(

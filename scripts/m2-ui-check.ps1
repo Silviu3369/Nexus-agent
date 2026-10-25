@@ -640,6 +640,7 @@ try {
   Click-Button $win "Run" 20
   Check ($null -ne (Wait-Like $win "Read CV.txt in Jobs" 20)) "the agent reads the CV in the shared folder"
   Check ($null -ne (Wait-Contains $win "Create file Cover letter Acme.docx in Jobs" 20)) "the approval card names the exact file"
+  Check ($null -ne (Wait-Match $win "^23 h \d+ min$")) "the request waits for the decision up to a day"
   $letter = Join-Path $shareDir "Cover letter Acme.docx"
   Check (-not (Test-Path $letter)) "nothing is written before the approval"
   Click-Button $win "Inspect" 20

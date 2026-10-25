@@ -247,6 +247,11 @@ async fn ai02_a_proposed_note_waits_for_approval_and_other_tools_are_ignored() {
         "the user asked for the task"
     );
     let pending = waiting.pending_approval.expect("it waits for the user");
+    let wait = pending.expires_at_ms - waiting.updated_at_ms;
+    assert!(
+        wait > 23 * 3_600_000 && wait <= 24 * 3_600_000,
+        "a proposal waits a day for the user's decision (ADR-POLICY-001): {wait} ms"
+    );
     assert_eq!(pending.preview.unwrap().content, "# Plan\n\npasul 1\n");
     assert!(
         note_files(host.profile.path()).is_empty(),

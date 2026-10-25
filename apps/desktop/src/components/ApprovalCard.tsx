@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { RunView } from "@nexus/contracts";
 import { api, describeError } from "../api";
-import { kib } from "../model/format.ts";
+import { kib, timeLeft } from "../model/format.ts";
 import { useNexus, useNexusActions, useNow } from "../state/store";
 import { ErrorLine } from "../ui";
 import { CheckIcon, EyeIcon, LockIcon, XIcon } from "../icons";
@@ -14,13 +14,6 @@ function requestBefore(messages: { message_id: string; role: string; text: strin
   const at = messages.findIndex((m) => m.message_id === reply);
   for (let i = at - 1; i >= 0; i--) if (messages[i].role === "User") return messages[i].text;
   return null;
-}
-
-function countdown(ms: number): string {
-  if (ms <= 0) return "expired";
-  const m = Math.floor(ms / 60_000);
-  const s = Math.floor((ms % 60_000) / 1000);
-  return `${m}:${String(s).padStart(2, "0")}`;
 }
 
 export function ApprovalCard({ run, agentName, compact = false }: { run: RunView; agentName: string; compact?: boolean }) {
@@ -98,8 +91,8 @@ export function ApprovalCard({ run, agentName, compact = false }: { run: RunView
         <span className="approval-flag">
           <LockIcon size={14} /> Approval required
         </span>
-        <span className={`approval-timer${left < 60_000 ? " soon" : ""}`} title="Time left before the approval expires">
-          {countdown(left)}
+        <span className={`approval-timer${left < 60_000 ? " soon" : ""}`} title="Time left to decide; the request waits for you up to 24 hours">
+          {timeLeft(left)}
         </span>
       </header>
       <dl className="kv approval-facts">
