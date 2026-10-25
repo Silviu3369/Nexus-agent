@@ -37,6 +37,7 @@ mod inbox;
 mod job_results;
 mod mcp;
 mod memory;
+mod record_batch;
 mod records;
 mod records_io;
 mod remote_call;
@@ -748,15 +749,16 @@ impl Runtime {
     fn view(&self, d: &RunDetail, with_preview: bool) -> RunView {
         let call = remote_call::request_of(d);
         let document = document_run::request_of(d);
-        let request: Option<NoteRequest> = match (&call, &document) {
-            (None, None) => serde_json::from_str(&d.task.request_json).ok(),
+        let batch = record_batch::request_of(d);
+        let request: Option<NoteRequest> = match (&call, &document, &batch) {
+            (None, None, None) => serde_json::from_str(&d.task.request_json).ok(),
             _ => None,
         };
         let title = match (&call, &document, &request) {
             (Some(c), _, _) => format!("{} on {}", c.tool, c.server_name),
             (_, Some(doc), _) => format!("{} in {}", doc.file_name, doc.folder_label),
             (_, _, Some(r)) => r.title.trim().to_string(),
-            _ => String::new(),
+            _ => batch.as_ref().map(|b| b.title()).unwrap_or_default(),
         };
         let awaiting = match (&d.action, &d.approval) {
             (Some(action), Some(approval))
@@ -803,6 +805,7 @@ impl Runtime {
                     expires_at_ms: approval.expires_at_ms,
                     preview,
                     call: None,
+                    records: None,
                 })
             }
             _ => None,
@@ -819,6 +822,23 @@ impl Runtime {
                     None
                 },
                 call: None,
+                records: None,
+            }),
+            _ => pending_approval,
+        };
+        // A batch shows each change exactly, as its manifest covers them.
+        let pending_approval = match (&batch, &d.action, awaiting) {
+            (Some(b), Some(action), Some(approval)) => Some(PendingApproval {
+                approval_id: approval.id,
+                manifest_sha256: approval.manifest_sha256.clone(),
+                expires_at_ms: approval.expires_at_ms,
+                preview: None,
+                call: None,
+                records: if with_preview {
+                    record_batch::preview(b, &action.manifest_json)
+                } else {
+                    None
+                },
             }),
             _ => pending_approval,
         };
@@ -830,6 +850,7 @@ impl Runtime {
                 expires_at_ms: approval.expires_at_ms,
                 preview: None,
                 call: with_preview.then(|| remote_call::call_preview(c)),
+                records: None,
             }),
             _ => pending_approval,
         };
@@ -885,6 +906,8 @@ impl Runtime {
             }),
             kind: if call.is_some() {
                 RunKind::McpCall
+            } else if batch.is_some() {
+                RunKind::RecordBatch
             } else if document.is_some() {
                 RunKind::Document
             } else {

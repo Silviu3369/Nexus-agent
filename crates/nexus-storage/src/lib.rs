@@ -30,7 +30,8 @@ pub use interventions::TurnReviewRow;
 pub use mcp::{McpServerRow, McpToolRow, NewMcpTool};
 pub use memory::{MemoryFilter, MemoryRow, NewMemory, ProjectRow};
 pub use records::{
-    AgentOrigin, RecordChangeRow, RecordFilter, RecordRow, RecordWrite, RegisterRow, Values,
+    AgentOrigin, BatchWrite, RecordChangeRow, RecordFilter, RecordRow, RecordWrite, RegisterRow,
+    Values,
 };
 pub use repo::{
     ActionRow, ApprovalRow, ArtifactRow, Decision, EffectRequester, EventRow, NewAction,

@@ -531,6 +531,9 @@ export function noteItems(run: RunView): TimelineItem[] {
   if (run.kind === "McpCall") return callItems(run);
   const at = run.updated_at_ms;
   const isDocument = run.kind === "Document";
+  // ADR-POLICY-001: the agent's register changes past its threshold.
+  const isBatch = run.kind === "RecordBatch";
+  const action = isBatch ? `Save ${run.title}` : isDocument ? `Create file ${run.title}` : `Create note "${run.title}"`;
   const approval = (status: ExecStatus, outcome: string): TimelineItem => ({
     id: `${run.run_id}:approval`,
     kind: "approval",
@@ -544,7 +547,7 @@ export function noteItems(run: RunView): TimelineItem[] {
     durationMs: null,
     outcome,
     facts: compact([
-      ["Action", isDocument ? `Create file ${run.title}` : `Create note "${run.title}"`],
+      ["Action", action],
       ["Waits until", run.pending_approval ? weekdayClock(run.pending_approval.expires_at_ms) : null],
       ["Manifest", run.pending_approval?.manifest_sha256 ?? null],
     ]),
@@ -552,17 +555,17 @@ export function noteItems(run: RunView): TimelineItem[] {
   const write = (status: ExecStatus, outcome: string): TimelineItem => ({
     id: `${run.run_id}:write`,
     kind: "write",
-    title: isDocument ? `Write ${run.title}` : "Write note",
+    title: isBatch ? action : isDocument ? `Write ${run.title}` : "Write note",
     status,
     agent: "Host",
     model: null,
-    tool: isDocument ? "Documents" : "Files",
+    tool: isBatch ? "Records" : isDocument ? "Documents" : "Files",
     startedAt: at,
     finishedAt: status === "completed" || status === "failed" || status === "cancelled" ? at : null,
     durationMs: null,
     outcome,
     facts: compact([
-      ["Action", isDocument ? "CreateDocument" : "CreateMarkdownArtifact"],
+      ["Action", isBatch ? "RecordWriteBatch" : isDocument ? "CreateDocument" : "CreateMarkdownArtifact"],
       ["File", run.artifact?.path ?? null],
       ["SHA-256", run.artifact?.sha256 ?? null],
       ["Size", run.artifact ? kib(run.artifact.size_bytes) : null],
@@ -572,7 +575,10 @@ export function noteItems(run: RunView): TimelineItem[] {
   switch (run.status) {
     case "AwaitingApproval":
       return [
-        approval("approval_required", "Nothing is written until you approve the exact preview"),
+        approval(
+          "approval_required",
+          isBatch ? "Nothing is saved until you approve the exact changes" : "Nothing is written until you approve the exact preview",
+        ),
         write("queued", "Runs after your approval"),
       ];
     case "Queued":
@@ -581,9 +587,12 @@ export function noteItems(run: RunView): TimelineItem[] {
     case "Verifying":
       return [approval("completed", "Approved"), write("running", "Verifying the written file")];
     case "Succeeded":
-      return [approval("completed", "Approved"), write("completed", "Written and verified against its SHA-256")];
+      return [
+        approval("completed", "Approved"),
+        write("completed", isBatch ? "Saved together; each change can be undone" : "Written and verified against its SHA-256"),
+      ];
     case "Denied":
-      return [approval("cancelled", "Rejected by you"), write("cancelled", "Not written")];
+      return [approval("cancelled", "Rejected by you"), write("cancelled", isBatch ? "Nothing saved" : "Not written")];
     case "Failed":
       return run.failure?.code === "ApprovalExpired"
         ? [approval("failed", "Expired before a decision"), write("cancelled", "Not written")]

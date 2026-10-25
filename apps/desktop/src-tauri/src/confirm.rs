@@ -76,7 +76,7 @@ fn dialog_text(run: &RunView) -> String {
                 None => run.title.clone(),
             },
         ),
-        RunKind::Note => ("Approve this action?", run.title.clone()),
+        RunKind::Note | RunKind::RecordBatch => ("Approve this action?", run.title.clone()),
     };
     let undo = match run.effect_class.as_deref() {
         Some("ExternalReversible") => "It can be undone later, while the file is unchanged.",
@@ -183,6 +183,7 @@ mod tests {
                     sha256: "abc".into(),
                 }),
                 call: None,
+                records: None,
             }),
             artifact: None,
             origin: None,

@@ -593,3 +593,24 @@ Cu emailul (M4), fișierele și Excelul (M3a) și intake-ul în volum (M5), asta
   - „Approve” deschide dialogul;
   - „No” nu decide nimic, iar cererea așteaptă.
 - **Limită:** dialogul dovedește un click în afara paginii, nu identitatea omului. Un program care controlează desktopul utilizatorului rămâne în afara modelului de amenințare (`SECURITATE_SI_VALIDARE_RO.md` §1).
+
+**Implementare, pașii 4 și 5 (2026-10-25): pragul scrierilor în evidențe și lotul, la decizia ta.**
+
+- **Pragul:** primele 10 adăugări sau schimbări dintr-un răspuns al agentului se scriu direct, ca înainte. Peste ele (`policy::decide_record_write`), schimbările unui pas așteaptă într-un singur lot. Plafonul pe răspuns crește de la 10 (până acum, a 11-a scriere era refuzată) la 10 + 25.
+- **Lotul:**
+  - fiecare schimbare e verificată acum, ca o scriere: valori, duplicate, și față de restul lotului;
+  - se strâng într-o rulare de efect (`RecordWriteBatch`, internă și reversibilă), al cărei manifest acoperă exact toate schimbările;
+  - tura se oprește pe ea, ca pe o propunere.
+- **Cardul:**
+  - „Save N changes in …”, cu motivul;
+  - la „Inspect”, fiecare înregistrare, nouă sau schimbată, cu „câmp: înainte → după”;
+  - fiind un efect intern, se aprobă din fereastră, fără dialog.
+- **Scrierea:**
+  - toate schimbările și încheierea rulării se scriu într-o singură tranzacție (`apply_record_batch`);
+  - o înregistrare schimbată sau ștearsă după ce ai văzut lotul îl refuză întreg, fără să se scrie nimic;
+  - o întrerupere între intenție și scriere nu a scris nimic, deci la reconciliere lotul se scrie atunci;
+  - fiecare schimbare rămâne în istoricul înregistrării, cu Undo, și e o acțiune a turei cu decizia „Ask”.
+- **Modelul:** după decizia ta, fiecare apel primește răspunsul lui (salvat, respins, expirat), iar tura continuă.
+- **Ce rămâne pentru mai târziu:**
+  - selecția pe elemente: acum aprobi tot lotul sau îl respingi;
+  - loturile de fișiere și de apeluri, care cer ca agentul să propună mai multe efecte externe într-o tură.

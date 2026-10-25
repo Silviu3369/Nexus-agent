@@ -127,6 +127,7 @@ async fn the_agents_writes_and_proposals_are_actions_of_its_turn() {
         conversation_id: ex.conversation_id,
         message_id: ex.model_message.id,
         read_hosts: Vec::new(),
+        policy: nexus_core::PolicyDecision::Auto,
     };
     let added = s
         .add_record(
@@ -524,6 +525,7 @@ async fn migrating_to_v19_records_what_the_policy_decided_for_each_action() {
                 conversation_id: ex.conversation_id,
                 message_id: ex.model_message.id,
                 read_hosts: Vec::new(),
+                policy: nexus_core::PolicyDecision::Auto,
             }),
             10,
         )

@@ -5,6 +5,7 @@
 import type {
   FieldDef,
   GroupCountView,
+  RecordChangePreview,
   RecordChangeView,
   RecordView,
   RegisterView,
@@ -90,6 +91,17 @@ export function changeLines(register: RegisterView, change: RecordChangeView): s
     const label = field?.label ?? c.key;
     const show = (v: string | null) => (v === null ? "—" : field ? valueText(field, v) : v);
     return `${label}: ${show(c.before)} → ${show(c.after)}`;
+  });
+}
+
+/** One change of a batch waiting for approval: a new record's values, or
+ *  "Status: Applied → Interviewing" for each field a change touches. */
+export function previewLines(register: RegisterView | undefined, change: RecordChangePreview): string[] {
+  return change.fields.map((c) => {
+    const field = register?.fields.find((f) => f.key === c.key);
+    const label = field?.label ?? c.key;
+    const show = (v: string | null) => (v === null ? "—" : field ? valueText(field, v) : v);
+    return change.record_id === null ? `${label}: ${show(c.after)}` : `${label}: ${show(c.before)} → ${show(c.after)}`;
   });
 }
 

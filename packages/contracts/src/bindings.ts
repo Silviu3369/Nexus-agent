@@ -59,7 +59,7 @@ export type NotePreview = { destination: string; content: string; size_bytes: nu
  */
 export type McpCallPreview = { description: string; destructive_hint: boolean | null; definition_sha256: string }
 
-export type PendingApproval = { approval_id: ApprovalId; manifest_sha256: string; expires_at_ms: number; preview: NotePreview | null; call: McpCallPreview | null }
+export type PendingApproval = { approval_id: ApprovalId; manifest_sha256: string; expires_at_ms: number; preview: NotePreview | null; call: McpCallPreview | null; records: RecordChangePreview[] | null }
 
 export type ArtifactSummary = { artifact_id: ArtifactId; path: string; sha256: string; size_bytes: number; created_at_ms: number }
 
@@ -70,7 +70,7 @@ export type RunOrigin = { message_id: MessageId; conversation_id: ConversationId
 /**
  * What a run does.
  */
-export type RunKind = "Note" | "McpCall" | "Document"
+export type RunKind = "Note" | "McpCall" | "Document" | "RecordBatch"
 
 /**
  * A call to an MCP tool, exactly as the user approves it.
@@ -81,6 +81,11 @@ export type McpCallView = { server: string; url: string; tool: string; arguments
  * Who did or asked for something (ADR-IDENTITY-001).
  */
 export type ActorView = { kind: string; name: string }
+
+/**
+ * One change of a batch, as the user decides it.
+ */
+export type RecordChangePreview = { register_key: string; register_name: string; record_id: RecordId | null; title: string; fields: FieldChange[] }
 
 export type RunView = { run_id: RunId; title: string; status: RunStatus; effect_class: string | null; evidence: string | null; undone_at_ms: number | null; can_undo: boolean; revision: number; failure: RunFailure | null; pending_approval: PendingApproval | null; artifact: ArtifactSummary | null; origin: RunOrigin | null; kind: RunKind; call: McpCallView | null; requested_by: ActorView | null; decided_by: ActorView | null; created_at_ms: number; updated_at_ms: number }
 

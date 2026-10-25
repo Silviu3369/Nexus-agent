@@ -7,6 +7,7 @@ import type { RunView } from "@nexus/contracts";
 import { api, describeError } from "../api";
 import { confirmedInWindows } from "../model/execution.ts";
 import { kib, timeLeft } from "../model/format.ts";
+import { previewLines } from "../model/records.ts";
 import { useNexus, useNexusActions, useNow } from "../state/store";
 import { ErrorLine } from "../ui";
 import { CheckIcon, EyeIcon, LockIcon, XIcon } from "../icons";
@@ -18,7 +19,7 @@ function requestBefore(messages: { message_id: string; role: string; text: strin
 }
 
 export function ApprovalCard({ run, agentName, compact = false }: { run: RunView; agentName: string; compact?: boolean }) {
-  const { focus } = useNexus();
+  const { focus, registers } = useNexus();
   const { refresh } = useNexusActions();
   const [detail, setDetail] = useState<RunView | null>(null);
   const [inspect, setInspect] = useState(false);
@@ -68,8 +69,11 @@ export function ApprovalCard({ run, agentName, compact = false }: { run: RunView
   const call = run.kind === "McpCall" ? (detail?.call ?? run.call) : null;
   // A new file in a folder you shared: shown like a note, with its folder.
   const isDocument = run.kind === "Document";
+  // The agent's register changes past its threshold, decided together.
+  const isBatch = run.kind === "RecordBatch";
+  const changes = pending?.records ?? null;
   const callPreview = pending?.call ?? null;
-  const ready = call ? callPreview !== null : preview !== null;
+  const ready = call ? callPreview !== null : isBatch ? changes !== null : preview !== null;
   const left = (pending?.expires_at_ms ?? run.pending_approval?.expires_at_ms ?? now) - now;
 
   async function decide(approve: boolean) {
@@ -100,7 +104,15 @@ export function ApprovalCard({ run, agentName, compact = false }: { run: RunView
       <dl className="kv approval-facts">
         <div className="kv-row">
           <dt>Action</dt>
-          <dd>{call ? `Call ${call.tool} on ${call.server}` : isDocument ? `Create file ${run.title}` : `Create note “${run.title}”`}</dd>
+          <dd>
+            {call
+              ? `Call ${call.tool} on ${call.server}`
+              : isBatch
+                ? `Save ${run.title}`
+                : isDocument
+                  ? `Create file ${run.title}`
+                  : `Create note “${run.title}”`}
+          </dd>
         </div>
         <div className="kv-row">
           <dt>Requested by</dt>
@@ -109,7 +121,9 @@ export function ApprovalCard({ run, agentName, compact = false }: { run: RunView
         <div className="kv-row">
           <dt>Reason</dt>
           <dd className="clamp-2">
-            {origin
+            {isBatch
+              ? "More than 10 changes in one reply: the rest wait for you, together"
+              : origin
               ? request
                 ? `Proposed while answering: “${request}”`
                 : "Proposed by the agent while answering this task"
@@ -125,6 +139,10 @@ export function ApprovalCard({ run, agentName, compact = false }: { run: RunView
               ? callPreview
                 ? `Whatever this tool does on ${call.server}${callPreview.destructive_hint ? " · the server marks it destructive" : ""} · sent once, only if you approve`
                 : "Loading the exact call…"
+              : isBatch
+                ? changes
+                  ? `${changes.length} ${changes.length === 1 ? "record" : "records"} in Nexus · saved together · each can be undone`
+                  : "Loading the exact changes…"
               : preview
                 ? `1 new file · ${kib(preview.size_bytes)} · nothing overwritten`
                 : "Loading the exact preview…"}
@@ -155,6 +173,25 @@ export function ApprovalCard({ run, agentName, compact = false }: { run: RunView
           </pre>
           <p className="mono hash">Tool definition SHA-256 {callPreview.definition_sha256}</p>
         </div>
+      )}
+      {inspect && changes && (
+        <ul className="approval-inspect approval-changes" aria-label="Exact changes">
+          {changes.map((c, i) => (
+            <li key={i}>
+              <strong>
+                {c.title || "(no title)"} · {c.record_id === null ? "new" : "changed"}
+              </strong>
+              <ul>
+                {previewLines(
+                  registers?.find((r) => r.key === c.register_key),
+                  c,
+                ).map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ul>
       )}
       {inspect && preview && (
         <div className="approval-inspect">

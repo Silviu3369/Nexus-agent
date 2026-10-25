@@ -144,6 +144,20 @@ async fn main() {
     fake.push(Reply::text(&[
         "Saved Acme NV, Service Desk Agent (TopJobs 70123456).",
     ]));
+    // Twelve applications in one reply: ten are saved at once, the last two
+    // wait for the user in one batch (ADR-POLICY-001); after the approval
+    // the task goes on.
+    let twelve: Vec<(&str, serde_json::Value)> = (0..12)
+        .map(|i| {
+            (
+                "add_record",
+                serde_json::json!({"register": "job_applications", "values": {
+                    "company": format!("Company {i}"), "role": "Service Desk Analyst"}}),
+            )
+        })
+        .collect();
+    fake.push(Reply::calls(&twelve));
+    fake.push(Reply::text(&["Saved all twelve."]));
     println!("{}", fake.base_url);
     println!("{}", mcp.url);
     std::io::stdout().flush().expect("stdout");

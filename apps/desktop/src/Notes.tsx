@@ -1,10 +1,11 @@
 import { actorsLine, effectText } from "./model/execution.ts";
 import { weekdayClock } from "./model/format.ts";
+import { previewLines } from "./model/records.ts";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { RunId, RunStatus, RunView } from "@nexus/contracts";
 import { api, describeError } from "./api";
 import { CheckCircleIcon, NotesIcon } from "./icons";
-import { useDerived } from "./state/store";
+import { useDerived, useNexus } from "./state/store";
 
 const POLL_MS = 2000;
 
@@ -227,6 +228,7 @@ export function RunDetail({ summary, onChanged }: { summary: RunView; onChanged:
   const [content, setContent] = useState<string | null>(null);
   const [confirmUndo, setConfirmUndo] = useState(false);
   const { agentName } = useDerived();
+  const { registers } = useNexus();
   // Several details can be on screen (chat proposals), so ids are unique.
   const headingId = useId();
 
@@ -303,7 +305,53 @@ export function RunDetail({ summary, onChanged }: { summary: RunView; onChanged:
         </dl>
       )}
 
-      {pending && (
+      {pending && view.kind === "RecordBatch" && (
+        <div className="preview">
+          <h3>What will be saved</h3>
+          {pending.records ? (
+            <>
+              <ul className="approval-changes" aria-label="Exact changes">
+                {pending.records.map((c, i) => (
+                  <li key={i}>
+                    <strong>
+                      {c.title || "(no title)"} · {c.record_id === null ? "new" : "changed"}
+                    </strong>
+                    <ul>
+                      {previewLines(
+                        registers?.find((r) => r.key === c.register_key),
+                        c,
+                      ).map((line) => (
+                        <li key={line}>{line}</li>
+                      ))}
+                    </ul>
+                  </li>
+                ))}
+              </ul>
+              <div className="actions">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => act(() => api.approve(view, pending.approval_id, pending.manifest_sha256))}
+                >
+                  Approve and save
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={busy}
+                  onClick={() => act(() => api.decide(pending.approval_id, pending.manifest_sha256, false))}
+                >
+                  Deny
+                </button>
+              </div>
+            </>
+          ) : (
+            <p className="muted">Loading the exact changes…</p>
+          )}
+        </div>
+      )}
+
+      {pending && view.kind !== "RecordBatch" && (
         <div className="preview">
           <h3>What will be written</h3>
           {preview ? (

@@ -1360,6 +1360,21 @@ label.check {
   overflow-wrap: anywhere;
 }
 
+/* A batch of register changes: each record, then each field it touches. */
+.approval-changes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.approval-changes ul {
+  margin: 2px 0 0;
+  padding-left: 16px;
+  color: var(--text-2);
+}
+
 .approval-inspect {
   border-top: 1px solid var(--line);
   padding-top: 8px;

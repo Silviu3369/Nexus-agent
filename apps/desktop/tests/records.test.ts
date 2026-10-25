@@ -14,6 +14,7 @@ import {
   matchText,
   missingRequired,
   percentText,
+  previewLines,
   recordTitle,
   sortRecords,
   statusCounts,
@@ -159,4 +160,19 @@ test("how the ads were handled reads in plain words", () => {
   assert.equal(durationText(34), "34 s");
   assert.equal(durationText(240), "4 min");
   assert.equal(durationText(7200), "2 h");
+});
+
+test("a change waiting in a batch reads as its fields, before → after", () => {
+  const register = {
+    key: "job_applications",
+    fields: [
+      { key: "company", label: "Company", kind: "Text" },
+      { key: "status", label: "Status", kind: "Choice" },
+    ],
+  } as unknown as RegisterView;
+  const added = { register_key: "job_applications", register_name: "Jobs", record_id: null, title: "Acme · IT", fields: [{ key: "company", before: null, after: "Acme" }] };
+  assert.deepEqual(previewLines(register, added), ["Company: Acme"]);
+  const changed = { ...added, record_id: "r-1", fields: [{ key: "status", before: "Applied", after: "Interviewing" }] };
+  assert.deepEqual(previewLines(register, changed), ["Status: Applied → Interviewing"]);
+  assert.deepEqual(previewLines(undefined, changed), ["status: Applied → Interviewing"], "an unknown register shows the key");
 });

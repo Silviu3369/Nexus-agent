@@ -407,6 +407,7 @@ async fn every_task_names_who_asked_and_every_act_who_did_it() {
         conversation_id: follow.conversation_id,
         message_id: follow.model_message.id,
         read_hosts: Vec::new(),
+        policy: nexus_core::PolicyDecision::Auto,
     };
     let added = s
         .add_record(

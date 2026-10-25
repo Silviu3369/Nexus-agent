@@ -3,8 +3,8 @@
 //! and deletes records, with values checked and a stale edit refused; the
 //! agent is told the register and today's date, looks records up and saves
 //! what the user tells it directly — each change a visible step with its
-//! task in the history, undone with one click; a bad value, a duplicate and
-//! a flood of writes are refused.
+//! task in the history, undone with one click; a bad value and a duplicate
+//! are refused, and past ten writes a reply asks the user in one batch.
 
 mod support;
 
@@ -501,8 +501,74 @@ async fn results_count_the_applications_sent_answered_and_by_score() {
     host.shutdown().await;
 }
 
+/// A reply that adds twelve applications: two are refused (a duplicate, a
+/// bad date), eight are saved at once and, past the reply's ten writes
+/// (ADR-POLICY-001), the last two wait for the user in one batch.
+async fn twelve_writes(
+    fake: &FakeGemini,
+    client: &NexusClient,
+    key: &str,
+) -> nexus_protocol::RunView {
+    let add = |company: &str, applied_on: &str| {
+        (
+            "add_record",
+            json!({"register": "job_applications", "values": {
+                "company": company, "role": "Service Desk Analyst", "applied_on": applied_on}}),
+        )
+    };
+    let mut calls = vec![add("Acme", "2026-10-18"), add("Beta", "18.10.2026")];
+    for i in 0..10 {
+        calls.push(add(&format!("Company {i}"), "2026-10-18"));
+    }
+    fake.push(Reply::calls(&calls));
+    fake.push(Reply::text(&["Done."]));
+    let sent = send(client, None, key, "Save these.").await;
+    let reply = settled(client, &sent).await;
+    let failed = reply
+        .steps
+        .iter()
+        .filter(|s| {
+            matches!(s.detail, AgentStepDetail::RecordChanged { .. })
+                && s.status == AgentStepStatus::Failed
+        })
+        .count();
+    assert_eq!(failed, 2);
+    let batch = reply
+        .proposed_run_id
+        .expect("the changes past ten wait in a batch");
+    client.run(batch).await.unwrap()
+}
+
+async fn ended(client: &NexusClient, run: nexus_protocol::RunId) -> nexus_protocol::RunView {
+    for _ in 0..200 {
+        let view = client.run(run).await.unwrap();
+        if !matches!(
+            view.status,
+            nexus_protocol::RunStatus::Queued
+                | nexus_protocol::RunStatus::Running
+                | nexus_protocol::RunStatus::AwaitingApproval
+                | nexus_protocol::RunStatus::Verifying
+        ) {
+            return view;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("the batch did not end");
+}
+
+/// The model's request after the user decided, once it arrives.
+async fn continued(fake: &FakeGemini) -> Value {
+    for _ in 0..200 {
+        if let Some(body) = fake.generations().get(1) {
+            return body.json();
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("the task did not continue");
+}
+
 #[tokio::test]
-async fn a_bad_value_a_duplicate_and_a_flood_of_writes_are_refused() {
+async fn past_ten_writes_a_reply_asks_and_an_approved_batch_is_saved() {
     let fake = FakeGemini::start(KEY).await;
     let host = TestHost::start_with(TOKEN, config(&fake)).await;
     let client = host.client().await;
@@ -518,25 +584,53 @@ async fn a_bad_value_a_duplicate_and_a_flood_of_writes_are_refused() {
         .await
         .unwrap();
 
-    let add = |company: &str, applied_on: &str| {
-        (
-            "add_record",
-            json!({"register": "job_applications", "values": {
-                "company": company, "role": "Service Desk Analyst", "applied_on": applied_on}}),
-        )
-    };
-    let mut calls = vec![add("Acme", "2026-10-18"), add("Beta", "18.10.2026")];
-    for i in 0..10 {
-        calls.push(add(&format!("Company {i}"), "2026-10-18"));
-    }
-    fake.push(Reply::calls(&calls));
-    fake.push(Reply::text(&["Done."]));
-    let sent = send(&client, None, "f1", "Save these.").await;
-    let reply = settled(&client, &sent).await;
+    let waiting = twelve_writes(&fake, &client, "f1").await;
+    assert_eq!(waiting.kind, nexus_protocol::RunKind::RecordBatch);
+    assert_eq!(waiting.title, "2 changes in Job applications");
+    assert_eq!(waiting.effect_class.as_deref(), Some("InternalReversible"));
+    let pending = waiting.pending_approval.expect("it waits for the user");
+    let changes = pending.records.expect("each change is shown");
+    assert_eq!(
+        changes.iter().map(|c| c.title.as_str()).collect::<Vec<_>>(),
+        [
+            "Company 8 · Service Desk Analyst",
+            "Company 9 · Service Desk Analyst"
+        ]
+    );
+    assert!(changes[0].record_id.is_none(), "a new record");
+    assert!(changes[0].fields.iter().any(|f| f.key == "company"
+        && f.before.is_none()
+        && f.after.as_deref() == Some("Company 8")));
+    assert_eq!(
+        client.records(all(&register)).await.unwrap().len(),
+        9,
+        "the user's own and the eight saved at once; the batch waits"
+    );
+    assert_eq!(
+        fake.generations().len(),
+        1,
+        "the task waits for the decision"
+    );
 
-    let body = fake.generations()[1].json();
+    // A change inside Nexus: the window may approve it.
+    client
+        .decide_approval(nexus_protocol::DecideApprovalRequest {
+            approval_id: pending.approval_id,
+            manifest_sha256: pending.manifest_sha256,
+            decision: nexus_protocol::ApprovalDecision::Approve,
+            via: nexus_protocol::ApprovalPath::Window,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        ended(&client, waiting.run_id).await.status,
+        nexus_protocol::RunStatus::Succeeded
+    );
+    assert_eq!(client.records(all(&register)).await.unwrap().len(), 11);
+
+    let body = continued(&fake).await;
     let results = answers(&body, "add_record");
-    assert_eq!(results.len(), 12);
+    assert_eq!(results.len(), 12, "every call of the step is answered");
     assert!(
         results[0]["error"]
             .as_str()
@@ -548,18 +642,47 @@ async fn a_bad_value_a_duplicate_and_a_flood_of_writes_are_refused() {
     assert!(
         results[10..]
             .iter()
-            .all(|r| r["error"].as_str().unwrap().contains("budget")),
-        "past ten writes per reply nothing more is saved"
+            .all(|r| r["saved"] == true
+                && r["note"].as_str().unwrap().contains("approved this change")),
+        "{results:?}"
     );
-    let failed = reply
-        .steps
-        .iter()
-        .filter(|s| {
-            matches!(s.detail, AgentStepDetail::RecordChanged { .. })
-                && s.status == AgentStepStatus::Failed
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_rejected_batch_saves_nothing_and_the_task_is_told() {
+    let fake = FakeGemini::start(KEY).await;
+    let host = TestHost::start_with(TOKEN, config(&fake)).await;
+    let client = host.client().await;
+    connect(&client).await;
+    let register = jobs(&client).await;
+    client
+        .save_record(SaveRecordRequest {
+            register_id: register.register_id,
+            record_id: None,
+            revision: 0,
+            values: values(&[("company", "Acme"), ("role", "Service Desk Analyst")]),
         })
-        .count();
-    assert_eq!(failed, 2);
+        .await
+        .unwrap();
+
+    let waiting = twelve_writes(&fake, &client, "f2").await;
+    let pending = waiting.pending_approval.unwrap();
+    client
+        .decide_approval(nexus_protocol::DecideApprovalRequest {
+            approval_id: pending.approval_id,
+            manifest_sha256: pending.manifest_sha256,
+            decision: nexus_protocol::ApprovalDecision::Deny,
+            via: nexus_protocol::ApprovalPath::Window,
+        })
+        .await
+        .unwrap();
+    let body = continued(&fake).await;
+    let results = answers(&body, "add_record");
+    assert!(
+        results[10..].iter().all(|r| r["status"] == "rejected"),
+        "{results:?}"
+    );
     assert_eq!(client.records(all(&register)).await.unwrap().len(), 9);
     host.shutdown().await;
 }

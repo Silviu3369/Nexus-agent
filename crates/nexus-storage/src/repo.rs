@@ -674,32 +674,7 @@ impl Store {
     ) -> Result<RunDetail, StorageError> {
         self.call(move |conn| {
             let tx = conn.transaction()?;
-            let detail = load_detail(&tx, run_id)?;
-            let action = detail.action.ok_or(StorageError::NotFound("action"))?;
-            let op = detail
-                .operation
-                .ok_or(StorageError::NotFound("operation"))?;
-            transition_operation(&tx, op.id, op.state, OperationState::Verified, now)?;
-            transition_action(&tx, action.id, ActionState::Verified, now)?;
-            tx.execute(
-                "UPDATE runs SET outcome_json = ?1 WHERE id = ?2",
-                params![outcome_json, run_id.to_string()],
-            )?;
-            insert_event(
-                &tx,
-                event,
-                &run_id.to_string(),
-                1,
-                json!({"run_id": run_id.to_string()}),
-                now,
-            )?;
-            // A reconciled run already proved the effect; a live one passes
-            // through Verifying as the contract's happy path requires.
-            match detail.run.state {
-                RunState::Verifying | RunState::NeedsReconciliation => {}
-                _ => transition_run(&tx, run_id, RunState::Verifying, None, now)?,
-            }
-            transition_run(&tx, run_id, RunState::Succeeded, None, now)?;
+            complete_outside(&tx, run_id, outcome_json, event, now)?;
             let detail = load_detail(&tx, run_id)?;
             tx.commit()?;
             Ok(detail)
@@ -1503,6 +1478,45 @@ fn load_artifact_for_operation(
     )
     .optional()?
     .transpose()
+}
+
+/// An effect that leaves no file to verify ended (a remote call, a
+/// document, a batch of register changes): its operation, action and run
+/// complete in the caller's transaction, with what it produced.
+pub(crate) fn complete_outside(
+    tx: &Transaction,
+    run_id: RunId,
+    outcome_json: String,
+    event: &'static str,
+    now: i64,
+) -> Result<(), StorageError> {
+    let detail = load_detail(tx, run_id)?;
+    let action = detail.action.ok_or(StorageError::NotFound("action"))?;
+    let op = detail
+        .operation
+        .ok_or(StorageError::NotFound("operation"))?;
+    transition_operation(tx, op.id, op.state, OperationState::Verified, now)?;
+    transition_action(tx, action.id, ActionState::Verified, now)?;
+    tx.execute(
+        "UPDATE runs SET outcome_json = ?1 WHERE id = ?2",
+        params![outcome_json, run_id.to_string()],
+    )?;
+    insert_event(
+        tx,
+        event,
+        &run_id.to_string(),
+        1,
+        json!({"run_id": run_id.to_string()}),
+        now,
+    )?;
+    // A reconciled run already proved the effect; a live one passes
+    // through Verifying as the contract's happy path requires.
+    match detail.run.state {
+        RunState::Verifying | RunState::NeedsReconciliation => {}
+        _ => transition_run(tx, run_id, RunState::Verifying, None, now)?,
+    }
+    transition_run(tx, run_id, RunState::Succeeded, None, now)?;
+    Ok(())
 }
 
 fn load_detail(tx: &Transaction, run_id: RunId) -> Result<RunDetail, StorageError> {

@@ -7,9 +7,10 @@
 use std::collections::BTreeMap;
 
 use nexus_core::{
-    ActionState, EffectClass, Evidence, InterventionKind, RecordActor, RecordChangeKind,
+    ActionState, EffectClass, Evidence, InterventionKind, PolicyDecision, RecordActor,
+    RecordChangeKind,
 };
-use nexus_protocol::{ConversationId, MessageId, RecordId, RegisterId};
+use nexus_protocol::{ConversationId, MessageId, RecordId, RegisterId, RunId};
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::json;
 
@@ -65,6 +66,21 @@ pub struct AgentOrigin {
     pub message_id: MessageId,
     /// Web hosts read in that reply before the change.
     pub read_hosts: Vec<String>,
+    /// What the approval policy decided for the change (ADR-POLICY-001):
+    /// written at once (`Auto`), or approved by the user in a batch (`Ask`).
+    pub policy: PolicyDecision,
+}
+
+/// One change of a batch the user approved (ADR-POLICY-001): a new record,
+/// or a record's new values, refused if it changed since the user saw it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchWrite {
+    pub register_id: RegisterId,
+    /// `None`: a new record.
+    pub record_id: Option<RecordId>,
+    /// The revision the user saw (for a change to a record).
+    pub expected_revision: Option<i64>,
+    pub values: Values,
 }
 
 /// Records to list. Dates are `YYYY-MM-DD`, compared as text.
@@ -299,6 +315,69 @@ impl Store {
             let record = load_record(&tx, id)?;
             tx.commit()?;
             Ok(RecordWrite { record, change_id })
+        })
+        .await
+    }
+
+    /// Writes the changes of a batch the user approved and completes the
+    /// batch's run, in one transaction: every change is saved and the run
+    /// succeeds, or nothing is written (a record that changed or went since
+    /// the user saw it refuses the whole batch). Returns each change's
+    /// record, in order.
+    pub async fn apply_record_batch(
+        &self,
+        run_id: RunId,
+        writes: Vec<BatchWrite>,
+        origin: AgentOrigin,
+        now: i64,
+    ) -> Result<Vec<RecordId>, StorageError> {
+        self.call(move |conn| {
+            let tx = conn.transaction()?;
+            let mut ids = Vec::with_capacity(writes.len());
+            for write in &writes {
+                let register = load_register(&tx, write.register_id)?;
+                let id = match write.record_id {
+                    None => {
+                        let id = RecordId::new();
+                        let (status, follow_up) = derived(&register, &write.values);
+                        tx.execute(
+                            &format!("INSERT INTO records ({RECORD_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, 1, 'Agent', ?6, ?6)"),
+                            params![id.to_string(), register.id.to_string(), values_json(&write.values)?, status, follow_up, now],
+                        )?;
+                        insert_change(&tx, id, RecordChangeKind::Created, RecordActor::Agent, None, &write.values, 1, Some(&origin), now)?;
+                        id
+                    }
+                    Some(id) => {
+                        let current = load_record(&tx, id)?;
+                        if current.register_id != register.id
+                            || write.expected_revision != Some(current.revision)
+                        {
+                            return Err(StorageError::RevisionConflict("record"));
+                        }
+                        if current.values != write.values {
+                            let revision = current.revision + 1;
+                            write_values(&tx, &register, id, &write.values, revision, now)?;
+                            insert_change(
+                                &tx,
+                                id,
+                                RecordChangeKind::Updated,
+                                RecordActor::Agent,
+                                Some(&current.values),
+                                &write.values,
+                                revision,
+                                Some(&origin),
+                                now,
+                            )?;
+                        }
+                        id
+                    }
+                };
+                ids.push(id);
+            }
+            let outcome = json!({"records": ids.iter().map(ToString::to_string).collect::<Vec<_>>()});
+            crate::repo::complete_outside(&tx, run_id, outcome.to_string(), "RecordBatchWritten", now)?;
+            tx.commit()?;
+            Ok(ids)
         })
         .await
     }
@@ -712,8 +791,7 @@ fn insert_change(
                 "revision_after": revision_after,
             }),
             None,
-            // Written at once: the policy let it run without asking.
-            Some(nexus_core::PolicyDecision::Auto),
+            Some(origin.policy),
             now,
         )?;
     }

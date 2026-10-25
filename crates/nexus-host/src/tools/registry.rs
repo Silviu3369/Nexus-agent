@@ -72,6 +72,7 @@ pub const MCP_CALL_ID: &str = "McpToolCall";
 pub const RECORD_WRITE_ID: &str = "RecordWrite";
 pub const MEMORY_FACT_ID: &str = "MemoryFact";
 pub const UNDO_RECORD_ID: &str = "UndoRecordChange";
+pub const RECORD_BATCH_ID: &str = "RecordWriteBatch";
 pub const DELETE_DOCUMENT_ID: &str = "DeleteCreatedDocument";
 
 pub static TOOLS: &[ToolDescriptor] = &[
@@ -194,6 +195,21 @@ pub static TOOLS: &[ToolDescriptor] = &[
         execution: Execution::EffectRun,
         approval: true,
         sends: "the call's arguments to the MCP server, which may change something there",
+    },
+    // The agent's register writes beyond what a reply makes without asking
+    // (ADR-POLICY-001): the model still calls add_record and update_record;
+    // the policy gathers those changes into one batch the user decides.
+    ToolDescriptor {
+        id: RECORD_BATCH_ID,
+        model_names: &[],
+        version: 1,
+        effect: EffectClass::InternalReversible,
+        retry: Retry::Reconcilable,
+        evidence: Evidence::Verified,
+        compensation: Compensation::Undo,
+        execution: Execution::EffectRun,
+        approval: true,
+        sends: "nothing outside Nexus",
     },
     ToolDescriptor {
         id: UNDO_RECORD_ID,

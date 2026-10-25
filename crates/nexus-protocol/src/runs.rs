@@ -6,7 +6,8 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::ids::{ApprovalId, ArtifactId, ConversationId, MessageId, RunId, TaskId};
+use crate::ids::{ApprovalId, ArtifactId, ConversationId, MessageId, RecordId, RunId, TaskId};
+use crate::records::FieldChange;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct SubmitNoteRequest {
@@ -64,6 +65,20 @@ pub struct PendingApproval {
     /// For a call to an MCP tool: what the server says about the tool, as
     /// approved (from `get_run` only, like `preview`).
     pub call: Option<McpCallPreview>,
+    /// For a batch of register changes: each change exactly, before → after
+    /// (from `get_run` only, like `preview`).
+    pub records: Option<Vec<RecordChangePreview>>,
+}
+
+/// One change of a batch, as the user decides it.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct RecordChangePreview {
+    pub register_key: String,
+    pub register_name: String,
+    /// `None`: a new record.
+    pub record_id: Option<RecordId>,
+    pub title: String,
+    pub fields: Vec<FieldChange>,
 }
 
 /// What a run does.
@@ -75,6 +90,9 @@ pub enum RunKind {
     McpCall,
     /// Create a new document (Word or text) in a folder the user shared.
     Document,
+    /// The agent's register changes beyond what a reply makes without
+    /// asking, decided together (ADR-POLICY-001).
+    RecordBatch,
 }
 
 /// A call to an MCP tool, exactly as the user approves it.

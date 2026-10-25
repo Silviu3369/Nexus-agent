@@ -18,6 +18,7 @@ use nexus_storage::{CompensationRow, NewAction, RunDetail, RunError, StorageErro
 use serde_json::{Value, json};
 
 use super::document_run::{self, DocumentRequest};
+use super::record_batch::{self, BatchRequest};
 use super::remote_call::{self, McpCallRequest};
 use super::{MANIFEST_VERSION, Manifest, Runtime, note_content, to_nexus_error};
 use crate::fault;
@@ -29,10 +30,14 @@ pub(super) enum Effect {
     Note(NoteContent),
     Document(DocumentRequest),
     Call(McpCallRequest),
+    Records(BatchRequest),
 }
 
 impl Effect {
     pub(super) fn of(detail: &RunDetail) -> Result<Effect, String> {
+        if let Some(batch) = record_batch::request_of(detail) {
+            return Ok(Effect::Records(batch));
+        }
         if let Some(document) = document_run::request_of(detail) {
             return Ok(Effect::Document(document));
         }
@@ -47,6 +52,7 @@ impl Effect {
             Effect::Note(_) => "run",
             Effect::Document(_) => "document",
             Effect::Call(_) => "call",
+            Effect::Records(_) => "batch",
         }
     }
 }
@@ -158,6 +164,15 @@ impl Runtime {
             (None, Effect::Note(content)) => self.prepare(detail, content).await,
             (None, Effect::Document(document)) => self.prepare_document(detail, document).await,
             (None, Effect::Call(call)) => self.prepare_call(detail, call).await,
+            (None, Effect::Records(batch)) => self.prepare_record_batch(detail, batch).await,
+            (Some(ActionState::Authorized), Effect::Records(batch)) => {
+                self.execute_record_batch(detail, batch).await
+            }
+            // The batch writes with the end of its run: an interrupted one
+            // wrote nothing yet.
+            (Some(ActionState::Executing), Effect::Records(batch)) => {
+                self.write_record_batch(detail.run.id, batch).await
+            }
             (Some(ActionState::Authorized), Effect::Note(content)) => {
                 self.execute(detail, content).await
             }
@@ -210,6 +225,10 @@ impl Runtime {
                 self.reconcile_call(run_id).await
             }
             Ok(Effect::Note(content)) => self.reconcile_note(detail, &content, operation_id).await,
+            Ok(Effect::Records(batch)) => {
+                tracing::info!(run = %run_id, "writing an interrupted batch of register changes");
+                self.write_record_batch(run_id, &batch).await
+            }
             Err(reason) => {
                 self.store
                     .mark_needs_review(run_id, RunError::new("OutcomeUnknown", reason), now_ms())

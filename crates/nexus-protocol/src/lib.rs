@@ -21,8 +21,8 @@ pub mod version;
 pub use runs::{
     ActorView, ApprovalDecision, ApprovalPath, ArtifactSummary, BackupSummary,
     DecideApprovalRequest, EventView, EventsPage, McpCallPreview, McpCallView, NotePreview,
-    PendingApproval, RunFailure, RunKind, RunOrigin, RunStatus, RunView, Snapshot,
-    SubmitNoteRequest, SubmitNoteResponse, SystemStatusView,
+    PendingApproval, RecordChangePreview, RunFailure, RunKind, RunOrigin, RunStatus, RunView,
+    Snapshot, SubmitNoteRequest, SubmitNoteResponse, SystemStatusView,
 };
 
 pub use automation::{

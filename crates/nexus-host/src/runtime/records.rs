@@ -22,6 +22,7 @@ use nexus_storage::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use super::record_batch::BatchItem;
 use super::{Runtime, to_nexus_error};
 use crate::schedule;
 
@@ -30,9 +31,11 @@ pub(super) const ADD_TOOL: &str = "add_record";
 pub(super) const UPDATE_TOOL: &str = "update_record";
 /// Lookups per reply; they only read, so they run without asking.
 pub(super) const MAX_RECORD_READS: u32 = 6;
-/// Additions and updates per reply: bounds what one reply can change,
-/// even if a page it read tried to steer it.
-pub(super) const MAX_RECORD_WRITES: u32 = 10;
+/// Additions and updates per reply: the policy's threshold at once, then a
+/// batch the user decides (ADR-POLICY-001); bounds what one reply can
+/// change, even if a page it read tried to steer it.
+pub(super) const MAX_RECORD_WRITES: u32 =
+    nexus_core::policy::RECORD_WRITES_PER_TURN + nexus_core::policy::MAX_BATCH_ITEMS as u32;
 const FIND_DEFAULT: u32 = 20;
 const FIND_MAX: u32 = 50;
 const LIST_DEFAULT: u32 = 200;
@@ -456,7 +459,7 @@ fn actor_view(actor: RecordActor) -> nexus_protocol::RecordActor {
 }
 
 /// The fields that differ between two versions of a record.
-fn diff(before: Option<&Values>, after: &Values) -> Vec<FieldChange> {
+pub(super) fn diff(before: Option<&Values>, after: &Values) -> Vec<FieldChange> {
     let empty = Values::new();
     let before_values = before.unwrap_or(&empty);
     let mut keys: Vec<&String> = before_values.keys().chain(after.keys()).collect();
@@ -887,6 +890,7 @@ impl Runtime {
             conversation_id: conversation,
             message_id: reply,
             read_hosts: read_hosts.to_vec(),
+            policy: nexus_core::PolicyDecision::Auto,
         };
         let outcome = match register {
             None => Err(format!("unknown register {register_key:?}")),
@@ -930,6 +934,43 @@ impl Runtime {
         arguments: &Value,
         origin: AgentOrigin,
     ) -> Result<Written, String> {
+        let (values, title) = self.plan_add(register, arguments).await?;
+        let write = self
+            .store
+            .add_record(
+                register.row.id,
+                values,
+                RecordActor::Agent,
+                Some(origin),
+                now_ms(),
+            )
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = %e, "add_record failed");
+                "the record could not be saved".to_string()
+            })?;
+        let fields = write.record.values.keys().cloned().collect();
+        Ok(Written {
+            response: json!({
+                "saved": true,
+                "record_id": write.record.id.to_string(),
+                "values": values_json(&write.record.values),
+                "note": "Saved in the user's register. The user sees this change and can undo it.",
+            }),
+            title,
+            fields,
+            record_id: Some(write.record.id),
+            change_id: Some(write.change_id),
+        })
+    }
+
+    /// A new record's values and title, or why it cannot be added (one
+    /// record per job: an existing one is updated, not repeated).
+    async fn plan_add(
+        &self,
+        register: &Register,
+        arguments: &Value,
+    ) -> Result<(Values, String), String> {
         let schema = &register.schema;
         let values = schema.apply(Values::new(), agent_changes(arguments)?)?;
         // One record per job: an existing one is updated, not repeated. An
@@ -985,33 +1026,7 @@ impl Runtime {
                 ));
             }
         }
-        let write = self
-            .store
-            .add_record(
-                register.row.id,
-                values,
-                RecordActor::Agent,
-                Some(origin),
-                now_ms(),
-            )
-            .await
-            .map_err(|e| {
-                tracing::warn!(error = %e, "add_record failed");
-                "the record could not be saved".to_string()
-            })?;
-        let fields = write.record.values.keys().cloned().collect();
-        Ok(Written {
-            response: json!({
-                "saved": true,
-                "record_id": write.record.id.to_string(),
-                "values": values_json(&write.record.values),
-                "note": "Saved in the user's register. The user sees this change and can undo it.",
-            }),
-            title,
-            fields,
-            record_id: Some(write.record.id),
-            change_id: Some(write.change_id),
-        })
+        Ok((values, title))
     }
 
     async fn agent_update(
@@ -1020,29 +1035,12 @@ impl Runtime {
         arguments: &Value,
         origin: AgentOrigin,
     ) -> Result<Written, String> {
-        let id = arguments
-            .get("record_id")
-            .and_then(Value::as_str)
-            .and_then(|s| uuid::Uuid::parse_str(s.trim()).ok())
-            .map(RecordId)
-            .ok_or("record_id must be the id find_records gave")?;
-        let current = match self.store.record(id).await {
-            Ok(r) if r.register_id == register.row.id => r,
-            Ok(_) | Err(StorageError::NotFound(_)) => {
-                return Err("no such record in this register; use find_records for its id".into());
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "update_record failed");
-                return Err("the register could not be read".into());
-            }
-        };
-        let schema = &register.schema;
-        let values = schema.apply(current.values.clone(), agent_changes(arguments)?)?;
+        let (current, values, title) = self.plan_update(register, arguments).await?;
+        let id = current.id;
         let fields: Vec<String> = diff(Some(&current.values), &values)
             .into_iter()
             .map(|c| c.key)
             .collect();
-        let title = schema.title(&values);
         let write = self
             .store
             .update_record(id, None, values, RecordActor::Agent, Some(origin), now_ms())
@@ -1072,6 +1070,89 @@ impl Runtime {
                 change_id: Some(write.change_id),
             },
         })
+    }
+
+    /// The record a change names, its new values and title, or why it
+    /// cannot be changed.
+    async fn plan_update(
+        &self,
+        register: &Register,
+        arguments: &Value,
+    ) -> Result<(RecordRow, Values, String), String> {
+        let id = arguments
+            .get("record_id")
+            .and_then(Value::as_str)
+            .and_then(|s| uuid::Uuid::parse_str(s.trim()).ok())
+            .map(RecordId)
+            .ok_or("record_id must be the id find_records gave")?;
+        let current = match self.store.record(id).await {
+            Ok(r) if r.register_id == register.row.id => r,
+            Ok(_) | Err(StorageError::NotFound(_)) => {
+                return Err("no such record in this register; use find_records for its id".into());
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "update_record failed");
+                return Err("the register could not be read".into());
+            }
+        };
+        let schema = &register.schema;
+        let values = schema.apply(current.values.clone(), agent_changes(arguments)?)?;
+        let title = schema.title(&values);
+        Ok((current, values, title))
+    }
+
+    /// A change beyond the reply's threshold, as it will wait in a batch
+    /// for the user (ADR-POLICY-001): checked now as a write would be, and
+    /// against the changes already in the batch. `None`: nothing to change.
+    pub(super) async fn plan_batch_item(
+        &self,
+        registers: &[Register],
+        tool: &str,
+        arguments: &Value,
+        batch: &[BatchItem],
+    ) -> Result<Option<BatchItem>, String> {
+        let register_key = arguments
+            .get("register")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let register = registers
+            .iter()
+            .find(|r| r.row.key == register_key)
+            .ok_or_else(|| format!("unknown register {register_key:?}"))?;
+        let item = |record: Option<&RecordRow>, after: Values, title: String| BatchItem {
+            register_id: register.row.id.to_string(),
+            register_key: register.row.key.clone(),
+            register_name: register.row.name.clone(),
+            record_id: record.map(|r| r.id.to_string()),
+            expected_revision: record.map(|r| r.revision),
+            title,
+            before: record.map(|r| r.values.clone()),
+            after,
+        };
+        if tool == ADD_TOOL {
+            let (values, title) = self.plan_add(register, arguments).await?;
+            if batch.iter().any(|i| {
+                i.record_id.is_none()
+                    && i.register_id == register.row.id.to_string()
+                    && i.title.eq_ignore_ascii_case(&title)
+            }) {
+                return Err(format!("{title} is already in this batch; add it once"));
+            }
+            return Ok(Some(item(None, values, title)));
+        }
+        let (current, values, title) = self.plan_update(register, arguments).await?;
+        if current.values == values {
+            return Ok(None);
+        }
+        if batch
+            .iter()
+            .any(|i| i.record_id.as_deref() == Some(current.id.to_string().as_str()))
+        {
+            return Err(format!(
+                "{title} already has a change in this batch; put all its fields in one update_record"
+            ));
+        }
+        Ok(Some(item(Some(&current), values, title)))
     }
 }
 

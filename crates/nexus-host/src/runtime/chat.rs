@@ -7,8 +7,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use nexus_core::policy;
 use nexus_core::{
-    AgentStepKind, AgentStepStatus, MemoryScope, MemorySource, MessageRole, MessageStatus, RunState,
+    AgentStepKind, AgentStepStatus, MemoryScope, MemorySource, MessageRole, MessageStatus,
+    PolicyDecision, RunState,
 };
 use nexus_protocol::{
     AgentStepDetail, AgentStepId, AgentStepView, BackupModelView, ChatMessageView, ChatRole,
@@ -32,6 +34,7 @@ use zeroize::Zeroizing;
 
 use super::document_run::{self, DOC_TOOL};
 use super::files::{self, LIST_TOOL, MAX_LISTS, MAX_READS, READ_TOOL};
+use super::record_batch::{BatchItem, BatchRequest};
 use super::records::{self, ADD_TOOL, FIND_TOOL, MAX_RECORD_READS, MAX_RECORD_WRITES, UPDATE_TOOL};
 use super::{Runtime, to_nexus_error};
 
@@ -788,6 +791,10 @@ impl Runtime {
                 None => proposal_outcome(&detail),
             },
         };
+        // A batch answers each of its changes on its own.
+        let batch_outcomes = super::record_batch::request_of(&detail)
+            .map(|batch| super::record_batch::outcomes(&detail, &batch))
+            .unwrap_or_default();
         let PausedTurn {
             model,
             backup,
@@ -796,17 +803,26 @@ impl Runtime {
             proposal_id,
             proposal_name,
             mut budget,
+            awaiting,
             ..
         } = state;
+        let mut awaiting = awaiting.into_iter().zip(batch_outcomes);
         messages.push(Message {
             role: Role::User,
             parts: answers
                 .into_iter()
                 .map(|answer| {
-                    answer.unwrap_or_else(|| Part::FunctionResponse {
-                        id: proposal_id.clone(),
-                        name: proposal_name.clone(),
-                        response: outcome.clone(),
+                    answer.unwrap_or_else(|| match awaiting.next() {
+                        Some((call, response)) => Part::FunctionResponse {
+                            id: call.id,
+                            name: call.name,
+                            response,
+                        },
+                        None => Part::FunctionResponse {
+                            id: proposal_id.clone(),
+                            name: proposal_name.clone(),
+                            response: outcome.clone(),
+                        },
                     })
                 })
                 .collect(),
@@ -1118,7 +1134,11 @@ impl Runtime {
             // The user's registers: lookups, then the changes the user told
             // the agent about, in the order the model asked. They stay in
             // Nexus, so they run now, within the reply's budgets, even when
-            // the same step also proposes something.
+            // the same step also proposes something. Beyond the reply's
+            // threshold (ADR-POLICY-001) a change waits for the user, with
+            // the others of its step, in one batch.
+            let mut batch: Vec<BatchItem> = Vec::new();
+            let mut batched: Vec<&ToolCall> = Vec::new();
             if !registers.is_empty() {
                 let mut record_calls: Vec<&ToolCall> = call
                     .calls
@@ -1137,6 +1157,31 @@ impl Runtime {
                         }
                     } else if budget.record_writes >= MAX_RECORD_WRITES {
                         json!({ "error": BUDGET_SPENT })
+                    } else if policy::decide_record_write(budget.record_writes)
+                        == PolicyDecision::Ask
+                    {
+                        if proposal.is_some() {
+                            // The step stops on another proposal first.
+                            json!({ "error": NOT_RUN })
+                        } else {
+                            match self
+                                .plan_batch_item(&registers, &c.name, &c.arguments, &batch)
+                                .await
+                            {
+                                Ok(Some(item)) => {
+                                    budget.record_writes += 1;
+                                    batch.push(item);
+                                    // Answered once the user decides.
+                                    batched.push(c);
+                                    continue;
+                                }
+                                Ok(None) => json!({
+                                    "saved": false,
+                                    "note": "Nothing changed: the record already had these values.",
+                                }),
+                                Err(error) => json!({ "error": error }),
+                            }
+                        }
                     } else {
                         budget.record_writes += 1;
                         self.agent_write_record(
@@ -1182,7 +1227,7 @@ impl Runtime {
                         &route,
                         &turn_messages[turn_start..],
                         &call,
-                        proposed,
+                        &[proposed],
                         &handled,
                         &mcp_offer,
                         budget,
@@ -1194,6 +1239,42 @@ impl Runtime {
                     proposed_run_id,
                     pause,
                 });
+            }
+
+            if !batch.is_empty() {
+                let number = budget.batches;
+                budget.batches += 1;
+                let request = BatchRequest::new(conversation_id, reply, &budget.read_hosts, batch);
+                match self.propose_record_batch(reply, number, request).await {
+                    Ok(run_id) => {
+                        let pause = (budget.continuations < MAX_CONTINUATIONS)
+                            .then(|| {
+                                paused_turn(
+                                    run_id,
+                                    connection.id,
+                                    &route,
+                                    &turn_messages[turn_start..],
+                                    &call,
+                                    &batched,
+                                    &handled,
+                                    &mcp_offer,
+                                    budget,
+                                )
+                            })
+                            .flatten();
+                        return Ok(ReplyOutcome {
+                            usage: total_usage,
+                            proposed_run_id: Some(run_id),
+                            pause,
+                        });
+                    }
+                    Err(err) => {
+                        tracing::warn!(error = %err.message, "a batch of register changes could not wait for the user");
+                        for c in batched.drain(..) {
+                            handled.push((c, json!({ "error": "the change could not be kept for the user's approval" })));
+                        }
+                    }
+                }
             }
 
             if let Some(fetch) = fetch_call
@@ -2267,6 +2348,9 @@ struct TurnBudget {
     record_reads: u32,
     #[serde(default)]
     record_writes: u32,
+    /// Batches of register changes this turn asked the user to decide.
+    #[serde(default)]
+    batches: u32,
     #[serde(default)]
     file_lists: u32,
     #[serde(default)]
@@ -2309,6 +2393,17 @@ struct PausedTurn {
     proposal_id: Option<String>,
     proposal_name: String,
     budget: TurnBudget,
+    /// For a batch: every call it answers, in the order of the `None`
+    /// answers (a single proposal leaves it empty).
+    #[serde(default)]
+    awaiting: Vec<AwaitingCall>,
+}
+
+/// A call answered once the user decides.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AwaitingCall {
+    id: Option<String>,
+    name: String,
 }
 
 /// What the model is told about a call that stopped its turn.
@@ -2327,11 +2422,12 @@ fn paused_turn(
     route: &Route,
     turn: &[Message],
     step: &CallResult,
-    proposal: &ToolCall,
+    awaiting: &[&ToolCall],
     answered: &[(&ToolCall, Value)],
     mcp_offer: &[super::mcp::OfferedTool],
     budget: TurnBudget,
 ) -> Option<Pause> {
+    let proposal = *awaiting.first()?;
     let known = |c: &ToolCall| {
         [NOTE_TOOL, FETCH_TOOL, MEMORY_TOOL, DOC_TOOL].contains(&c.name.as_str())
             || is_record_tool(&c.name)
@@ -2352,7 +2448,7 @@ fn paused_turn(
             arguments: call.arguments.clone(),
             signature: call.signature.clone(),
         });
-        answers.push(if std::ptr::eq(call, proposal) {
+        answers.push(if awaiting.iter().any(|a| std::ptr::eq(*a, call)) {
             None
         } else {
             let response = answered
@@ -2382,6 +2478,17 @@ fn paused_turn(
         proposal_id: proposal.id.clone(),
         proposal_name: proposal.name.clone(),
         budget,
+        awaiting: if awaiting.len() > 1 || is_record_tool(&proposal.name) {
+            awaiting
+                .iter()
+                .map(|c| AwaitingCall {
+                    id: c.id.clone(),
+                    name: c.name.clone(),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        },
     };
     match serde_json::to_string(&state) {
         Ok(state_json) => Some(Pause { run_id, state_json }),

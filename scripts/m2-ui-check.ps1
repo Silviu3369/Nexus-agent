@@ -751,6 +751,20 @@ try {
   Check ($null -ne (Wait-Match $win "^This week: \d+ sent$")) "the weekly chart names each week's count"
   Check ($null -ne (Wait-Contains $win "Job ads it read from the inbox")) "the results say what Nexus did"
   Check ($null -ne (Find-Named $win "How Nexus handled the job ads" ([System.Windows.Automation.ControlType]::Table))) "the results say how Nexus handled each ad, from its task"
+  # --- past ten changes in one reply, the rest wait for you in one batch ---
+  Click-Button $win "Overview"
+  Set-Field $win "Give Nexus a task" "Save these twelve applications"
+  Click-Button $win "Run" 20
+  Check ($null -ne (Wait-Contains $win "Save 2 changes in Job applications" 20)) "past ten changes in one reply, the rest wait in one batch"
+  Check ($null -ne (Wait-Contains $win "More than 10 changes in one reply")) "the card says why it asks"
+  Check ($null -eq (Wait-Contains $win "Windows asks you to confirm" 2)) "a change inside Nexus needs no Windows dialog"
+  Click-Button $win "Inspect" 20
+  Check ($null -ne (Wait-Contains $win "Company 10 · Service Desk Analyst · new")) "each change of the batch can be inspected"
+  Check ($null -ne (Wait-Contains $win "Company: Company 11")) "the inspection shows each change's values"
+  Click-Button $win "Approve" 20
+  Check (Wait-Text $win "Saved all twelve." 20) "after the approval the batch is saved and the task continues"
+  Click-Button $win "Jobs"
+  Check ($null -ne (Wait-Like $win "Company 11 · Service Desk Analyst")) "the batch's applications are in Jobs"
   Click-Button $win "Tools"
   $docsRow = Wait-Like $win "Documents · shared folders"
   if ($docsRow) { Invoke-Element $docsRow }

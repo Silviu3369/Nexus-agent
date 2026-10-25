@@ -184,6 +184,7 @@ async fn each_decision_about_the_agents_work_is_recorded_once_on_its_turn() {
         conversation_id: ex.conversation_id,
         message_id: ex.model_message.id,
         read_hosts: Vec::new(),
+        policy: nexus_core::PolicyDecision::Auto,
     };
 
     // The agent adds an application; the user corrects one of its fields.
@@ -432,6 +433,7 @@ async fn migrating_to_v16_carries_over_the_decisions_already_recorded() {
                 conversation_id: ex.conversation_id,
                 message_id: ex.model_message.id,
                 read_hosts: Vec::new(),
+                policy: nexus_core::PolicyDecision::Auto,
             }),
             10,
         )
@@ -447,6 +449,7 @@ async fn migrating_to_v16_carries_over_the_decisions_already_recorded() {
                 conversation_id: ex.conversation_id,
                 message_id: ex.model_message.id,
                 read_hosts: Vec::new(),
+                policy: nexus_core::PolicyDecision::Auto,
             }),
             11,
         )

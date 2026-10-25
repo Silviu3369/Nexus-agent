@@ -252,6 +252,7 @@ async fn every_change_has_history_and_only_the_latest_is_undone() {
         conversation_id: conversation,
         message_id: reply,
         read_hosts: vec!["jobs.example.com".into()],
+        policy: nexus_core::PolicyDecision::Auto,
     };
     let added = s
         .add_record(
@@ -427,6 +428,7 @@ async fn a_deleted_task_leaves_the_change_without_it_and_a_deleted_record_takes_
                 conversation_id: conversation,
                 message_id: reply,
                 read_hosts: vec![],
+                policy: nexus_core::PolicyDecision::Auto,
             }),
             4,
         )
