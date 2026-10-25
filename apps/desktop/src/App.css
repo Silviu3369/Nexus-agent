@@ -3212,3 +3212,38 @@ button.ghost.danger-ghost {
     transition: none !important;
   }
 }
+
+/* Permissions (ADR-POLICY-001): one tool per row. */
+.permissions {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 12px;
+}
+
+.permission {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.permission p {
+  margin: 4px 0 0;
+}
+
+.permission-head,
+.permission-count {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.permission-count {
+  margin-top: 6px;
+}
+
+.permission-count input {
+  width: 5em;
+  margin-left: 8px;
+}

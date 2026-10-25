@@ -25,10 +25,10 @@ const MAX_ARGUMENTS_CHARS: usize = 400;
 /// a pile of dialogs.
 static OPEN: AtomicBool = AtomicBool::new(false);
 
-struct Open;
+pub(crate) struct Open;
 
 impl Open {
-    fn take() -> Option<Self> {
+    pub(crate) fn take() -> Option<Self> {
         OPEN.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .ok()
             .map(|_| Open)
@@ -95,7 +95,7 @@ fn dialog_text(run: &RunView) -> String {
 
 /// Shows the native dialog, owned by the app's window; true for Yes. "No"
 /// is the default button, so a stray Enter does not approve.
-fn ask(owner: isize, text: &str) -> bool {
+pub(crate) fn ask(owner: isize, text: &str) -> bool {
     let text: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
     let caption: Vec<u16> = "Nexus - Confirm".encode_utf16().chain(Some(0)).collect();
     // SAFETY: both strings are NUL-terminated UTF-16 buffers that outlive

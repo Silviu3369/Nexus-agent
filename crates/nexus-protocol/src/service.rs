@@ -20,6 +20,7 @@ use crate::memory::{
     AddMemoryRequest, MemoryContextView, MemoryItemView, MemoryQuery, ProjectView,
     SaveProjectRequest,
 };
+use crate::permissions::{PermissionView, SetPermissionRequest};
 use crate::records::{
     ExportView, ImportPreviewView, ImportRequest, ImportResultView, InboxView, JobResultsView,
     RecordDetailView, RecordQuery, RecordView, RegisterView, SaveInboxRequest, SaveRecordRequest,
@@ -202,6 +203,16 @@ pub trait NexusService {
     /// What the job applications led to, counted from them and their
     /// history (the job applications register only).
     async fn job_results(register_id: RegisterId) -> Result<JobResultsView, NexusError>;
+
+    /// Every tool the agent can use and what the approval policy lets it do
+    /// (ADR-POLICY-001).
+    async fn permissions() -> Result<Vec<PermissionView>, NexusError>;
+
+    /// Changes one tool within the fixed limits; loosening is accepted only
+    /// from the native Windows dialog.
+    async fn set_permission(
+        request: SetPermissionRequest,
+    ) -> Result<Vec<PermissionView>, NexusError>;
 
     /// Folders the user shared with Nexus.
     async fn list_folders() -> Result<Vec<FolderView>, NexusError>;

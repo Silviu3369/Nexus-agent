@@ -35,7 +35,7 @@ use zeroize::Zeroizing;
 use super::document_run::{self, DOC_TOOL};
 use super::files::{self, LIST_TOOL, MAX_LISTS, MAX_READS, READ_TOOL};
 use super::record_batch::{BatchItem, BatchRequest};
-use super::records::{self, ADD_TOOL, FIND_TOOL, MAX_RECORD_READS, MAX_RECORD_WRITES, UPDATE_TOOL};
+use super::records::{self, ADD_TOOL, FIND_TOOL, MAX_RECORD_READS, UPDATE_TOOL};
 use super::{Runtime, to_nexus_error};
 
 pub(super) const MAX_MESSAGE_BYTES: usize = 16 * 1024;
@@ -935,8 +935,18 @@ impl Runtime {
             .memory_context(project, MEMORY_CONTEXT_ITEMS, MEMORY_CONTEXT_CHARS)
             .await
             .map_err(to_nexus_error)?;
-        // The user's enabled MCP tools, read once per reply.
-        let mcp_offer = self.mcp_offer().await;
+        // The user's approval rules (ADR-POLICY-001), read once per reply.
+        let permissions = self.permissions_in_force().await?;
+        // The user's enabled MCP tools, read once per reply, without those
+        // the user turned off in Permissions.
+        let mut mcp_offer = self.mcp_offer().await;
+        mcp_offer.retain(|o| {
+            permissions.allows(if o.needs_approval {
+                crate::tools::registry::MCP_CALL_ID
+            } else {
+                crate::tools::registry::MCP_READ_ID
+            })
+        });
         // The user's registers (job applications first), with their fields.
         let registers = match self.registers().await {
             Ok(registers) => registers,
@@ -989,23 +999,32 @@ impl Runtime {
                 memory_items: memory.len(),
                 ..Offered::default()
             };
-            let mut tools = vec![note_tool()];
-            if budget.fetch_calls_used < MAX_FETCH_CALLS {
+            let allows = |tool: &str| permissions.allows(tool);
+            let mut tools = Vec::new();
+            if allows(crate::tools::markdown_artifact::TOOL_ID) {
+                tools.push(note_tool());
+            }
+            if budget.fetch_calls_used < MAX_FETCH_CALLS && allows("WebRead") {
                 tools.push(fetch_tool());
             }
-            if budget.memory_proposals < MAX_MEMORY_PROPOSALS {
+            if budget.memory_proposals < MAX_MEMORY_PROPOSALS
+                && allows(crate::tools::registry::MEMORY_FACT_ID)
+            {
                 tools.push(memory_tool());
             }
-            tools.extend(document_run::document_tool(&folders));
+            if allows(crate::tools::document_file::TOOL_ID) {
+                tools.extend(document_run::document_tool(&folders));
+            }
             tools.extend(files::file_tools(
                 &folders,
-                budget.file_lists < MAX_LISTS,
-                budget.file_reads < MAX_READS,
+                budget.file_lists < MAX_LISTS && allows("ListFiles"),
+                budget.file_reads < MAX_READS && allows("ReadDocument"),
             ));
             tools.extend(records::record_tools(
                 &registers,
-                budget.record_reads < MAX_RECORD_READS,
-                budget.record_writes < MAX_RECORD_WRITES,
+                budget.record_reads < MAX_RECORD_READS && allows("FindRecords"),
+                budget.record_writes < permissions.max_record_writes()
+                    && allows(crate::tools::registry::RECORD_WRITE_ID),
             ));
             if budget.mcp_calls_used < MAX_MCP_CALLS {
                 tools.extend(mcp_offer.iter().map(|o| o.declaration.clone()));
@@ -1055,16 +1074,23 @@ impl Runtime {
             // (ADR-ACTION-001: a note, a new document, an MCP call that can
             // change things).
             let writable = folders.iter().any(|f| f.can_write);
+            // A tool the user turned off (ADR-POLICY-001) is refused, even if
+            // the model asks for it without being offered it.
+            let off = |c: &ToolCall| {
+                super::broker::route(&c.name, &mcp_offer, writable)
+                    .is_some_and(|t| !permissions.allows(t.id))
+            };
             let proposal = call
                 .calls
                 .iter()
                 .filter(|c| {
-                    super::broker::waits_for_approval(super::broker::route(
-                        &c.name, &mcp_offer, writable,
-                    ))
+                    !off(c)
+                        && super::broker::waits_for_approval(super::broker::route(
+                            &c.name, &mcp_offer, writable,
+                        ))
                 })
                 .min_by_key(|c| c.order);
-            let fetch_call = call.calls.iter().find(|c| c.name == FETCH_TOOL);
+            let fetch_call = call.calls.iter().find(|c| c.name == FETCH_TOOL && !off(c));
             for c in &call.calls {
                 if ![NOTE_TOOL, FETCH_TOOL, MEMORY_TOOL].contains(&c.name.as_str())
                     && !(c.name == DOC_TOOL && folders.iter().any(|f| f.can_write))
@@ -1080,10 +1106,13 @@ impl Runtime {
             // their own (the user decides), so they need no ordering with
             // the other tools. Extra proposals past the budget are ignored.
             let mut handled: Vec<(&ToolCall, Value)> = Vec::new();
+            for c in call.calls.iter().filter(|c| off(c)) {
+                handled.push((c, json!({ "error": TURNED_OFF })));
+            }
             for proposal in call
                 .calls
                 .iter()
-                .filter(|c| c.name == MEMORY_TOOL)
+                .filter(|c| c.name == MEMORY_TOOL && !off(c))
                 .take(MAX_MEMORY_PROPOSALS.saturating_sub(budget.memory_proposals))
             {
                 let response = self
@@ -1104,7 +1133,7 @@ impl Runtime {
                 let mut file_calls: Vec<&ToolCall> = call
                     .calls
                     .iter()
-                    .filter(|c| is_file_tool(&c.name))
+                    .filter(|c| is_file_tool(&c.name) && !off(c))
                     .collect();
                 file_calls.sort_by_key(|c| c.order);
                 for c in file_calls {
@@ -1143,7 +1172,7 @@ impl Runtime {
                 let mut record_calls: Vec<&ToolCall> = call
                     .calls
                     .iter()
-                    .filter(|c| is_record_tool(&c.name))
+                    .filter(|c| is_record_tool(&c.name) && !off(c))
                     .collect();
                 record_calls.sort_by_key(|c| c.order);
                 for c in record_calls {
@@ -1155,10 +1184,12 @@ impl Runtime {
                             self.agent_find_records(reply, &registers, &c.arguments)
                                 .await
                         }
-                    } else if budget.record_writes >= MAX_RECORD_WRITES {
+                    } else if budget.record_writes >= permissions.max_record_writes() {
                         json!({ "error": BUDGET_SPENT })
-                    } else if policy::decide_record_write(budget.record_writes)
-                        == PolicyDecision::Ask
+                    } else if policy::decide_record_write(
+                        budget.record_writes,
+                        permissions.record_threshold(),
+                    ) == PolicyDecision::Ask
                     {
                         if proposal.is_some() {
                             // The step stops on another proposal first.
@@ -2405,6 +2436,9 @@ struct AwaitingCall {
     id: Option<String>,
     name: String,
 }
+
+/// What the model is told about a tool the user turned off.
+const TURNED_OFF: &str = "The user turned this tool off in Nexus's Permissions; do not use it, and tell the user if the task needs it.";
 
 /// What the model is told about a call that stopped its turn.
 const NOT_RUN: &str =

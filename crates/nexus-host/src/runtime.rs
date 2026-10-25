@@ -37,6 +37,7 @@ mod inbox;
 mod job_results;
 mod mcp;
 mod memory;
+mod permissions;
 mod record_batch;
 mod records;
 mod records_io;

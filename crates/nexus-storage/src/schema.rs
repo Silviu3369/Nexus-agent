@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::StorageError;
 
-pub const SUPPORTED_VERSION: i64 = 20;
+pub const SUPPORTED_VERSION: i64 = 21;
 
 /// Version 1: everything M1 persists. State columns are closed lists that a
 /// test keeps identical to the `nexus-core` enums. Times are UTC unix ms.
@@ -915,6 +915,26 @@ ALTER TABLE approvals ADD COLUMN decided_via TEXT CHECK (decided_via IS NULL OR 
 UPDATE approvals SET decided_via = 'Window' WHERE decision IS NOT NULL;
 "#;
 
+/// Version 21 (ADR-POLICY-001): the user's approval policy rules, within
+/// the fixed limits the Host checks: a tool turned off (`Deny`), or how many
+/// register writes a reply makes without asking (`max_auto`). A rule is
+/// never deleted: a change revokes it and writes the next revision, so the
+/// rule in force at any moment, and who set it, can be read back.
+const V21: &str = r#"
+CREATE TABLE policy_rules (
+    id            TEXT    PRIMARY KEY,
+    tool_id       TEXT    NOT NULL CHECK (length(tool_id) BETWEEN 1 AND 64),
+    decision      TEXT    NOT NULL CHECK (decision IN ('Auto', 'Ask', 'Deny')),
+    max_auto      INTEGER CHECK (max_auto IS NULL OR max_auto BETWEEN 0 AND 25),
+    revision      INTEGER NOT NULL CHECK (revision >= 1),
+    changed_by    TEXT    NOT NULL REFERENCES actors (id),
+    created_at_ms INTEGER NOT NULL,
+    revoked_at_ms INTEGER,
+    UNIQUE (tool_id, revision)
+) STRICT;
+CREATE UNIQUE INDEX policy_rules_in_force ON policy_rules (tool_id) WHERE revoked_at_ms IS NULL;
+"#;
+
 struct Migration {
     sql: &'static str,
     /// Rebuilds a table other tables refer to (see [`V5`]).
@@ -1000,6 +1020,10 @@ const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         sql: V20,
+        rebuilds_parent_table: false,
+    },
+    Migration {
+        sql: V21,
         rebuilds_parent_table: false,
     },
 ];

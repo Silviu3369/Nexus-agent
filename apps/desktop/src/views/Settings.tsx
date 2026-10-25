@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { AutostartView } from "@nexus/contracts";
 import { api, describeError } from "../api";
 import { uptime } from "../model/format.ts";
+import { PermissionsPanel } from "../components/PermissionsPanel";
 import { BackupCard, PersonaCard } from "../Settings";
 import { useGoTo } from "../shell/nav";
 import { usePref } from "../state/prefs";
@@ -115,6 +116,7 @@ export function SettingsView() {
         </button>
       </Panel>
 
+      <PermissionsPanel />
       <PersonaCard />
       <BackupCard />
     </div>

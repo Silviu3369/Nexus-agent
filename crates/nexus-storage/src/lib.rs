@@ -11,6 +11,7 @@ mod inbox;
 mod interventions;
 mod mcp;
 mod memory;
+mod policy;
 mod records;
 mod repo;
 mod schema;
@@ -29,6 +30,7 @@ pub use inbox::{InboxFileRow, InboxRow, InboxSettle, IntakeItemRow};
 pub use interventions::TurnReviewRow;
 pub use mcp::{McpServerRow, McpToolRow, NewMcpTool};
 pub use memory::{MemoryFilter, MemoryRow, NewMemory, ProjectRow};
+pub use policy::PolicyRuleRow;
 pub use records::{
     AgentOrigin, BatchWrite, RecordChangeRow, RecordFilter, RecordRow, RecordWrite, RegisterRow,
     Values,

@@ -13,12 +13,12 @@ use nexus_protocol::{
     HandshakeRequest, HandshakeResponse, HealthStatus, ImportPreviewView, ImportRequest,
     ImportResultView, InboxView, JobResultsView, McpServerId, McpServerView, MemoryContextView,
     MemoryId, MemoryItemView, MemoryQuery, MessageId, ModelPrice, ModelView, NexusError,
-    PROTOCOL_VERSION, PersonaView, ProjectId, ProjectView, RecordDetailView, RecordId, RecordQuery,
-    RecordView, RegisterId, RegisterView, RunId, RunView, SaveAutomationRequest,
-    SaveConnectionRequest, SaveFolderRequest, SaveInboxRequest, SaveMcpServerRequest,
-    SavePersonaRequest, SaveProjectRequest, SaveRecordRequest, SendMessageRequest,
-    SendMessageResponse, Snapshot, SubmitNoteRequest, SubmitNoteResponse, SystemStatusView,
-    ThinkingLevel, UsageView,
+    PROTOCOL_VERSION, PermissionView, PersonaView, ProjectId, ProjectView, RecordDetailView,
+    RecordId, RecordQuery, RecordView, RegisterId, RegisterView, RunId, RunView,
+    SaveAutomationRequest, SaveConnectionRequest, SaveFolderRequest, SaveInboxRequest,
+    SaveMcpServerRequest, SavePersonaRequest, SaveProjectRequest, SaveRecordRequest,
+    SendMessageRequest, SendMessageResponse, SetPermissionRequest, Snapshot, SubmitNoteRequest,
+    SubmitNoteResponse, SystemStatusView, ThinkingLevel, UsageView,
 };
 use tarpc::context::Context;
 use tarpc::server::{BaseChannel, Channel};
@@ -165,6 +165,20 @@ impl NexusService for HostServer {
     ) -> Result<RunView, NexusError> {
         self.require_session()?;
         self.runtime.decide(request).await
+    }
+
+    async fn permissions(self, _ctx: Context) -> Result<Vec<PermissionView>, NexusError> {
+        self.require_session()?;
+        self.runtime.permissions().await
+    }
+
+    async fn set_permission(
+        self,
+        _ctx: Context,
+        request: SetPermissionRequest,
+    ) -> Result<Vec<PermissionView>, NexusError> {
+        self.require_session()?;
+        self.runtime.set_permission(request).await
     }
 
     async fn undo_effect(self, _ctx: Context, run_id: RunId) -> Result<RunView, NexusError> {

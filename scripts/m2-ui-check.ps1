@@ -155,6 +155,17 @@ function Set-Field($win, [string]$label, [string]$value) {
       $e.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($value)
       return
     }
+    # A number field is exposed as a spinner.
+    $n = Find-Named $win $label ([System.Windows.Automation.ControlType]::Spinner)
+    if ($n) {
+      $pattern = $null
+      if ($n.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
+        $pattern.SetValue($value)
+      } else {
+        $n.GetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern).SetValue([double]$value)
+      }
+      return
+    }
     Start-Sleep -Milliseconds 200
   }
   throw "field '$label' not found"
@@ -220,6 +231,16 @@ function Answer-Confirm($dialog, [string]$answer) {
     if ($hwnd -eq [System.IntPtr]::Zero) { throw "the $answer button has no window handle" }
     [void][NexusCheck.User32]::SendMessageW($hwnd, 0x00F5, [System.IntPtr]::Zero, [System.IntPtr]::Zero)
   }
+}
+
+# Waits until no element's name contains $fragment (any control type).
+function Wait-TextGone($win, [string]$fragment, [int]$seconds = 15) {
+  $deadline = (Get-Date).AddSeconds($seconds)
+  while ((Get-Date) -lt $deadline) {
+    if (-not ((Get-Names $win) | Where-Object { $_.Contains($fragment) } | Select-Object -First 1)) { return $true }
+    Start-Sleep -Milliseconds 250
+  }
+  return $false
 }
 
 function Wait-Gone($win, [string]$fragment, [int]$seconds = 15) {
@@ -765,6 +786,31 @@ try {
   Check (Wait-Text $win "Saved all twelve." 20) "after the approval the batch is saved and the task continues"
   Click-Button $win "Jobs"
   Check ($null -ne (Wait-Like $win "Company 11 · Service Desk Analyst")) "the batch's applications are in Jobs"
+  # --- permissions: tighten from the window, loosen only in Windows ---
+  Click-Button $win "Settings"
+  Check ($null -ne (Wait-Contains $win "Runs without asking: it only reads")) "Settings lists each tool and what it does"
+  $web = Find-Check $win "Read public web pages"
+  Check ($null -ne $web) "web reading can be turned off"
+  if ($web) { Invoke-Element $web }
+  Check ($null -ne (Wait-Contains $win "Off: Nexus is never offered this tool")) "turned off from the window at once"
+  $web = Find-Check $win "Read public web pages"
+  if ($web) { Invoke-Element $web }
+  $confirm = Wait-Confirm $win
+  Check ($null -ne $confirm) "turning it back on asks in Windows"
+  if ($confirm) {
+    Check ($null -ne ((Get-Names $confirm) | Where-Object { $_ -like "*Turn this back on?*Read public web pages*" } | Select-Object -First 1)) "the Windows dialog names the tool"
+    Answer-Confirm $confirm "Yes"
+  }
+  Check (Wait-TextGone $win "Off: Nexus is never offered this tool") "after Yes the tool is on again"
+  Set-Field $win "Changes per reply without asking (0 to 25)" "5"
+  Click-Button $win "Save number"
+  Check ($null -ne (Wait-Contains $win "Up to 5 changes per reply without asking")) "fewer changes without asking is saved from the window"
+  Set-Field $win "Changes per reply without asking (0 to 25)" "12"
+  Click-Button $win "Save number"
+  $confirm = Wait-Confirm $win
+  Check ($null -ne $confirm) "more changes without asking asks in Windows"
+  if ($confirm) { Answer-Confirm $confirm "No" }
+  Check ($null -ne (Wait-Contains $win "Up to 5 changes per reply without asking")) "after No nothing changes"
   Click-Button $win "Tools"
   $docsRow = Wait-Like $win "Documents · shared folders"
   if ($docsRow) { Invoke-Element $docsRow }

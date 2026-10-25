@@ -188,6 +188,21 @@ impl NexusClient {
             .await??)
     }
 
+    /// Every tool the agent can use and what the approval policy lets it do.
+    pub async fn permissions(&self) -> Result<Vec<nexus_protocol::PermissionView>, CallError> {
+        Ok(self.client.permissions(context::current()).await??)
+    }
+
+    pub async fn set_permission(
+        &self,
+        request: nexus_protocol::SetPermissionRequest,
+    ) -> Result<Vec<nexus_protocol::PermissionView>, CallError> {
+        Ok(self
+            .client
+            .set_permission(context::current(), request)
+            .await??)
+    }
+
     pub async fn cancel_run(&self, run_id: RunId) -> Result<RunView, CallError> {
         Ok(self.client.cancel_run(context::current(), run_id).await??)
     }

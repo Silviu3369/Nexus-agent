@@ -262,8 +262,8 @@ Pentru mai mulți utilizatori se adaugă un proiect explicit de identitate, sepa
 | ADR-RELEASE-001 | Installer, semnare, actualizare și compatibilitate | De calificat în M6 |
 | ADR-TASK-001 | Un singur model al muncii agentului: Task → Run → Step → Action, cu rezultat, cost și intervenții | **Implementat** (schema v15 și v16, 2026-10-21) |
 | ADR-ACTION-001 | Un singur broker pentru efecte; clase de efect; descriptorul de instrument din contracte §6 | **Implementat** (schema v17, 2026-10-21) |
-| ADR-IDENTITY-001 | Actori cu identificator stabil: tu, agentul, automatizările, inboxul, Host-ul, ulterior canalele | **Acceptat** (2026-10-25), de implementat |
-| ADR-POLICY-001 | Politica de aprobare ca date, cu limite fixe; aprobări în lot; confirmare de încredere pentru efectele externe | **Acceptat** (2026-10-25), de implementat |
+| ADR-IDENTITY-001 | Actori cu identificator stabil: tu, agentul, automatizările, inboxul, Host-ul, ulterior canalele | **Implementat** (schema v18, 2026-10-25) |
+| ADR-POLICY-001 | Politica de aprobare ca date, cu limite fixe; aprobări în lot; confirmare de încredere pentru efectele externe | **Implementat** (schema v19–v21, 2026-10-25); rămân selecția pe elemente în lot și regulile pe flux (cu pachetele) |
 
 Rezultatele ADR-urilor se înregistrează în acest document, cu alternativa aleasă, motiv, dependențe, limitări și probe. Progresul rămâne în plan; aici se schimbă deciziile de proiectare.
 
@@ -614,3 +614,27 @@ Cu emailul (M4), fișierele și Excelul (M3a) și intake-ul în volum (M5), asta
 - **Ce rămâne pentru mai târziu:**
   - selecția pe elemente: acum aprobi tot lotul sau îl respingi;
   - loturile de fișiere și de apeluri, care cer ca agentul să propună mai multe efecte externe într-o tură.
+
+**Implementare, pasul 6 (2026-10-25): regulile ca date și pagina Permisiuni.**
+
+- **Schema v21:** `policy_rules`, cu cel mult o regulă în vigoare pe unealtă.
+  - O schimbare revocă regula în vigoare și scrie revizia următoare, cu cine a făcut-o și când. Nimic nu se șterge, deci regula în vigoare la orice moment se poate citi înapoi.
+  - Înapoi la implicit înseamnă nicio regulă în vigoare.
+  - Acțiunile nu primesc o coloană nouă: regula care a decis o acțiune e cea în vigoare la momentul acțiunii.
+- **Ce se poate schimba**, verificat de Host cu `policy::permits`:
+  - orice unealtă oferită modelului se poate opri;
+  - numărul de scrieri în evidențe fără întrebare merge de la 0 la 25 (implicit 10).
+  - Restul limitelor rămân fixe.
+- **Relaxarea** (o unealtă repornită, mai multe scrieri fără întrebare) e acceptată doar pe calea dialogului Windows; strângerea, și din fereastră.
+- **Aplicarea:**
+  - regulile se citesc o dată pe răspuns;
+  - o unealtă oprită nu mai e oferită modelului, nici uneltele MCP care citesc sau schimbă;
+  - dacă modelul o cere totuși, primește „The user turned this tool off”;
+  - pragul pentru lot vine din regulă.
+- **Pagina:** Settings → Permissions, cu fiecare unealtă (eticheta din registru, ce face acum, ce trimite), un comutator și numărul pentru scrierile în evidențe.
+- **Cod:**
+  - `nexus-storage/src/policy.rs`;
+  - `nexus-host/src/runtime/permissions.rs`;
+  - `apps/desktop/src-tauri/src/permissions.rs` (relaxarea prin dialog);
+  - `apps/desktop/src/components/PermissionsPanel.tsx`.
+- **Rămâne pentru pachete (ADR-PACK-001):** reguli pe flux sau proiect, care pot doar strânge.

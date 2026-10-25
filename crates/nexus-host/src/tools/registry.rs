@@ -50,6 +50,8 @@ pub enum Execution {
 #[derive(Debug)]
 pub struct ToolDescriptor {
     pub id: &'static str,
+    /// What it lets the agent do, in plain words (the Permissions page).
+    pub label: &'static str,
     /// The functions the model calls for it (MCP tools are matched by the
     /// server's offer instead).
     pub model_names: &'static [&'static str],
@@ -78,6 +80,7 @@ pub const DELETE_DOCUMENT_ID: &str = "DeleteCreatedDocument";
 pub static TOOLS: &[ToolDescriptor] = &[
     ToolDescriptor {
         id: "WebRead",
+        label: "Read public web pages",
         model_names: &["fetch_url"],
         version: 1,
         effect: EffectClass::Read,
@@ -90,6 +93,7 @@ pub static TOOLS: &[ToolDescriptor] = &[
     },
     ToolDescriptor {
         id: "ListFiles",
+        label: "List the files in folders you shared",
         model_names: &["list_files"],
         version: 1,
         effect: EffectClass::Read,
@@ -102,6 +106,7 @@ pub static TOOLS: &[ToolDescriptor] = &[
     },
     ToolDescriptor {
         id: "ReadDocument",
+        label: "Read documents in folders you shared",
         model_names: &["read_document"],
         version: 1,
         effect: EffectClass::Read,
@@ -114,6 +119,7 @@ pub static TOOLS: &[ToolDescriptor] = &[
     },
     ToolDescriptor {
         id: "FindRecords",
+        label: "Look things up in your registers",
         model_names: &["find_records"],
         version: 1,
         effect: EffectClass::Read,
@@ -126,6 +132,7 @@ pub static TOOLS: &[ToolDescriptor] = &[
     },
     ToolDescriptor {
         id: MCP_READ_ID,
+        label: "Use MCP tools that only read",
         model_names: &[],
         version: 1,
         effect: EffectClass::Read,
@@ -138,6 +145,7 @@ pub static TOOLS: &[ToolDescriptor] = &[
     },
     ToolDescriptor {
         id: RECORD_WRITE_ID,
+        label: "Add and change records in your registers",
         model_names: &["add_record", "update_record"],
         version: 1,
         effect: EffectClass::InternalReversible,
@@ -150,6 +158,7 @@ pub static TOOLS: &[ToolDescriptor] = &[
     },
     ToolDescriptor {
         id: MEMORY_FACT_ID,
+        label: "Propose facts to remember",
         model_names: &["propose_memory"],
         version: 1,
         effect: EffectClass::InternalReversible,
@@ -162,6 +171,7 @@ pub static TOOLS: &[ToolDescriptor] = &[
     },
     ToolDescriptor {
         id: markdown_artifact::TOOL_ID,
+        label: "Create notes in Nexus",
         model_names: &["propose_note"],
         version: markdown_artifact::TOOL_VERSION,
         effect: EffectClass::InternalReversible,
@@ -174,6 +184,7 @@ pub static TOOLS: &[ToolDescriptor] = &[
     },
     ToolDescriptor {
         id: document_file::TOOL_ID,
+        label: "Create files in folders you shared for writing",
         model_names: &["propose_document"],
         version: document_file::TOOL_VERSION,
         effect: EffectClass::ExternalReversible,
@@ -186,6 +197,7 @@ pub static TOOLS: &[ToolDescriptor] = &[
     },
     ToolDescriptor {
         id: MCP_CALL_ID,
+        label: "Use MCP tools that can change things",
         model_names: &[],
         version: 1,
         effect: EffectClass::ExternalIrreversible,
@@ -201,6 +213,7 @@ pub static TOOLS: &[ToolDescriptor] = &[
     // the policy gathers those changes into one batch the user decides.
     ToolDescriptor {
         id: RECORD_BATCH_ID,
+        label: "Save a batch of register changes you approved",
         model_names: &[],
         version: 1,
         effect: EffectClass::InternalReversible,
@@ -213,6 +226,7 @@ pub static TOOLS: &[ToolDescriptor] = &[
     },
     ToolDescriptor {
         id: UNDO_RECORD_ID,
+        label: "Undo a register change you asked to undo",
         model_names: &[],
         version: 1,
         effect: EffectClass::InternalReversible,
@@ -225,6 +239,7 @@ pub static TOOLS: &[ToolDescriptor] = &[
     },
     ToolDescriptor {
         id: DELETE_DOCUMENT_ID,
+        label: "Delete a file Nexus created, when you undo it",
         model_names: &[],
         version: 1,
         effect: EffectClass::ExternalIrreversible,
@@ -256,6 +271,12 @@ impl ToolDescriptor {
     }
 }
 
+/// The model can call it: the tools the user can turn off or tune (the
+/// user's own undo and an approved batch are not offered to the model).
+pub fn offered_to_model(tool: &ToolDescriptor) -> bool {
+    !tool.model_names.is_empty() || tool.id == MCP_READ_ID || tool.id == MCP_CALL_ID
+}
+
 /// What the approval policy decides for a call of `tool` (ADR-POLICY-001).
 /// No rule exists yet, so it is the tool's default within the fixed limits.
 pub fn decide(tool: &ToolDescriptor) -> PolicyDecision {
@@ -265,11 +286,6 @@ pub fn decide(tool: &ToolDescriptor) -> PolicyDecision {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The model can call it (the user's own undo is not offered).
-    fn offered_to_model(tool: &ToolDescriptor) -> bool {
-        !tool.model_names.is_empty() || tool.id == MCP_READ_ID || tool.id == MCP_CALL_ID
-    }
 
     #[test]
     fn every_tool_is_registered_once_with_a_consistent_policy() {

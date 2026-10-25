@@ -87,6 +87,11 @@ export type ActorView = { kind: string; name: string }
  */
 export type RecordChangePreview = { register_key: string; register_name: string; record_id: RecordId | null; title: string; fields: FieldChange[] }
 
+/**
+ * One tool and what the approval policy lets it do.
+ */
+export type PermissionView = { tool_id: string; label: string; effect_class: string; sends: string; enabled: boolean; decision: string; max_auto: number | null; default_max_auto: number | null; changed_at_ms: number | null }
+
 export type RunView = { run_id: RunId; title: string; status: RunStatus; effect_class: string | null; evidence: string | null; undone_at_ms: number | null; can_undo: boolean; revision: number; failure: RunFailure | null; pending_approval: PendingApproval | null; artifact: ArtifactSummary | null; origin: RunOrigin | null; kind: RunKind; call: McpCallView | null; requested_by: ActorView | null; decided_by: ActorView | null; created_at_ms: number; updated_at_ms: number }
 
 export type Snapshot = { runs: RunView[]; watermark: number }

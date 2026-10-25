@@ -1,9 +1,17 @@
 //! Support shared by the storage tests.
 
+/// Takes a database from the current schema back to version 20: version
+/// 21 only added the user's policy rules.
+#[allow(dead_code)]
+pub fn undo_v21(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    conn.execute_batch("DROP TABLE policy_rules; PRAGMA user_version = 20;")
+}
+
 /// Takes a database from the current schema back to version 19: version
 /// 20 only added where each decision was made.
 #[allow(dead_code)]
 pub fn undo_v20(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    undo_v21(conn)?;
     conn.execute_batch(
         "ALTER TABLE approvals DROP COLUMN decided_via;
          PRAGMA user_version = 19;",

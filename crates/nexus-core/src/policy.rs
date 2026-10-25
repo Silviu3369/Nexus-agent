@@ -11,19 +11,20 @@ use crate::state::{EffectClass, PolicyDecision};
 /// it decided (a rule the user sets will have its own).
 pub const BUILT_IN_REVISION: i64 = 1;
 
-/// Register writes the agent makes in one reply without asking (the user's
-/// choice, 2026-10-25). Beyond them, its changes wait for the user in one
-/// batch, so a page or a document that steers it cannot rewrite a register
-/// unseen.
+/// Register writes the agent makes in one reply without asking, unless the
+/// user set another number (the user's choice, 2026-10-25). Beyond them, its
+/// changes wait for the user in one batch, so a page or a document that
+/// steers it cannot rewrite a register unseen.
 pub const RECORD_WRITES_PER_TURN: u32 = 10;
 
-/// The most changes one batch asks the user to decide at once.
+/// The most changes one batch asks the user to decide at once, and the most
+/// a reply may write without asking.
 pub const MAX_BATCH_ITEMS: usize = 25;
 
 /// A register write: carried out while the reply is within its threshold,
 /// asked for beyond it.
-pub fn decide_record_write(written_in_reply: u32) -> PolicyDecision {
-    if written_in_reply < RECORD_WRITES_PER_TURN {
+pub fn decide_record_write(written_in_reply: u32, threshold: u32) -> PolicyDecision {
+    if written_in_reply < threshold {
         PolicyDecision::Auto
     } else {
         PolicyDecision::Ask
@@ -139,10 +140,16 @@ mod tests {
 
     #[test]
     fn the_eleventh_write_of_a_reply_is_asked_for() {
-        assert_eq!(decide_record_write(0), PolicyDecision::Auto);
-        assert_eq!(decide_record_write(9), PolicyDecision::Auto);
-        assert_eq!(decide_record_write(10), PolicyDecision::Ask);
-        assert_eq!(decide_record_write(30), PolicyDecision::Ask);
+        let default = RECORD_WRITES_PER_TURN;
+        assert_eq!(decide_record_write(0, default), PolicyDecision::Auto);
+        assert_eq!(decide_record_write(9, default), PolicyDecision::Auto);
+        assert_eq!(decide_record_write(10, default), PolicyDecision::Ask);
+        assert_eq!(decide_record_write(30, default), PolicyDecision::Ask);
+        assert_eq!(
+            decide_record_write(0, 0),
+            PolicyDecision::Ask,
+            "0: every write asks"
+        );
     }
 
     #[test]

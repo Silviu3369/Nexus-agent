@@ -31,11 +31,6 @@ pub(super) const ADD_TOOL: &str = "add_record";
 pub(super) const UPDATE_TOOL: &str = "update_record";
 /// Lookups per reply; they only read, so they run without asking.
 pub(super) const MAX_RECORD_READS: u32 = 6;
-/// Additions and updates per reply: the policy's threshold at once, then a
-/// batch the user decides (ADR-POLICY-001); bounds what one reply can
-/// change, even if a page it read tried to steer it.
-pub(super) const MAX_RECORD_WRITES: u32 =
-    nexus_core::policy::RECORD_WRITES_PER_TURN + nexus_core::policy::MAX_BATCH_ITEMS as u32;
 const FIND_DEFAULT: u32 = 20;
 const FIND_MAX: u32 = 50;
 const LIST_DEFAULT: u32 = 200;

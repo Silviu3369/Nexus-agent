@@ -7,6 +7,7 @@ mod files;
 mod host;
 mod mcp;
 mod memory;
+mod permissions;
 mod records;
 mod runs;
 mod usage;
@@ -26,6 +27,9 @@ pub fn run() {
             runs::get_run,
             runs::decide_approval,
             confirm::confirm_approval,
+            permissions::list_permissions,
+            permissions::set_permission,
+            permissions::relax_permission,
             runs::cancel_run,
             runs::undo_effect,
             runs::artifact_content,

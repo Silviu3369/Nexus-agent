@@ -12,12 +12,14 @@ pub mod ids;
 pub mod mcp;
 pub mod memory;
 pub mod pairing;
+pub mod permissions;
 pub mod records;
 pub mod runs;
 pub mod service;
 pub mod usage;
 pub mod version;
 
+pub use permissions::{PermissionView, SetPermissionRequest};
 pub use runs::{
     ActorView, ApprovalDecision, ApprovalPath, ArtifactSummary, BackupSummary,
     DecideApprovalRequest, EventView, EventsPage, McpCallPreview, McpCallView, NotePreview,
@@ -39,8 +41,8 @@ pub use files::{FolderEntryView, FolderView, SaveFolderRequest};
 pub use handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse, HealthStatus};
 pub use ids::{
     ActionId, ActorId, AgentStepId, ApprovalId, ArtifactId, AutomationId, ConnectionId,
-    ConversationId, EventId, FolderId, McpServerId, MemoryId, MessageId, OperationId, ProjectId,
-    RecordId, RegisterId, RequestId, RunId, StepId, TaskId,
+    ConversationId, EventId, FolderId, McpServerId, MemoryId, MessageId, OperationId, PolicyRuleId,
+    ProjectId, RecordId, RegisterId, RequestId, RunId, StepId, TaskId,
 };
 pub use mcp::{McpServerView, McpToolView, SaveMcpServerRequest};
 pub use memory::{
