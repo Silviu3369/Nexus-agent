@@ -24,6 +24,9 @@ pub enum Reply {
     },
     /// Accepts the request and never answers.
     Hang,
+    /// Thinks this long before answering, like a model whose first byte
+    /// comes late.
+    Slow(Duration, Box<Reply>),
 }
 
 impl Reply {
@@ -243,6 +246,13 @@ async fn serve(mut socket: TcpStream, state: Arc<State>) {
         Reply::status(404, r#"{"error":{"message":"unknown route"}}"#)
     };
 
+    let reply = match reply {
+        Reply::Slow(wait, inner) => {
+            tokio::time::sleep(wait).await;
+            *inner
+        }
+        other => other,
+    };
     match reply {
         Reply::Sse(events) => {
             write_sse(&mut socket, &events).await;
@@ -265,7 +275,7 @@ async fn serve(mut socket: TcpStream, state: Arc<State>) {
             }
             write(&mut socket, &format!("{head}\r\n{body}")).await;
         }
-        Reply::Hang => tokio::time::sleep(Duration::from_secs(120)).await,
+        Reply::Hang | Reply::Slow(..) => tokio::time::sleep(Duration::from_secs(120)).await,
     }
     let _ = socket.shutdown().await;
 }

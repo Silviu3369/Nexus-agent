@@ -1052,7 +1052,7 @@ impl Runtime {
                 messages: turn_messages.clone(),
                 tools,
                 max_output_tokens: MAX_OUTPUT_TOKENS,
-                deadline: remaining,
+                deadline: remaining.min(self.step_deadline),
                 thinking_level: Some(to_provider_thinking_level(route.thinking_level)),
             };
 
@@ -1616,7 +1616,10 @@ impl Runtime {
                     );
                     tokio::time::sleep(wait).await;
                     attempt += 1;
-                    request.deadline = self.reply_deadline.saturating_sub(started.elapsed());
+                    request.deadline = self
+                        .reply_deadline
+                        .saturating_sub(started.elapsed())
+                        .min(self.step_deadline);
                 }
             }
         }

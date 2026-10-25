@@ -107,6 +107,7 @@ pub struct Runtime {
     anthropic_base_url: String,
     deepseek_base_url: String,
     reply_deadline: Duration,
+    step_deadline: Duration,
     retry_waits: Vec<Duration>,
     replies: chat::Replies,
     system: SystemMonitor,
@@ -135,8 +136,12 @@ pub struct RuntimeConfig {
     pub openai_base_url: String,
     pub anthropic_base_url: String,
     pub deepseek_base_url: String,
-    /// Whole budget of one model reply.
+    /// Whole budget of one model reply, across its steps.
     pub reply_deadline: Duration,
+    /// Budget of one model call within it: a model that thinks long on one
+    /// step no longer eats the time of the next ones, and one that hangs
+    /// is still cut.
+    pub step_deadline: Duration,
     /// Pauses before trying a model call again after a temporary outage;
     /// one entry per retry (so at most `len + 1` tries).
     pub retry_waits: Vec<Duration>,
@@ -163,7 +168,11 @@ impl Default for RuntimeConfig {
             openai_base_url: production_base_url(ProviderKind::OpenAi).to_string(),
             anthropic_base_url: production_base_url(ProviderKind::Anthropic).to_string(),
             deepseek_base_url: production_base_url(ProviderKind::DeepSeek).to_string(),
-            reply_deadline: Duration::from_secs(120),
+            // Measured on the user's real Gemini calls (2026-10-25): a few
+            // took 30–108 s before their first byte, and replies of two or
+            // three steps failed under a 120 s limit for the whole reply.
+            reply_deadline: Duration::from_secs(300),
+            step_deadline: Duration::from_secs(120),
             retry_waits: vec![Duration::from_secs(2), Duration::from_secs(5)],
             allow_loopback_mcp: false,
             extractor_exe: None,
@@ -209,6 +218,7 @@ impl Runtime {
             anthropic_base_url: config.anthropic_base_url,
             deepseek_base_url: config.deepseek_base_url,
             reply_deadline: config.reply_deadline,
+            step_deadline: config.step_deadline,
             retry_waits: config.retry_waits,
             replies: chat::Replies::default(),
             system: SystemMonitor::default(),

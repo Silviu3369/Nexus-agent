@@ -468,6 +468,58 @@ async fn provider_failures_settle_the_reply_with_a_stable_code() {
 }
 
 #[tokio::test]
+async fn each_model_call_has_its_own_limit_inside_the_reply_limit() {
+    let fake = FakeGemini::start(KEY).await;
+    let host = TestHost::start_with(
+        TOKEN,
+        RuntimeConfig {
+            reply_deadline: Duration::from_secs(30),
+            step_deadline: Duration::from_secs(2),
+            ..config(&fake)
+        },
+    )
+    .await;
+    let client = host.client().await;
+    connect_gemini(&client).await;
+
+    // Two steps that think 1.2 s each: together past one call's limit,
+    // which therefore cannot be the limit of the whole reply.
+    let slow = Duration::from_millis(1200);
+    fake.push(Reply::Slow(
+        slow,
+        Box::new(Reply::calls(&[(
+            "fetch_url",
+            serde_json::json!({"url": "http://127.0.0.1:1/private"}),
+        )])),
+    ));
+    fake.push(Reply::Slow(
+        slow,
+        Box::new(Reply::text(&["Nu am putut accesa pagina."])),
+    ));
+    let started = std::time::Instant::now();
+    let sent = send(&client, None, "slow", "Citește pagina").await;
+    let reply = settled(&client, &sent).await;
+    assert_eq!(reply.status, ChatStatus::Complete, "{:?}", reply.failure);
+    assert_eq!(fake.generations().len(), 2);
+    assert!(started.elapsed() >= 2 * slow);
+
+    // A call that never answers is cut at its own limit, long before the
+    // reply's.
+    fake.push(Reply::Hang);
+    let started = std::time::Instant::now();
+    let sent = send(&client, Some(sent.conversation_id), "hang", "Încă o dată").await;
+    let reply = settled(&client, &sent).await;
+    assert_eq!(reply.status, ChatStatus::Failed);
+    assert_eq!(reply.failure.unwrap().code, "DeadlineExceeded");
+    assert!(
+        started.elapsed() < Duration::from_secs(15),
+        "cut after {:?}",
+        started.elapsed()
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test]
 async fn cancelling_a_reply_keeps_what_arrived_and_stops_the_call() {
     let fake = FakeGemini::start(KEY).await;
     let host = TestHost::start_with(TOKEN, config(&fake)).await;
