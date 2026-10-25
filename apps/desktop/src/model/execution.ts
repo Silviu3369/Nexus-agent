@@ -185,7 +185,12 @@ export function describeStep(step: AgentStepView): { title: string; detail: stri
       const title = `${running ? "Reading" : "Read"} ${d.path} in ${d.folder}`;
       if (d.error) return { title, detail: d.error };
       if (d.chars === null) return { title, detail: null };
-      const parts = [d.format, `${d.chars.toLocaleString("en-US")} characters to the model`, d.truncated ? "cut" : null].filter(Boolean);
+      const parts = [
+        d.format,
+        `${d.chars.toLocaleString("en-US")} characters to the model`,
+        d.offset ? `from character ${d.offset.toLocaleString("en-US")}` : null,
+        d.truncated ? "more follows" : null,
+      ].filter(Boolean);
       return { title, detail: parts.join(" · ") };
     }
     case "DocumentProposed": {

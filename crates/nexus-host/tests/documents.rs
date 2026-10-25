@@ -409,6 +409,106 @@ async fn the_agent_reads_word_pdf_and_excel_in_a_shared_folder_and_nothing_outsi
 }
 
 #[tokio::test]
+async fn a_long_document_is_read_on_in_parts_when_the_model_asks() {
+    let fake = FakeGemini::start(KEY).await;
+    let host = TestHost::start_with(TOKEN, config(&fake)).await;
+    let client = host.client().await;
+    connect(&client).await;
+    let docs = Dir::new("long");
+    // 1,000 rows of 60 characters: 60,000 in all, past one part of 40,000.
+    let mut text: String = (0..999)
+        .map(|i| format!("{:<59}\n", format!("row {i}: Service Desk, Springfield")))
+        .collect();
+    text.push_str(&format!("{:<59}\n", "LAST ROW"));
+    std::fs::write(docs.path().join("long.txt"), &text).unwrap();
+    share(&client, "Docs", &docs, false).await;
+
+    // The first part ends after the last whole row that fits.
+    let next = (40_000 / 60) * 60;
+    fake.push(Reply::calls(&[(
+        "read_document",
+        json!({"folder": "Docs", "path": "long.txt"}),
+    )]));
+    fake.push(Reply::calls(&[
+        // Sent as a float, as some models do.
+        (
+            "read_document",
+            json!({"folder": "Docs", "path": "long.txt", "offset": next as f64}),
+        ),
+        (
+            "read_document",
+            json!({"folder": "Docs", "path": "long.txt", "offset": -5}),
+        ),
+        (
+            "read_document",
+            json!({"folder": "Docs", "path": "long.txt", "offset": 60_000}),
+        ),
+    ]));
+    fake.push(Reply::text(&["The last row is LAST ROW."]));
+    let sent = send(&client, None, "p1", "What is the last row of long.txt?").await;
+    let reply = settled(&client, &sent).await;
+    assert_eq!(reply.text, "The last row is LAST ROW.");
+
+    let generations = fake.generations();
+    let first = answers(&generations[1].json(), "read_document")[0].clone();
+    let first_text = first["text"].as_str().unwrap();
+    assert_eq!(first_text.chars().count(), next);
+    assert!(first_text.ends_with('\n') && !first_text.contains("LAST ROW"));
+    assert_eq!(first["offset"], 0);
+    assert_eq!(first["next_offset"], next);
+    assert!(
+        first["note"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("offset {next}")),
+        "{first}"
+    );
+
+    let later = generations[2].json();
+    let later = answers(&later, "read_document");
+    // The first part is in the history; the last three are new.
+    assert_eq!(later.len(), 4);
+    let rest = later[1];
+    assert_eq!(rest["offset"], next);
+    assert_eq!(rest["text"].as_str().unwrap(), &text[next..]);
+    assert!(rest.get("next_offset").is_none(), "{rest}");
+    assert!(
+        later[2]["error"].as_str().unwrap().contains("whole number"),
+        "{}",
+        later[2]
+    );
+    assert!(
+        later[3]["error"]
+            .as_str()
+            .unwrap()
+            .contains("60000 characters"),
+        "{}",
+        later[3]
+    );
+
+    let read_steps: Vec<(AgentStepStatus, Option<u32>, Option<bool>)> = reply
+        .steps
+        .iter()
+        .filter_map(|s| match &s.detail {
+            AgentStepDetail::DocumentRead {
+                offset, truncated, ..
+            } => Some((s.status, *offset, *truncated)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        read_steps,
+        [
+            (AgentStepStatus::Done, Some(0), Some(true)),
+            (AgentStepStatus::Done, Some(next as u32), Some(false)),
+            (AgentStepStatus::Failed, None, None),
+            (AgentStepStatus::Failed, Some(60_000), None),
+        ]
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_broken_or_oversized_file_fails_on_its_own() {
     let fake = FakeGemini::start(KEY).await;
     let host = TestHost::start_with(TOKEN, config(&fake)).await;

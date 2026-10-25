@@ -679,13 +679,19 @@ test("record events refresh the registers, and an undo the task's steps", () => 
 test("document steps say what was read and proposed, and a document run is a file write", () => {
   const listed = step({ kind: "FilesListed", folder: "Jobs", path: "", count: 3, error: null }, "Done", T0 + 900, T0 + 905);
   const read = step(
-    { kind: "DocumentRead", folder: "Jobs", path: "CV.docx", format: "Word", chars: 1200, truncated: false, error: null },
+    { kind: "DocumentRead", folder: "Jobs", path: "CV.docx", format: "Word", chars: 1200, offset: 0, truncated: false, error: null },
     "Done",
     T0 + 906,
     T0 + 950,
   );
+  const part = step(
+    { kind: "DocumentRead", folder: "Jobs", path: "Jobs.xlsx", format: "Spreadsheet", chars: 39936, offset: 39300, truncated: true, error: null },
+    "Done",
+    T0 + 950,
+    T0 + 951,
+  );
   const outside = step(
-    { kind: "DocumentRead", folder: "Jobs", path: "../x.txt", format: null, chars: null, truncated: null, error: "\"..\" is not a valid name" },
+    { kind: "DocumentRead", folder: "Jobs", path: "../x.txt", format: null, chars: null, offset: null, truncated: null, error: "\"..\" is not a valid name" },
     "Failed",
     T0 + 951,
     T0 + 952,
@@ -696,13 +702,14 @@ test("document steps say what was read and proposed, and a document run is a fil
     T0 + 1900,
     T0 + 1910,
   );
-  const [run] = buildRuns(conversation(message("Model", REPLY, [model("Done", T0, T0 + 900), listed, read, outside, proposed])), new Map(), "Nexus");
+  const [run] = buildRuns(conversation(message("Model", REPLY, [model("Done", T0, T0 + 900), listed, read, part, outside, proposed])), new Map(), "Nexus");
   const docs = run.items.filter((i) => i.kind === "doc");
   assert.deepEqual(
     docs.map((i) => [i.title, i.outcome, i.status]),
     [
       ["Looked in Jobs", "3 items", "completed"],
       ["Read CV.docx in Jobs", "Word · 1,200 characters to the model", "completed"],
+      ["Read Jobs.xlsx in Jobs", "Spreadsheet · 39,936 characters to the model · from character 39,300 · more follows", "completed"],
       ["Read ../x.txt in Jobs", "\"..\" is not a valid name", "failed"],
       ["Propose Cover letter.docx in Letters", "Proposal recorded; nothing written yet", "completed"],
     ],

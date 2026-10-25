@@ -273,7 +273,7 @@ impl Runtime {
             .map_err(|e| NexusError::new(ErrorCode::InternalFailure, e.to_string()))?
             .map_err(invalid)?;
         let value = self
-            .read_isolated("table", &path, MAX_TABLE_ROWS + 1)
+            .read_isolated("table", &path, MAX_TABLE_ROWS + 1, 0)
             .await
             .map_err(invalid)?;
         let table: Table = serde_json::from_value(value)

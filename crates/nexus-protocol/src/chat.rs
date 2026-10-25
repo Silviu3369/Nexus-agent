@@ -260,6 +260,9 @@ pub enum AgentStepDetail {
         format: Option<String>,
         /// Characters of text given to the model.
         chars: Option<u32>,
+        /// Where this part starts, in characters (0: the beginning).
+        offset: Option<u32>,
+        /// More text follows this part.
         truncated: Option<bool>,
         error: Option<String>,
     },

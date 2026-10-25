@@ -2251,6 +2251,7 @@ fn step_view(row: &AgentStepRow) -> AgentStepView {
             path: text("path").unwrap_or_default(),
             format: text("format"),
             chars: number("chars").and_then(|n| u32::try_from(n).ok()),
+            offset: number("offset").and_then(|n| u32::try_from(n).ok()),
             truncated: d.get("truncated").and_then(Value::as_bool),
             error: text("error"),
         },

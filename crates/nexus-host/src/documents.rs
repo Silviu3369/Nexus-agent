@@ -17,7 +17,9 @@ use tokio::io::AsyncReadExt;
 
 /// Largest document read.
 pub const MAX_FILE_BYTES: u64 = 20 * 1024 * 1024;
-/// Text given to the model from one document.
+/// Text given to the model from one document in one read (about 10,000
+/// tokens). A longer document is read on in further parts, from where the
+/// last one ended, only when the task needs it.
 pub const MAX_TEXT_CHARS: usize = 40_000;
 /// Rows read from a spreadsheet or CSV for an import.
 pub const MAX_TABLE_ROWS: usize = 2_000;
@@ -65,12 +67,19 @@ impl Format {
     }
 }
 
-/// A document's text, as the model receives it.
+/// A part of a document's text, as the model receives it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Extracted {
     pub format: Format,
     pub text: String,
+    /// More text follows this part.
     pub truncated: bool,
+    /// Where this part starts, in characters.
+    #[serde(default)]
+    pub offset: usize,
+    /// Where the next part starts, when more follows.
+    #[serde(default)]
+    pub next_offset: Option<usize>,
 }
 
 /// A table's rows (the first sheet of a workbook, or a CSV).
@@ -315,6 +324,38 @@ pub fn list(root: &Path, under: Option<&str>) -> Result<(Vec<Entry>, bool), Stri
 
 // ---------- reading (in the extractor process) ----------
 
+/// Up to `max_chars` characters of `text` from `offset`, and where the next
+/// part starts if more follows. A part ends after a line break when one falls
+/// in its second half, so a row of a sheet or a paragraph is not split.
+fn part(text: &str, offset: usize, max_chars: usize) -> Result<(String, Option<usize>), String> {
+    let start = match text.char_indices().nth(offset) {
+        Some((i, _)) => i,
+        None if offset == 0 => return Ok((String::new(), None)),
+        None => {
+            return Err(format!(
+                "the document has {} characters; there is no text from offset {offset} on",
+                text.chars().count()
+            ));
+        }
+    };
+    let rest = &text[start..];
+    let Some((end, _)) = rest.char_indices().nth(max_chars) else {
+        return Ok((rest.to_string(), None));
+    };
+    let (end, taken) = match rest[..end].rfind('\n') {
+        Some(line_end) => {
+            let chars = rest[..=line_end].chars().count();
+            if chars > max_chars / 2 {
+                (line_end + 1, chars)
+            } else {
+                (end, max_chars)
+            }
+        }
+        None => (end, max_chars),
+    };
+    Ok((rest[..end].to_string(), Some(offset + taken)))
+}
+
 fn cut(text: &str, max_chars: usize) -> (String, bool) {
     match text.char_indices().nth(max_chars) {
         Some((i, _)) => (text[..i].to_string(), true),
@@ -450,7 +491,7 @@ fn cell_text(cell: &calamine::Data) -> String {
     text.replace(['\t', '\r', '\n'], " ")
 }
 
-fn spreadsheet_text(bytes: Vec<u8>, max_chars: usize) -> Result<(String, bool), String> {
+fn spreadsheet_text(bytes: Vec<u8>, max_chars: usize) -> Result<String, String> {
     use calamine::Reader;
     let mut book = workbook(bytes)?;
     let mut out = String::new();
@@ -466,14 +507,13 @@ fn spreadsheet_text(bytes: Vec<u8>, max_chars: usize) -> Result<(String, bool), 
             }
             out.push_str(&cells.join("\t"));
             out.push('\n');
-            if out.len() > max_chars * 4 {
+            if out.len() > max_chars.saturating_mul(4) {
                 break;
             }
         }
         out.push('\n');
     }
-    let (text, truncated) = cut(&out, max_chars);
-    Ok((text, truncated))
+    Ok(out)
 }
 
 /// The rows of a CSV (comma, semicolon or tab, guessed from the first line;
@@ -531,28 +571,33 @@ pub fn csv_rows(text: &str, max_rows: usize) -> (Vec<Vec<String>>, bool) {
     (rows, false)
 }
 
-/// A document's text (run inside the extractor process).
-pub fn extract(path: &Path, max_chars: usize) -> Result<Extracted, String> {
+/// A part of a document's text, from `offset` (run inside the extractor
+/// process).
+pub fn extract(path: &Path, offset: usize, max_chars: usize) -> Result<Extracted, String> {
     let format =
         Format::of(path).ok_or("Nexus reads text, Word (.docx), PDF and Excel files only")?;
     let bytes = read_bounded(path)?;
-    let (text, truncated) = match format {
-        Format::Text => cut(&String::from_utf8_lossy(&bytes), max_chars),
-        Format::Word => cut(&docx_text(&bytes)?, max_chars),
+    let text = match format {
+        Format::Text => String::from_utf8_lossy(&bytes).into_owned(),
+        Format::Word => docx_text(&bytes)?,
         Format::Pdf => {
             let text = pdf_extract::extract_text_from_mem(&bytes)
                 .map_err(|e| format!("the PDF's text could not be read: {e}"))?;
             if text.trim().is_empty() {
                 return Err("the PDF has no text (it may be a scan)".into());
             }
-            cut(&text, max_chars)
+            text
         }
-        Format::Spreadsheet => spreadsheet_text(bytes, max_chars)?,
+        // A sheet is read only as far as this part needs.
+        Format::Spreadsheet => spreadsheet_text(bytes, offset.saturating_add(max_chars))?,
     };
+    let (text, next_offset) = part(&text, offset, max_chars)?;
     Ok(Extracted {
         format,
         text,
-        truncated,
+        truncated: next_offset.is_some(),
+        offset,
+        next_offset,
     })
 }
 
@@ -618,20 +663,21 @@ pub fn extract_table(path: &Path, max_rows: usize) -> Result<Table, String> {
     }
 }
 
-/// `nexus-host extract text|table <path> <limit>`: prints the result as one
-/// JSON line (`{"ok": …}` or `{"error": "…"}`).
+/// `nexus-host extract text|table <path> <limit> [offset]`: prints the
+/// result as one JSON line (`{"ok": …}` or `{"error": "…"}`).
 pub fn run_extract_command(args: &[String]) -> i32 {
     let outcome = match args {
-        [mode, path, limit] => {
+        [mode, path, limit, rest @ ..] if rest.len() <= 1 => {
             let limit = limit.parse::<usize>().unwrap_or(MAX_TEXT_CHARS);
+            let offset = rest.first().and_then(|o| o.parse::<usize>().ok());
             let path = Path::new(path);
             match mode.as_str() {
-                "text" => extract(path, limit).map(|x| serde_json::json!(x)),
+                "text" => extract(path, offset.unwrap_or(0), limit).map(|x| serde_json::json!(x)),
                 "table" => extract_table(path, limit).map(|x| serde_json::json!(x)),
                 _ => Err("unknown extract mode".to_string()),
             }
         }
-        _ => Err("usage: nexus-host extract text|table <path> <limit>".to_string()),
+        _ => Err("usage: nexus-host extract text|table <path> <limit> [offset]".to_string()),
     };
     let line = match outcome {
         Ok(value) => serde_json::json!({ "ok": value }),
@@ -701,13 +747,14 @@ impl Drop for Job {
     }
 }
 
-/// Runs `exe extract <mode> <path> <limit>` contained and time-limited, and
-/// returns the JSON value it printed under `ok`.
+/// Runs `exe extract <mode> <path> <limit> <offset>` contained and
+/// time-limited, and returns the JSON value it printed under `ok`.
 pub async fn run_extractor(
     exe: &Path,
     mode: &str,
     path: &Path,
     limit: usize,
+    offset: usize,
 ) -> Result<serde_json::Value, String> {
     let job = Job::new()?;
     let mut child = tokio::process::Command::new(exe)
@@ -715,6 +762,7 @@ pub async fn run_extractor(
         .arg(mode)
         .arg(path)
         .arg(limit.to_string())
+        .arg(offset.to_string())
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
@@ -767,6 +815,34 @@ pub async fn run_extractor(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_long_text_is_read_in_parts_that_end_at_a_line_break() {
+        let text = "row one\nrow two\nrow three\n";
+        // 12 characters reach into "row two"; the part ends after "row one".
+        assert_eq!(
+            part(text, 0, 12).unwrap(),
+            ("row one\n".to_string(), Some(8))
+        );
+        assert_eq!(
+            part(text, 8, 12).unwrap(),
+            ("row two\n".to_string(), Some(16))
+        );
+        assert_eq!(
+            part(text, 16, 12).unwrap(),
+            ("row three\n".to_string(), None)
+        );
+        // No line break in the second half: the part is cut where it fills.
+        assert_eq!(
+            part("abcdefghij", 0, 4).unwrap(),
+            ("abcd".to_string(), Some(4))
+        );
+        // Offsets count characters, not bytes.
+        assert_eq!(part("ăâîșț", 2, 2).unwrap(), ("îș".to_string(), Some(4)));
+        assert_eq!(part("", 0, 4).unwrap(), (String::new(), None));
+        let past = part("abc", 3, 4).unwrap_err();
+        assert!(past.contains("3 characters"), "{past}");
+    }
 
     #[test]
     fn csv_handles_separators_quotes_and_line_breaks() {
