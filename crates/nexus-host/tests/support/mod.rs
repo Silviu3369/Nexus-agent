@@ -23,11 +23,38 @@ pub const GEMINI_BASE_URL_ENV: &str = "NEXUS_GEMINI_BASE_URL";
 
 /// Starts the real `nexus-host` binary on `profile` (its own pipe), optionally
 /// set to abort at a fault point (debug builds only).
-pub fn spawn_host(profile: &Path, fault: Option<&str>) -> Child {
+/// A real host process started by a test, stopped when it goes out of
+/// scope: a test that fails half-way does not leave it running (holding
+/// the test runner's output open and the built executable locked).
+pub struct HostProcess(Child);
+
+impl std::ops::Deref for HostProcess {
+    type Target = Child;
+    fn deref(&self) -> &Child {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for HostProcess {
+    fn deref_mut(&mut self) -> &mut Child {
+        &mut self.0
+    }
+}
+
+impl Drop for HostProcess {
+    fn drop(&mut self) {
+        if let Ok(None) = self.0.try_wait() {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+}
+
+pub fn spawn_host(profile: &Path, fault: Option<&str>) -> HostProcess {
     spawn_host_env(profile, fault, &[])
 }
 
-pub fn spawn_host_env(profile: &Path, fault: Option<&str>, envs: &[(&str, &str)]) -> Child {
+pub fn spawn_host_env(profile: &Path, fault: Option<&str>, envs: &[(&str, &str)]) -> HostProcess {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_nexus-host"));
     cmd.env(PROFILE_DIR_ENV, profile)
         .env_remove(nexus_host::fault::FAULT_POINT_ENV)
@@ -41,7 +68,7 @@ pub fn spawn_host_env(profile: &Path, fault: Option<&str>, envs: &[(&str, &str)]
     for (key, value) in envs {
         cmd.env(key, value);
     }
-    cmd.spawn().expect("nexus-host binary must start")
+    HostProcess(cmd.spawn().expect("nexus-host binary must start"))
 }
 
 /// Connects to the real host on `profile` once it is up.

@@ -325,7 +325,7 @@ export function RunDetail({ summary, onChanged }: { summary: RunView; onChanged:
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => act(() => api.decide(pending.approval_id, pending.manifest_sha256, true))}
+                  onClick={() => act(() => api.approve(view, pending.approval_id, pending.manifest_sha256))}
                 >
                   Approve and create
                 </button>

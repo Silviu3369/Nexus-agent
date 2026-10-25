@@ -574,3 +574,22 @@ Cu emailul (M4), fișierele și Excelul (M3a) și intake-ul în volum (M5), asta
   - o cerere așteaptă 24 de ore (`DEFAULT_APPROVAL_TTL`);
   - aprobarea dată se folosește în 10 minute de la decizie (`DEFAULT_APPROVAL_GRANT`), chiar dacă cererea ar mai fi avut timp;
   - cardul arată timpul rămas în ore („23 h 59 min”), iar detaliile arată ziua și ora („Waits until Sun 01:30”).
+
+**Implementare, pasul 3 (2026-10-25): calea de confirmare de încredere și APPROVAL-01.**
+
+- **Calea deciziei:** cererea de decizie către Host spune pe ce cale vine (`ApprovalPath`: fereastra sau dialogul de încredere). O pune doar codul Rust al aplicației: pagina nu ajunge la Host. Un client mai vechi, care nu o trimite, e socotit „fereastra”.
+- **Refuzul în Host:**
+  - stocarea refuză, în aceeași tranzacție, aprobarea unui efect din afara Nexus (sau de clasă necunoscută, `policy::needs_trusted_confirmation`) venită din fereastră; nimic nu se schimbă, iar cererea așteaptă în continuare;
+  - respingerea și efectele interne (nota, faptele) se decid în continuare din fereastră.
+- **Schema v20:** `approvals.decided_via`. Deciziile de dinainte sunt „Window”.
+- **Dialogul:** `confirm_approval`, în `apps/desktop/src-tauri/src/confirm.rs`.
+  - Pagina doar cere confirmarea. Codul aplicației citește cererea de la Host, verifică dacă e aceeași (aprobarea și hash-ul) și afișează un `MessageBoxW` nativ, cu fereastra Nexus ca proprietar.
+  - Dialogul arată fișierul exact sau serverul, unealta și argumentele (tăiate la 400 de caractere), dacă efectul se poate anula și cine l-a cerut.
+  - Butonul implicit e „No”, iar un singur dialog e deschis odată.
+  - Doar „Yes” trimite aprobarea, pe calea de încredere.
+  - `windows-sys` primește funcționalitatea `Win32_UI_WindowsAndMessaging`; niciun pachet nou.
+- **Ce se vede:**
+  - cardul unui efect extern spune că Windows va cere confirmarea;
+  - „Approve” deschide dialogul;
+  - „No” nu decide nimic, iar cererea așteaptă.
+- **Limită:** dialogul dovedește un click în afara paginii, nu identitatea omului. Un program care controlează desktopul utilizatorului rămâne în afara modelului de amenințare (`SECURITATE_SI_VALIDARE_RO.md` §1).

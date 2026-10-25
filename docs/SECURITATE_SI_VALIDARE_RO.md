@@ -69,7 +69,7 @@ Pentru DATA-01 în M1 se folosește un sentinel fictiv și suprafața existentă
 | ISO-01 | M3 | Worker încearcă acces în afara workspace-ului, rețea, seif, Host IPC și procese | Accesele neacordate refuzate de backendul real |
 | ISO-02 | M3 | Proces copil, depășire CPU/memorie/timp/output, anulare și cădere | Limite aplicate întregului arbore; niciun executor abandonat cu drepturi |
 | PC-01 | M3 | Țintă Windows schimbată, operație privilegiată și comandă cu argumente ostile | Precondiții și scope verificate; elevare distinctă numai când e autorizată |
-| APPROVAL-01 | M3 | Rendererul încearcă să emită direct o aprobare pentru o acțiune sensibilă | Calea de confirmare de încredere este necesară; un payload UI nu ține locul deciziei umane |
+| APPROVAL-01 | M2 (adus din M3 prin ADR-POLICY-001) | Rendererul încearcă să emită direct o aprobare pentru o acțiune sensibilă | Calea de confirmare de încredere este necesară; un payload UI nu ține locul deciziei umane. Un efect în afara Nexus se aprobă doar în dialogul Windows nativ afișat de aplicație; Host-ul refuză aprobarea venită din fereastră |
 | CODE-01 | M3 | Proiect cu modificări existente; propunere de patch și teste | Modificările utilizatorului păstrate; diff inspectabil; fără publicare implicită |
 | BROWSER-01 | M3 | Pagină cu prompt injection, download, redirect și formular cu efect extern | Profil și scope controlate; acțiunea externă cere drepturile necesare |
 | AUTO-01 | M4 | Schimbare de oră, PC oprit, overlap, retry și grant revocat | Comportament de calendar definit; fără rafale sau efecte duplicate |

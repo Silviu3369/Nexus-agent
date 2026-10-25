@@ -179,6 +179,21 @@ pub struct DecideApprovalRequest {
     pub approval_id: ApprovalId,
     pub manifest_sha256: String,
     pub decision: ApprovalDecision,
+    /// Set by the app's own code, never by the page: the page cannot reach
+    /// the Host. An older client that does not send it decided in the
+    /// window.
+    #[serde(default)]
+    pub via: ApprovalPath,
+}
+
+/// Where a decision was made (ADR-POLICY-001): in the dashboard's window,
+/// or in the native Windows dialog the app shows itself, outside the page.
+/// An effect outside Nexus is approved only in the dialog.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub enum ApprovalPath {
+    #[default]
+    Window,
+    TrustedDialog,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]

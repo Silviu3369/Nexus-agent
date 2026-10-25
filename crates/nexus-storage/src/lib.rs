@@ -83,6 +83,8 @@ pub enum StorageError {
     ApprovalExpired,
     #[error("approval invalidated: {0}")]
     ApprovalInvalidated(String),
+    #[error("an effect outside Nexus is approved in the Windows dialog, not in the window")]
+    ConfirmationRequired,
     #[error("cancellation was requested before the effect started")]
     CancellationRequested,
     #[error("a reply is still being written; stop it first")]

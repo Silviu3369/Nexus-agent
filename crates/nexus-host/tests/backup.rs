@@ -52,6 +52,7 @@ async fn approve(client: &NexusClient, run: RunId) -> Result<RunView, nexus_clie
             approval_id: pending.approval_id,
             manifest_sha256: pending.manifest_sha256,
             decision: ApprovalDecision::Approve,
+            via: nexus_protocol::ApprovalPath::Window,
         })
         .await
 }

@@ -303,6 +303,7 @@ async fn a_job_ad_put_in_the_inbox_becomes_an_application_once() {
             approval_id: pending.approval_id,
             manifest_sha256: pending.manifest_sha256,
             decision: ApprovalDecision::Approve,
+            via: nexus_protocol::ApprovalPath::TrustedDialog,
         })
         .await
         .unwrap();

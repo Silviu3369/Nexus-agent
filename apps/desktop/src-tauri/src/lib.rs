@@ -2,6 +2,7 @@ mod automation;
 mod autostart;
 mod bindings;
 mod chat;
+mod confirm;
 mod files;
 mod host;
 mod mcp;
@@ -24,6 +25,7 @@ pub fn run() {
             runs::list_runs,
             runs::get_run,
             runs::decide_approval,
+            confirm::confirm_approval,
             runs::cancel_run,
             runs::undo_effect,
             runs::artifact_content,

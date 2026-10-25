@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { RunView } from "@nexus/contracts";
 import { api, describeError } from "../api";
+import { confirmedInWindows } from "../model/execution.ts";
 import { kib, timeLeft } from "../model/format.ts";
 import { useNexus, useNexusActions, useNow } from "../state/store";
 import { ErrorLine } from "../ui";
@@ -76,7 +77,8 @@ export function ApprovalCard({ run, agentName, compact = false }: { run: RunView
     setBusy(true);
     setError(null);
     try {
-      await api.decide(pending.approval_id, pending.manifest_sha256, approve);
+      if (approve) await api.approve(run, pending.approval_id, pending.manifest_sha256);
+      else await api.decide(pending.approval_id, pending.manifest_sha256, false);
       await refresh(["runs", "focus"]);
     } catch (err) {
       setError(describeError(err));
@@ -175,6 +177,9 @@ export function ApprovalCard({ run, agentName, compact = false }: { run: RunView
           <CheckIcon size={14} /> Approve
         </button>
       </div>
+      {confirmedInWindows(run.effect_class) && (
+        <p className="muted small approval-note">Windows asks you to confirm: this changes something outside Nexus.</p>
+      )}
       <ErrorLine error={error} />
     </article>
   );

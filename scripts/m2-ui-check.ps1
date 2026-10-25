@@ -185,6 +185,43 @@ function Wait-Match($win, [string]$regex, [int]$seconds = 15) {
   return $null
 }
 
+# The native Windows dialog the app shows itself to confirm an effect outside
+# Nexus (ADR-POLICY-001): a desktop window of its own, not part of the page.
+function Wait-Confirm($win, [int]$seconds = 15) {
+  $cond = New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, "Nexus - Confirm")
+  $deadline = (Get-Date).AddSeconds($seconds)
+  while ((Get-Date) -lt $deadline) {
+    $dialog = $A::RootElement.FindFirst($S::Children, $cond)
+    if (-not $dialog) { $dialog = $win.FindFirst($S::Descendants, $cond) }
+    if ($dialog) { return $dialog }
+    Start-Sleep -Milliseconds 250
+  }
+  return $null
+}
+
+# The buttons are named in the language of Windows ("Yes" or "Da"); their
+# ids are fixed (IDYES = 6, IDNO = 7).
+function Answer-Confirm($dialog, [string]$answer) {
+  $id = @{ Yes = "6"; No = "7" }[$answer]
+  # Exposed as a pane of class Button, without an invoke pattern.
+  $byId = New-Object System.Windows.Automation.PropertyCondition($A::AutomationIdProperty, $id)
+  $button = $dialog.FindFirst($S::Descendants, $byId)
+  if (-not $button) { throw "the confirmation has no $answer button" }
+  $pattern = $null
+  if ($button.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) {
+    $pattern.Invoke()
+  } else {
+    # Some dialog buttons expose no invoke pattern: send the button its own
+    # click message (no keys, nothing reaches another window).
+    if (-not ("NexusCheck.User32" -as [type])) {
+      Add-Type -Namespace NexusCheck -Name User32 -MemberDefinition '[DllImport("user32.dll")] public static extern System.IntPtr SendMessageW(System.IntPtr hWnd, uint msg, System.IntPtr w, System.IntPtr l);'
+    }
+    $hwnd = [System.IntPtr]$button.Current.NativeWindowHandle
+    if ($hwnd -eq [System.IntPtr]::Zero) { throw "the $answer button has no window handle" }
+    [void][NexusCheck.User32]::SendMessageW($hwnd, 0x00F5, [System.IntPtr]::Zero, [System.IntPtr]::Zero)
+  }
+}
+
 function Wait-Gone($win, [string]$fragment, [int]$seconds = 15) {
   $deadline = (Get-Date).AddSeconds($seconds)
   while ((Get-Date) -lt $deadline) {
@@ -504,7 +541,14 @@ try {
   Check ($null -ne (Wait-Like $win "Propose calling delete_page")) "the proposal is a step of the run"
   Click-Button $win "Inspect" 20
   Check ($null -ne (Wait-Contains $win '"q": "page 7"')) "the exact arguments can be inspected"
+  Check ($null -ne (Wait-Contains $win "Windows asks you to confirm")) "the card says Windows will ask to confirm the call"
   Click-Button $win "Approve" 20
+  $confirm = Wait-Confirm $win
+  Check ($null -ne $confirm) "Windows asks to confirm the call outside Nexus"
+  if ($confirm) {
+    Check ($null -ne ((Get-Names $confirm) | Where-Object { $_ -like "*Tool: delete_page*" } | Select-Object -First 1)) "the Windows dialog names the exact tool"
+    Answer-Confirm $confirm "Yes"
+  }
   Check (Wait-Text $win "Page 7 is deleted." 20) "after the approval the call is made once and the task continues"
   Check ($null -ne (Wait-Contains $win "Made once")) "the call step says it was made once"
   Click-Button $win "Tools"
@@ -646,6 +690,18 @@ try {
   Click-Button $win "Inspect" 20
   Check ($null -ne (Wait-Contains $win "I am applying for the Service Desk Analyst role.")) "the exact text can be inspected"
   Click-Button $win "Approve" 20
+  $confirm = Wait-Confirm $win
+  Check ($null -ne $confirm) "Windows asks to confirm the letter outside Nexus"
+  if ($confirm) {
+    Check ($null -ne ((Get-Names $confirm) | Where-Object { $_ -like "*Cover letter Acme.docx*can be undone later*" } | Select-Object -First 1)) "the Windows dialog names the exact file and that it can be undone"
+    Answer-Confirm $confirm "No"
+  }
+  Start-Sleep -Milliseconds 800
+  Check (-not (Test-Path $letter)) "saying No in Windows writes nothing"
+  Check ($null -ne (Find-Named $win "Approve" ([System.Windows.Automation.ControlType]::Button))) "the request still waits after No"
+  Click-Button $win "Approve" 20
+  $confirm = Wait-Confirm $win
+  if ($confirm) { Answer-Confirm $confirm "Yes" }
   Check (Wait-Text $win "The letter is saved in Jobs." 20) "after the approval the letter is written and the task continues"
   Check (Test-Path $letter) "the Word file exists in the shared folder"
   Click-Button $win "Tasks"

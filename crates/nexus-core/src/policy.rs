@@ -40,6 +40,17 @@ pub fn permits(tool: ToolPolicy, decision: PolicyDecision) -> bool {
     }
 }
 
+/// An approval of an effect outside Nexus must come from the native Windows
+/// dialog, not from the window that shows the model's and documents'
+/// content: an IPC call does not prove a click of the user (§11). An effect
+/// of unknown class is treated as outside.
+pub fn needs_trusted_confirmation(class: Option<EffectClass>) -> bool {
+    !matches!(
+        class,
+        Some(EffectClass::Read | EffectClass::InternalReversible)
+    )
+}
+
 /// The decision for one call: the rule's, when the limits permit it,
 /// otherwise the tool's default.
 pub fn decide(tool: ToolPolicy, rule: Option<PolicyDecision>) -> PolicyDecision {
@@ -105,6 +116,24 @@ mod tests {
             assert_eq!(permits(tool, Ask), ask, "{tool:?} Ask");
             assert_eq!(permits(tool, Deny), deny, "{tool:?} Deny");
         }
+    }
+
+    #[test]
+    fn only_an_effect_outside_nexus_needs_the_windows_dialog() {
+        assert!(!needs_trusted_confirmation(Some(EffectClass::Read)));
+        assert!(!needs_trusted_confirmation(Some(
+            EffectClass::InternalReversible
+        )));
+        assert!(needs_trusted_confirmation(Some(
+            EffectClass::ExternalReversible
+        )));
+        assert!(needs_trusted_confirmation(Some(
+            EffectClass::ExternalIrreversible
+        )));
+        assert!(
+            needs_trusted_confirmation(None),
+            "unknown counts as outside"
+        );
     }
 
     #[test]

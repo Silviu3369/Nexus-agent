@@ -68,6 +68,7 @@ async fn decide(client: &NexusClient, run: RunId, decision: ApprovalDecision) {
             approval_id: pending.approval_id,
             manifest_sha256: pending.manifest_sha256,
             decision,
+            via: nexus_protocol::ApprovalPath::Window,
         })
         .await
         .unwrap();

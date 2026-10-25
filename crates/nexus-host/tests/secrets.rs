@@ -98,6 +98,7 @@ async fn data01_pairing_secret_never_leaks() {
             approval_id: pending.approval_id,
             manifest_sha256: "0".repeat(64),
             decision: ApprovalDecision::Approve,
+            via: nexus_protocol::ApprovalPath::Window,
         })
         .await
         .unwrap_err();
@@ -107,6 +108,7 @@ async fn data01_pairing_secret_never_leaks() {
             approval_id: pending.approval_id,
             manifest_sha256: pending.manifest_sha256,
             decision: ApprovalDecision::Approve,
+            via: nexus_protocol::ApprovalPath::Window,
         })
         .await
         .unwrap();

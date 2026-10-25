@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { confirmedInWindows } from "./model/execution.ts";
 import type {
   AgentStepView,
   AutostartView,
@@ -71,6 +72,12 @@ export const api = {
   getRun: (runId: RunId) => invoke<RunView>("get_run", { runId }),
   decide: (approvalId: ApprovalId, manifestSha256: string, approve: boolean) =>
     invoke<RunView>("decide_approval", { approvalId, manifestSha256, approve }),
+  /** Approves a run. An effect outside Nexus is confirmed in a Windows dialog
+   *  the app shows itself; `null` when the user said No there. */
+  approve: (run: RunView, approvalId: ApprovalId, manifestSha256: string) =>
+    confirmedInWindows(run.effect_class)
+      ? invoke<RunView | null>("confirm_approval", { runId: run.run_id, approvalId, manifestSha256 })
+      : invoke<RunView>("decide_approval", { approvalId, manifestSha256, approve: true }),
   cancelRun: (runId: RunId) => invoke<RunView>("cancel_run", { runId }),
   undoEffect: (runId: RunId) => invoke<RunView>("undo_effect", { runId }),
   artifactContent: (artifactId: ArtifactId) => invoke<string>("artifact_content", { artifactId }),

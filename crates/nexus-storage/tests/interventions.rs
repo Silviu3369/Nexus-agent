@@ -281,6 +281,7 @@ async fn each_decision_about_the_agents_work_is_recorded_once_on_its_turn() {
         approval.id,
         approval.manifest_sha256,
         Decision::Approved,
+        nexus_core::DecisionPath::Window,
         20,
     )
     .await
@@ -456,9 +457,15 @@ async fn migrating_to_v16_carries_over_the_decisions_already_recorded() {
     let second = exchange(s, Some(ex.conversation_id), "m2").await;
     let effect = proposed_effect(s, &second, "m2-note").await;
     let approval = s.run_detail(effect).await.unwrap().approval.unwrap();
-    s.decide_approval(approval.id, approval.manifest_sha256, Decision::Denied, 13)
-        .await
-        .unwrap();
+    s.decide_approval(
+        approval.id,
+        approval.manifest_sha256,
+        Decision::Denied,
+        nexus_core::DecisionPath::Window,
+        13,
+    )
+    .await
+    .unwrap();
     assert_eq!(interventions(s).await.len(), 2);
 
     s.call(|c| {

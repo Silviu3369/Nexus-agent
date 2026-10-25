@@ -102,6 +102,9 @@ async fn decide(client: &NexusClient, run: RunId, decision: ApprovalDecision) {
             approval_id: pending.approval_id,
             manifest_sha256: pending.manifest_sha256,
             decision,
+            // An MCP call changes something outside Nexus: the app confirms it
+            // in the Windows dialog (APPROVAL-01).
+            via: nexus_protocol::ApprovalPath::TrustedDialog,
         })
         .await
         .unwrap();

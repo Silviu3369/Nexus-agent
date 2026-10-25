@@ -314,9 +314,16 @@ async fn done_effect(s: &Store, ex: &Exchange, key: &str) -> RunId {
     .await
     .unwrap();
     let approval = s.run_detail(run).await.unwrap().approval.unwrap();
-    s.decide_approval(approval.id, approval.manifest_sha256, Decision::Approved, 7)
-        .await
-        .unwrap();
+    s.decide_approval(
+        approval.id,
+        approval.manifest_sha256,
+        Decision::Approved,
+        // A document is outside Nexus: approved in the Windows dialog.
+        nexus_core::DecisionPath::TrustedDialog,
+        7,
+    )
+    .await
+    .unwrap();
     while s.claim_next_queued_run(8).await.unwrap().unwrap().run.id != run {}
     s.claim_effect(
         run,

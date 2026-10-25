@@ -93,6 +93,7 @@ async fn run01_note_is_written_only_after_approving_the_exact_preview() {
             approval_id: pending.approval_id,
             manifest_sha256: pending.manifest_sha256,
             decision: ApprovalDecision::Approve,
+            via: nexus_protocol::ApprovalPath::Window,
         })
         .await
         .unwrap();
@@ -134,6 +135,7 @@ async fn run02_denied_note_writes_nothing() {
             approval_id: pending.approval_id,
             manifest_sha256: pending.manifest_sha256,
             decision: ApprovalDecision::Deny,
+            via: nexus_protocol::ApprovalPath::Window,
         })
         .await
         .unwrap();
@@ -163,6 +165,7 @@ async fn run02_expired_approval_fails_the_run_and_cannot_be_used() {
             approval_id: pending.approval_id,
             manifest_sha256: pending.manifest_sha256,
             decision: ApprovalDecision::Approve,
+            via: nexus_protocol::ApprovalPath::Window,
         })
         .await;
     assert_eq!(late.unwrap_err().code(), Some(ErrorCode::ApprovalExpired));
@@ -187,6 +190,7 @@ async fn sec01_decision_for_another_manifest_and_replays_are_refused() {
             approval_id: pending.approval_id,
             manifest_sha256: "0".repeat(64),
             decision: ApprovalDecision::Approve,
+            via: nexus_protocol::ApprovalPath::Window,
         })
         .await;
     assert_eq!(
@@ -202,6 +206,7 @@ async fn sec01_decision_for_another_manifest_and_replays_are_refused() {
         approval_id: pending.approval_id,
         manifest_sha256: pending.manifest_sha256.clone(),
         decision: ApprovalDecision::Approve,
+        via: nexus_protocol::ApprovalPath::Window,
     };
     client.decide_approval(approve.clone()).await.unwrap();
     wait_for(&client, waiting.run_id, RunStatus::Succeeded).await;
@@ -259,6 +264,7 @@ async fn run07_cancelled_waiting_run_cannot_be_approved_later() {
             approval_id: pending.approval_id,
             manifest_sha256: pending.manifest_sha256,
             decision: ApprovalDecision::Approve,
+            via: nexus_protocol::ApprovalPath::Window,
         })
         .await;
     assert_eq!(
@@ -345,6 +351,7 @@ async fn artifact_changed_outside_nexus_is_reported_not_served() {
             approval_id: pending.approval_id,
             manifest_sha256: pending.manifest_sha256,
             decision: ApprovalDecision::Approve,
+            via: nexus_protocol::ApprovalPath::Window,
         })
         .await
         .unwrap();

@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::StorageError;
 
-pub const SUPPORTED_VERSION: i64 = 19;
+pub const SUPPORTED_VERSION: i64 = 20;
 
 /// Version 1: everything M1 persists. State columns are closed lists that a
 /// test keeps identical to the `nexus-core` enums. Times are UTC unix ms.
@@ -907,6 +907,14 @@ UPDATE actions SET policy_revision = 1 WHERE policy_decision IS NOT NULL;
 UPDATE approvals SET use_by_ms = expires_at_ms WHERE decision IS NOT NULL;
 "#;
 
+/// Version 20 (ADR-POLICY-001): where each decision on an approval was
+/// made, in the window or in the native Windows dialog the app shows itself.
+/// The decisions already made were made in the window.
+const V20: &str = r#"
+ALTER TABLE approvals ADD COLUMN decided_via TEXT CHECK (decided_via IS NULL OR decided_via IN ('Window', 'TrustedDialog'));
+UPDATE approvals SET decided_via = 'Window' WHERE decision IS NOT NULL;
+"#;
+
 struct Migration {
     sql: &'static str,
     /// Rebuilds a table other tables refer to (see [`V5`]).
@@ -988,6 +996,10 @@ const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         sql: V19,
+        rebuilds_parent_table: false,
+    },
+    Migration {
+        sql: V20,
         rebuilds_parent_table: false,
     },
 ];

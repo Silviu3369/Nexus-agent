@@ -497,11 +497,32 @@ async fn a_document_is_written_only_after_approval_and_never_over_a_file() {
     assert!(preview.content.contains("Service Desk Analyst role"));
     assert!(!target.exists(), "nothing is written before the approval");
 
+    // APPROVAL-01: the window alone cannot approve a file outside Nexus.
+    let from_window = client
+        .decide_approval(DecideApprovalRequest {
+            approval_id: pending.approval_id,
+            manifest_sha256: pending.manifest_sha256.clone(),
+            decision: ApprovalDecision::Approve,
+            via: nexus_protocol::ApprovalPath::Window,
+        })
+        .await;
+    assert_eq!(
+        from_window.unwrap_err().code(),
+        Some(nexus_protocol::ErrorCode::Forbidden)
+    );
+    assert!(!target.exists(), "refused, nothing is written");
+    assert_eq!(
+        client.run(run).await.unwrap().status,
+        RunStatus::AwaitingApproval,
+        "the request still waits"
+    );
+
     client
         .decide_approval(DecideApprovalRequest {
             approval_id: pending.approval_id,
             manifest_sha256: pending.manifest_sha256,
             decision: ApprovalDecision::Approve,
+            via: nexus_protocol::ApprovalPath::TrustedDialog,
         })
         .await
         .unwrap();
@@ -748,6 +769,7 @@ async fn propose_and_crash(profile: &Path, fault: &str, fake: &FakeGemini, out: 
             approval_id: pending.approval_id,
             manifest_sha256: pending.manifest_sha256,
             decision: ApprovalDecision::Approve,
+            via: nexus_protocol::ApprovalPath::TrustedDialog,
         })
         .await;
     assert!(
@@ -819,6 +841,7 @@ Hello."}),
             approval_id: pending.approval_id,
             manifest_sha256: pending.manifest_sha256,
             decision: ApprovalDecision::Approve,
+            via: nexus_protocol::ApprovalPath::TrustedDialog,
         })
         .await
         .unwrap();

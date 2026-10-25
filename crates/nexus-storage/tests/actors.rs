@@ -193,7 +193,13 @@ async fn effect(
 async fn decide(store: &Store, run: RunId, decision: Decision) {
     let approval = store.run_detail(run).await.unwrap().approval.unwrap();
     store
-        .decide_approval(approval.id, approval.manifest_sha256, decision, 7)
+        .decide_approval(
+            approval.id,
+            approval.manifest_sha256,
+            decision,
+            nexus_core::DecisionPath::Window,
+            7,
+        )
         .await
         .unwrap();
 }

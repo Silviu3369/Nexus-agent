@@ -1363,6 +1363,12 @@ export function effectText(effectClass: string | null, evidence: string | null):
   return proof ? `${effect} · ${proof}` : effect;
 }
 
+/** An effect outside Nexus is approved in a Windows dialog the app shows
+ *  itself, never by the window alone (ADR-POLICY-001); unknown counts as outside. */
+export function confirmedInWindows(effectClass: string | null): boolean {
+  return effectClass !== "Read" && effectClass !== "InternalReversible";
+}
+
 /** Who did or asked for something, as the user reads it (ADR-IDENTITY-001). */
 export function actorText(actor: ActorView | null, agentName: string): string | null {
   if (!actor) return null;

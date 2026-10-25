@@ -25,7 +25,7 @@ serde_json = "1"
 nexus-client = { version = "0.1.0", path = "../../../crates/nexus-client" }
 nexus-protocol = { version = "0.1.0", path = "../../../crates/nexus-protocol" }
 specta = "1.0.5"
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Registry"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Registry", "Win32_UI_WindowsAndMessaging"] }
 
 # Release profile tuning lives in the workspace root Cargo.toml now that
 # this crate is a workspace member (see tauri.app/concept/size).

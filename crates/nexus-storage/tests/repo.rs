@@ -1,12 +1,15 @@
 //! Repository transactions on a real SQLite file: idempotency, approval
 //! binding, expiry, replay, cancellation and restart handling.
 
+mod common;
+
 use std::path::PathBuf;
 
-use nexus_core::{ActionState, OperationState, RunState};
+use nexus_core::{ActionState, DecisionPath, OperationState, RunState};
 use nexus_protocol::{OperationId, ProjectId, RunId};
 use nexus_storage::{
-    Decision, NewAction, NewOperation, RunDetail, StorageError, Store, SubmitOutcome,
+    Decision, NewAction, NewOperation, RunDetail, SUPPORTED_VERSION, StorageError, Store,
+    SubmitOutcome,
 };
 
 const T0: i64 = 1_000_000;
@@ -139,6 +142,7 @@ async fn run01_full_lifecycle_records_every_step_with_events() {
             approval_id(&waiting),
             "m1".to_string(),
             Decision::Approved,
+            DecisionPath::Window,
             T0 + 1,
         )
         .await
@@ -203,6 +207,7 @@ async fn sec01_decision_for_a_different_manifest_is_refused_without_effect() {
             approval_id(&waiting),
             "tampered".to_string(),
             Decision::Approved,
+            DecisionPath::Window,
             T0 + 1,
         )
         .await;
@@ -227,12 +232,24 @@ async fn sec01_approval_replay_and_double_consumption_are_refused() {
     let approval = approval_id(&waiting);
 
     env.store
-        .decide_approval(approval, "m1".to_string(), Decision::Approved, T0 + 1)
+        .decide_approval(
+            approval,
+            "m1".to_string(),
+            Decision::Approved,
+            DecisionPath::Window,
+            T0 + 1,
+        )
         .await
         .unwrap();
     let replay = env
         .store
-        .decide_approval(approval, "m1".to_string(), Decision::Approved, T0 + 2)
+        .decide_approval(
+            approval,
+            "m1".to_string(),
+            Decision::Approved,
+            DecisionPath::Window,
+            T0 + 2,
+        )
         .await;
     assert!(
         matches!(replay, Err(StorageError::ApprovalAlreadyDecided)),
@@ -277,6 +294,7 @@ async fn run02_expired_approval_cannot_be_decided_and_fails_the_run() {
             approval_id(&waiting),
             "m1".to_string(),
             Decision::Approved,
+            DecisionPath::Window,
             late,
         )
         .await;
@@ -308,6 +326,7 @@ async fn run02_denied_action_ends_the_run_with_no_operation() {
             approval_id(&waiting),
             "m1".to_string(),
             Decision::Denied,
+            DecisionPath::Window,
             T0 + 1,
         )
         .await
@@ -352,6 +371,7 @@ async fn run07_cancellation_in_each_state() {
             approval_id(&waiting),
             "m1".to_string(),
             Decision::Approved,
+            DecisionPath::Window,
             T0 + 2,
         )
         .await;
@@ -382,6 +402,7 @@ async fn run04_interrupted_run_goes_to_reconciliation_then_retries_same_operatio
             approval_id(&waiting),
             "m1".to_string(),
             Decision::Approved,
+            DecisionPath::Window,
             T0 + 1,
         )
         .await
@@ -468,6 +489,7 @@ async fn a_request_waits_until_its_deadline_and_an_approval_is_used_within_its_g
             approval_id(&late),
             "m1".into(),
             Decision::Approved,
+            DecisionPath::Window,
             decided_at,
         )
         .await
@@ -490,7 +512,13 @@ async fn a_request_waits_until_its_deadline_and_an_approval_is_used_within_its_g
     // request itself would still have been waiting.
     let early = awaiting_approval(&env, "early").await;
     env.store
-        .decide_approval(approval_id(&early), "m1".into(), Decision::Approved, T0 + 1)
+        .decide_approval(
+            approval_id(&early),
+            "m1".into(),
+            Decision::Approved,
+            DecisionPath::Window,
+            T0 + 1,
+        )
         .await
         .unwrap();
     env.store
@@ -506,4 +534,128 @@ async fn a_request_waits_until_its_deadline_and_an_approval_is_used_within_its_g
             .await,
         Err(StorageError::ApprovalExpired)
     ));
+}
+
+/// An approval like `action`, but of an effect outside Nexus.
+async fn awaiting_external(env: &Env, key: &str) -> RunDetail {
+    submit(env, key, "req").await.unwrap();
+    let claimed = env.store.claim_next_queued_run(T0).await.unwrap().unwrap();
+    let mut external = action("m1");
+    external.tool_id = "CreateDocument".into();
+    external.effect_class = nexus_core::EffectClass::ExternalReversible;
+    env.store
+        .prepare_action(claimed.run.id, external, T0)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn approval01_an_effect_outside_nexus_is_approved_only_in_the_windows_dialog() {
+    let env = env().await;
+    // All waiting first: an approved run goes back to the queue.
+    let waiting = awaiting_external(&env, "doc").await;
+    let other = awaiting_external(&env, "doc2").await;
+    let note = awaiting_approval(&env, "note").await;
+
+    let from_window = env
+        .store
+        .decide_approval(
+            approval_id(&waiting),
+            "m1".into(),
+            Decision::Approved,
+            DecisionPath::Window,
+            T0 + 1,
+        )
+        .await;
+    assert!(
+        matches!(from_window, Err(StorageError::ConfirmationRequired)),
+        "{from_window:?}"
+    );
+    let still = env.store.run_detail(waiting.run.id).await.unwrap();
+    assert_eq!(
+        still.run.state,
+        RunState::AwaitingApproval,
+        "nothing changed"
+    );
+    assert_eq!(still.approval.unwrap().decision, None);
+
+    let confirmed = env
+        .store
+        .decide_approval(
+            approval_id(&waiting),
+            "m1".into(),
+            Decision::Approved,
+            DecisionPath::TrustedDialog,
+            T0 + 2,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        confirmed.approval.unwrap().decided_via,
+        Some(DecisionPath::TrustedDialog)
+    );
+
+    // Refusing needs no dialog: it changes nothing outside.
+    let denied = env
+        .store
+        .decide_approval(
+            approval_id(&other),
+            "m1".into(),
+            Decision::Denied,
+            DecisionPath::Window,
+            T0 + 3,
+        )
+        .await
+        .unwrap();
+    assert_eq!(denied.run.state, RunState::Denied);
+    assert_eq!(
+        denied.approval.unwrap().decided_via,
+        Some(DecisionPath::Window)
+    );
+
+    // A note stays in Nexus: the window may approve it.
+    env.store
+        .decide_approval(
+            approval_id(&note),
+            "m1".into(),
+            Decision::Approved,
+            DecisionPath::Window,
+            T0 + 4,
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn migrating_to_v20_says_the_decisions_already_made_were_made_in_the_window() {
+    let env = env().await;
+    let path = env.dir.join("nexus.db");
+    // Both waiting first: an approved run goes back to the queue.
+    let decided = awaiting_approval(&env, "old").await;
+    let pending = awaiting_approval(&env, "pending").await;
+    env.store
+        .decide_approval(
+            approval_id(&decided),
+            "m1".into(),
+            Decision::Approved,
+            DecisionPath::Window,
+            T0 + 1,
+        )
+        .await
+        .unwrap();
+    env.store
+        .call(|c| {
+            common::undo_v20(c)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.schema_version().await.unwrap(), SUPPORTED_VERSION);
+    let via = |d: RunDetail| d.approval.unwrap().decided_via;
+    assert_eq!(
+        via(store.run_detail(decided.run.id).await.unwrap()),
+        Some(DecisionPath::Window)
+    );
+    assert_eq!(via(store.run_detail(pending.run.id).await.unwrap()), None);
 }

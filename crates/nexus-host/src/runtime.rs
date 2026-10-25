@@ -6,12 +6,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use nexus_core::{ActionState, OperationState, RunState};
+use nexus_core::{ActionState, DecisionPath, OperationState, RunState};
 use nexus_protocol::{
-    ActorView, ApprovalDecision, ArtifactId, ArtifactSummary, BackupSummary, DecideApprovalRequest,
-    ErrorCode, EventView, EventsPage, NexusError, NotePreview, OperationId, PendingApproval,
-    RunFailure, RunId, RunKind, RunOrigin, RunStatus, RunView, Snapshot, SubmitNoteRequest,
-    SubmitNoteResponse, SystemStatusView,
+    ActorView, ApprovalDecision, ApprovalPath, ArtifactId, ArtifactSummary, BackupSummary,
+    DecideApprovalRequest, ErrorCode, EventView, EventsPage, NexusError, NotePreview, OperationId,
+    PendingApproval, RunFailure, RunId, RunKind, RunOrigin, RunStatus, RunView, Snapshot,
+    SubmitNoteRequest, SubmitNoteResponse, SystemStatusView,
 };
 use nexus_storage::{
     ActorRow, Decision, EffectRequester, NewOperation, RunDetail, RunError, StorageError, Store,
@@ -642,12 +642,18 @@ impl Runtime {
             ApprovalDecision::Approve => Decision::Approved,
             ApprovalDecision::Deny => Decision::Denied,
         };
+        // Said by the app's own code; the page cannot reach the Host.
+        let via = match request.via {
+            ApprovalPath::Window => DecisionPath::Window,
+            ApprovalPath::TrustedDialog => DecisionPath::TrustedDialog,
+        };
         let detail = self
             .store
             .decide_approval(
                 request.approval_id,
                 request.manifest_sha256,
                 decision,
+                via,
                 now_ms(),
             )
             .await
@@ -963,6 +969,7 @@ fn to_nexus_error(err: StorageError) -> NexusError {
         StorageError::NotFound(what) => (ErrorCode::NotFound, format!("{what} not found")),
         StorageError::IdempotencyConflict(_) => (ErrorCode::RevisionConflict, err.to_string()),
         StorageError::ApprovalExpired => (ErrorCode::ApprovalExpired, err.to_string()),
+        StorageError::ConfirmationRequired => (ErrorCode::Forbidden, err.to_string()),
         StorageError::ApprovalInvalidated(_) | StorageError::ApprovalAlreadyDecided => {
             (ErrorCode::ApprovalInvalidated, err.to_string())
         }

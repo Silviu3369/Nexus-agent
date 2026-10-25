@@ -5,8 +5,9 @@ use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 
 use nexus_protocol::{
-    ApprovalDecision, ApprovalId, ArtifactId, BackupSummary, DecideApprovalRequest, EventsPage,
-    RunId, RunStatus, RunView, Snapshot, SubmitNoteRequest, SubmitNoteResponse, SystemStatusView,
+    ApprovalDecision, ApprovalId, ApprovalPath, ArtifactId, BackupSummary, DecideApprovalRequest,
+    EventsPage, RunId, RunStatus, RunView, Snapshot, SubmitNoteRequest, SubmitNoteResponse,
+    SystemStatusView,
 };
 
 use crate::host::{BridgeError, HostConnection};
@@ -64,7 +65,8 @@ pub async fn get_run(connection: State<'_>, run_id: RunId) -> Result<RunView, Br
 }
 
 /// `manifest_sha256` must be the one the user was shown; the host refuses a
-/// decision for anything else.
+/// decision for anything else. Decided in the window: the Host refuses to
+/// approve an effect outside Nexus this way (see `confirm::confirm_approval`).
 #[tauri::command]
 pub async fn decide_approval(
     connection: State<'_>,
@@ -83,6 +85,7 @@ pub async fn decide_approval(
                 approval_id,
                 manifest_sha256,
                 decision,
+                via: ApprovalPath::Window,
             })
             .await
         })

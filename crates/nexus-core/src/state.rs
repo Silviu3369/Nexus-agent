@@ -327,6 +327,14 @@ closed_enum!(EffectClass {
 // out, ask the user first, or refuse it.
 closed_enum!(PolicyDecision { Auto, Ask, Deny });
 
+// Where the user's decision was made (ADR-POLICY-001): in the dashboard's
+// window, which shows content from the model and documents, or in the
+// native Windows dialog the app shows itself, outside that page.
+closed_enum!(DecisionPath {
+    Window,
+    TrustedDialog,
+});
+
 // How well an action's success is proven (ADR-ACTION-001): read back and
 // checked, only reported by the service, or not checkable at all.
 closed_enum!(Evidence {

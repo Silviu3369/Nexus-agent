@@ -6,7 +6,8 @@
 use std::path::PathBuf;
 
 use nexus_core::{
-    ActionState, EffectClass, Evidence, OperationState, PolicyDecision, RunState, TaskOrigin,
+    ActionState, DecisionPath, EffectClass, Evidence, OperationState, PolicyDecision, RunState,
+    TaskOrigin,
 };
 use nexus_protocol::{
     ActionId, ApprovalId, ArtifactId, ConversationId, EventId, MessageId, OperationId, ProjectId,
@@ -102,6 +103,8 @@ pub struct ApprovalRow {
     pub revoked_at_ms: Option<i64>,
     /// Until when an approval given may be used (ADR-POLICY-001).
     pub use_by_ms: Option<i64>,
+    /// Where the decision was made.
+    pub decided_via: Option<DecisionPath>,
 }
 
 #[derive(Debug, Clone)]
@@ -414,12 +417,15 @@ impl Store {
 
     /// Records the user's decision. The caller must present the hash of the
     /// manifest it previewed; any mismatch, expiry, revocation or earlier
-    /// decision refuses without changing anything (SEC-01, RUN-02).
+    /// decision refuses without changing anything (SEC-01, RUN-02). An
+    /// effect outside Nexus is approved only through the native Windows
+    /// dialog (ADR-POLICY-001, APPROVAL-01); it can be denied anywhere.
     pub async fn decide_approval(
         &self,
         approval_id: ApprovalId,
         presented_manifest_sha256: String,
         decision: Decision,
+        via: DecisionPath,
         now: i64,
     ) -> Result<RunDetail, StorageError> {
         self.call(move |conn| {
@@ -444,15 +450,22 @@ impl Store {
                     "the presented manifest is not the one awaiting approval".to_string(),
                 ));
             }
+            if decision == Decision::Approved
+                && via != DecisionPath::TrustedDialog
+                && nexus_core::policy::needs_trusted_confirmation(action.effect_class)
+            {
+                return Err(StorageError::ConfirmationRequired);
+            }
 
             tx.execute(
                 "UPDATE approvals SET decision = ?1, decided_at_ms = ?2, decided_by = ?3,
-                 use_by_ms = coalesce(?2 + grant_ms, expires_at_ms) WHERE id = ?4",
+                 use_by_ms = coalesce(?2 + grant_ms, expires_at_ms), decided_via = ?5 WHERE id = ?4",
                 params![
                     decision.as_str(),
                     now,
                     crate::actors::id_of(&tx, crate::Actor::LocalUser)?,
-                    approval_id.to_string()
+                    approval_id.to_string(),
+                    via.as_str()
                 ],
             )?;
             insert_event(
@@ -460,7 +473,7 @@ impl Store {
                 "ApprovalDecided",
                 &approval_id.to_string(),
                 2,
-                json!({"decision": decision.as_str(), "action_id": action.id.to_string()}),
+                json!({"decision": decision.as_str(), "action_id": action.id.to_string(), "via": via.as_str()}),
                 now,
             )?;
             crate::interventions::record_on_effect(
@@ -471,7 +484,7 @@ impl Store {
                     Decision::Approved => nexus_core::InterventionKind::Approved,
                     Decision::Denied => nexus_core::InterventionKind::Rejected,
                 },
-                json!({"action": action.id.to_string()}),
+                json!({"action": action.id.to_string(), "via": via.as_str()}),
                 now,
             )?;
             match decision {
@@ -1379,6 +1392,7 @@ fn approval_from_row(r: &rusqlite::Row) -> rusqlite::Result<Result<ApprovalRow, 
         r.get(7)?,
         r.get(8)?,
     );
+    let decided_via: Option<String> = r.get(9)?;
     Ok((|| {
         Ok(ApprovalRow {
             id: ApprovalId(parse_uuid(&id)?),
@@ -1390,12 +1404,13 @@ fn approval_from_row(r: &rusqlite::Row) -> rusqlite::Result<Result<ApprovalRow, 
             consumed_at_ms,
             revoked_at_ms,
             use_by_ms,
+            decided_via: decided_via.as_deref().map(parse_state).transpose()?,
         })
     })())
 }
 
 const APPROVAL_COLUMNS: &str = "id, action_id, manifest_sha256, expires_at_ms, decision, decided_at_ms, consumed_at_ms, revoked_at_ms,
-    use_by_ms";
+    use_by_ms, decided_via";
 
 fn load_approval(tx: &Transaction, approval_id: ApprovalId) -> Result<ApprovalRow, StorageError> {
     tx.query_row(

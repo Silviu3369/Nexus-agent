@@ -84,6 +84,7 @@ async fn approve_and_crash(profile: &Path, fault: &str) -> (RunId, String) {
             approval_id: pending.approval_id,
             manifest_sha256: pending.manifest_sha256,
             decision: ApprovalDecision::Approve,
+            via: nexus_protocol::ApprovalPath::Window,
         })
         .await
         .unwrap();
