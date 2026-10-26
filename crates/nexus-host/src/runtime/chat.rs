@@ -1598,9 +1598,15 @@ impl Runtime {
             {
                 Ok(call) => return Ok(call),
                 Err((err, received)) => {
-                    let outage = err.is_transient() && !received;
-                    let wait = self.retry_waits.get(attempt as usize - 1).copied();
                     let remaining = self.reply_deadline.saturating_sub(started.elapsed());
+                    // A call cut at its own limit with nothing back changed
+                    // nothing and showed nothing: like an outage, it is tried
+                    // again (or the backup model takes over) while the reply
+                    // still has time for another call.
+                    let cut_with_time_left =
+                        matches!(err, ProviderError::Timeout) && remaining >= MIN_STEP_BUDGET;
+                    let outage = (err.is_transient() || cut_with_time_left) && !received;
+                    let wait = self.retry_waits.get(attempt as usize - 1).copied();
                     let Some(wait) = wait.filter(|w| outage && remaining > *w + MIN_STEP_BUDGET)
                     else {
                         return Err(CallFailure {

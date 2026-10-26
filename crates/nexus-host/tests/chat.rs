@@ -520,6 +520,62 @@ async fn each_model_call_has_its_own_limit_inside_the_reply_limit() {
 }
 
 #[tokio::test]
+async fn a_call_cut_at_its_limit_is_tried_again_only_while_the_reply_has_time() {
+    let fake = FakeGemini::start(KEY).await;
+    let host = TestHost::start_with(
+        TOKEN,
+        RuntimeConfig {
+            reply_deadline: Duration::from_secs(30),
+            step_deadline: Duration::from_secs(1),
+            retry_waits: vec![Duration::from_millis(100)],
+            ..config(&fake)
+        },
+    )
+    .await;
+    let client = host.client().await;
+    connect_gemini(&client).await;
+
+    // Nothing came back in the call's second: it is tried again.
+    fake.push(Reply::Hang);
+    fake.push(Reply::text(&["Al doilea apel a răspuns."]));
+    let sent = send(&client, None, "again", "Salut").await;
+    let reply = settled(&client, &sent).await;
+    assert_eq!(reply.status, ChatStatus::Complete, "{:?}", reply.failure);
+    assert_eq!(reply.text, "Al doilea apel a răspuns.");
+    assert_eq!(fake.generations().len(), 2);
+    let calls: Vec<AgentStepStatus> = reply
+        .steps
+        .iter()
+        .filter(|s| matches!(s.detail, AgentStepDetail::ModelCall { .. }))
+        .map(|s| s.status)
+        .collect();
+    assert_eq!(calls, [AgentStepStatus::Failed, AgentStepStatus::Done]);
+    host.shutdown().await;
+
+    // With the reply's time spent, the same cut is final.
+    let fake = FakeGemini::start(KEY).await;
+    let host = TestHost::start_with(
+        TOKEN,
+        RuntimeConfig {
+            reply_deadline: Duration::from_millis(1500),
+            step_deadline: Duration::from_secs(1),
+            retry_waits: vec![Duration::from_millis(100)],
+            ..config(&fake)
+        },
+    )
+    .await;
+    let client = host.client().await;
+    connect_gemini(&client).await;
+    fake.push(Reply::Hang);
+    let sent = send(&client, None, "spent", "Salut").await;
+    let reply = settled(&client, &sent).await;
+    assert_eq!(reply.status, ChatStatus::Failed);
+    assert_eq!(reply.failure.unwrap().code, "DeadlineExceeded");
+    assert_eq!(fake.generations().len(), 1);
+    host.shutdown().await;
+}
+
+#[tokio::test]
 async fn cancelling_a_reply_keeps_what_arrived_and_stops_the_call() {
     let fake = FakeGemini::start(KEY).await;
     let host = TestHost::start_with(TOKEN, config(&fake)).await;
