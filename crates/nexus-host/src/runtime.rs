@@ -43,6 +43,7 @@ mod record_batch;
 mod records;
 mod records_io;
 mod remote_call;
+mod skills;
 mod usage;
 
 /// How long a request for approval waits for the user's decision

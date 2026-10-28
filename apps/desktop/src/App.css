@@ -2689,6 +2689,29 @@ button.ghost.danger-ghost {
   overflow-wrap: anywhere;
 }
 
+/* ---------- Skills ---------- */
+
+.skill-text {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.skill-text h3 {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.skill-file {
+  margin: 4px 0 0;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.84rem;
+}
+
 /* ---------- Registers (Jobs) ---------- */
 
 .records {

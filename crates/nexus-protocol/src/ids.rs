@@ -55,6 +55,7 @@ typed_id!(PolicyRuleId);
 typed_id!(RegisterId);
 typed_id!(RecordId);
 typed_id!(FolderId);
+typed_id!(SkillId);
 
 #[cfg(test)]
 mod tests {

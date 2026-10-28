@@ -17,6 +17,7 @@ import {
   NotesIcon,
   PlugIcon,
   SparkleIcon,
+  ToolIcon,
 } from "../icons";
 
 function KindIcon({ item }: { item: TimelineItem }) {
@@ -36,6 +37,8 @@ function KindIcon({ item }: { item: TimelineItem }) {
       return <BriefcaseIcon size={14} />;
     case "doc":
       return <FolderIcon size={14} />;
+    case "skill":
+      return <ToolIcon size={14} />;
     case "approval":
       return <LockIcon size={14} />;
   }

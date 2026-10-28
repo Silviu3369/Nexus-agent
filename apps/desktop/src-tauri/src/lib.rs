@@ -11,6 +11,7 @@ mod memory;
 mod permissions;
 mod records;
 mod runs;
+mod skills;
 mod usage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -74,6 +75,11 @@ pub fn run() {
             files::export_register,
             files::import_preview,
             files::import_records,
+            skills::list_skills,
+            skills::get_skill,
+            skills::import_skill,
+            skills::set_skill_enabled,
+            skills::remove_skill,
             records::list_registers,
             records::list_records,
             records::record_detail,

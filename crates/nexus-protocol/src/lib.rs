@@ -17,6 +17,7 @@ pub mod permissions;
 pub mod records;
 pub mod runs;
 pub mod service;
+pub mod skills;
 pub mod usage;
 pub mod version;
 
@@ -46,7 +47,7 @@ pub use handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse, Heal
 pub use ids::{
     ActionId, ActorId, AgentStepId, ApprovalId, ArtifactId, AutomationId, ConnectionId,
     ConversationId, EventId, FolderId, McpServerId, MemoryId, MessageId, OperationId, PolicyRuleId,
-    ProjectId, RecordId, RegisterId, RequestId, RunId, StepId, TaskId,
+    ProjectId, RecordId, RegisterId, RequestId, RunId, SkillId, StepId, TaskId,
 };
 pub use mcp::{McpServerView, McpToolView, SaveMcpServerRequest};
 pub use memory::{
@@ -61,5 +62,8 @@ pub use records::{
     ScoreBand, ScoreBandView, SourceCountView, WeekCountView,
 };
 pub use service::{NexusService, NexusServiceClient};
+pub use skills::{
+    SetSkillEnabledRequest, SkillContentView, SkillFileText, SkillFileView, SkillView,
+};
 pub use usage::{ModelPrice, ModelUsageView, UsageView};
 pub use version::PROTOCOL_VERSION;

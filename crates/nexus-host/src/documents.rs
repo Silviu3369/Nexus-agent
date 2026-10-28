@@ -327,7 +327,11 @@ pub fn list(root: &Path, under: Option<&str>) -> Result<(Vec<Entry>, bool), Stri
 /// Up to `max_chars` characters of `text` from `offset`, and where the next
 /// part starts if more follows. A part ends after a line break when one falls
 /// in its second half, so a row of a sheet or a paragraph is not split.
-fn part(text: &str, offset: usize, max_chars: usize) -> Result<(String, Option<usize>), String> {
+pub(crate) fn part(
+    text: &str,
+    offset: usize,
+    max_chars: usize,
+) -> Result<(String, Option<usize>), String> {
     let start = match text.char_indices().nth(offset) {
         Some((i, _)) => i,
         None if offset == 0 => return Ok((String::new(), None)),

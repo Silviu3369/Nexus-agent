@@ -506,6 +506,35 @@ impl NexusClient {
             .await??)
     }
 
+    pub async fn skills(&self) -> Result<Vec<nexus_protocol::SkillView>, CallError> {
+        Ok(self.client.list_skills(context::current()).await??)
+    }
+
+    pub async fn skill(
+        &self,
+        id: nexus_protocol::SkillId,
+    ) -> Result<nexus_protocol::SkillContentView, CallError> {
+        Ok(self.client.get_skill(context::current(), id).await??)
+    }
+
+    pub async fn import_skill(&self, path: String) -> Result<nexus_protocol::SkillView, CallError> {
+        Ok(self.client.import_skill(context::current(), path).await??)
+    }
+
+    pub async fn set_skill_enabled(
+        &self,
+        request: nexus_protocol::SetSkillEnabledRequest,
+    ) -> Result<nexus_protocol::SkillView, CallError> {
+        Ok(self
+            .client
+            .set_skill_enabled(context::current(), request)
+            .await??)
+    }
+
+    pub async fn remove_skill(&self, id: nexus_protocol::SkillId) -> Result<(), CallError> {
+        Ok(self.client.remove_skill(context::current(), id).await??)
+    }
+
     pub async fn folders(&self) -> Result<Vec<nexus_protocol::FolderView>, CallError> {
         Ok(self.client.list_folders(context::current()).await??)
     }

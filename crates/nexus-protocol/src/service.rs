@@ -14,7 +14,7 @@ use crate::files::{FolderEntryView, FolderView, SaveFolderRequest};
 use crate::handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse};
 use crate::ids::{
     ArtifactId, AutomationId, ConnectionId, ConversationId, FolderId, McpServerId, MemoryId,
-    MessageId, ProjectId, RecordId, RegisterId, RunId,
+    MessageId, ProjectId, RecordId, RegisterId, RunId, SkillId,
 };
 use crate::mcp::{McpServerView, SaveMcpServerRequest};
 use crate::memory::{
@@ -30,6 +30,7 @@ use crate::runs::{
     BackupSummary, DecideApprovalRequest, EventsPage, RunView, Snapshot, SubmitNoteRequest,
     SubmitNoteResponse, SystemStatusView,
 };
+use crate::skills::{SetSkillEnabledRequest, SkillContentView, SkillView};
 use crate::usage::{ModelPrice, UsageView};
 
 #[tarpc::service]
@@ -233,6 +234,23 @@ pub trait NexusService {
 
     /// What a shared folder holds (a few levels deep, bounded).
     async fn folder_entries(folder_id: FolderId) -> Result<Vec<FolderEntryView>, NexusError>;
+
+    /// The user's skills (ADR-PACK-001).
+    async fn list_skills() -> Result<Vec<SkillView>, NexusError>;
+
+    /// A skill with every file's text, to read before turning it on.
+    async fn get_skill(skill_id: SkillId) -> Result<SkillContentView, NexusError>;
+
+    /// Imports a skill from a folder holding `SKILL.md`, or from a `.zip` of
+    /// one; a skill with the same name is replaced and stays on only if its
+    /// text is unchanged.
+    async fn import_skill(path: String) -> Result<SkillView, NexusError>;
+
+    /// Turns on exactly the revision the user read, or turns it off.
+    async fn set_skill_enabled(request: SetSkillEnabledRequest) -> Result<SkillView, NexusError>;
+
+    /// For good; nothing it was used for is touched.
+    async fn remove_skill(skill_id: SkillId) -> Result<(), NexusError>;
 
     /// The user's registers (job applications first) with their fields.
     async fn list_registers() -> Result<Vec<RegisterView>, NexusError>;

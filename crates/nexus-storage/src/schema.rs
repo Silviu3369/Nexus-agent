@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::StorageError;
 
-pub const SUPPORTED_VERSION: i64 = 22;
+pub const SUPPORTED_VERSION: i64 = 23;
 
 /// Version 1: everything M1 persists. State columns are closed lists that a
 /// test keeps identical to the `nexus-core` enums. Times are UTC unix ms.
@@ -1043,7 +1043,65 @@ const MIGRATIONS: &[Migration] = &[
         sql: V22,
         rebuilds_parent_table: false,
     },
+    Migration {
+        sql: V23,
+        rebuilds_parent_table: false,
+    },
 ];
+
+/// Version 23 (ADR-PACK-001): the user's skills, imported as text and kept
+/// here (so they are in every backup), and the agent step that uses one. A
+/// skill is on only while the content the user turned on is the content
+/// stored (`enabled_sha256 = content_sha256`): importing the same name again
+/// with other text turns it off until the user reads it. The step CHECK
+/// list is closed, so agent_steps is rebuilt (no other table refers to it).
+const V23: &str = r#"
+CREATE TABLE skills (
+    id             TEXT    PRIMARY KEY,
+    name           TEXT    NOT NULL UNIQUE CHECK (length(name) BETWEEN 1 AND 64),
+    description    TEXT    NOT NULL CHECK (length(description) BETWEEN 1 AND 1024),
+    license        TEXT    CHECK (license IS NULL OR length(license) <= 500),
+    compatibility  TEXT    CHECK (compatibility IS NULL OR length(compatibility) <= 500),
+    allowed_tools  TEXT    CHECK (allowed_tools IS NULL OR length(allowed_tools) <= 1000),
+    has_scripts    INTEGER NOT NULL CHECK (has_scripts IN (0, 1)),
+    skipped_json   TEXT    NOT NULL CHECK (json_valid(skipped_json)),
+    content_sha256 TEXT    NOT NULL CHECK (length(content_sha256) = 64),
+    enabled_sha256 TEXT    CHECK (enabled_sha256 IS NULL OR length(enabled_sha256) = 64),
+    revision       INTEGER NOT NULL CHECK (revision >= 1),
+    created_at_ms  INTEGER NOT NULL,
+    updated_at_ms  INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE skill_files (
+    skill_id TEXT NOT NULL REFERENCES skills (id) ON DELETE CASCADE,
+    path     TEXT NOT NULL CHECK (length(path) BETWEEN 1 AND 400),
+    text     TEXT NOT NULL,
+    PRIMARY KEY (skill_id, path)
+) STRICT;
+
+CREATE TABLE agent_steps_v23 (
+    id             TEXT    PRIMARY KEY,
+    message_id     TEXT    NOT NULL REFERENCES messages (id),
+    seq            INTEGER NOT NULL CHECK (seq >= 1),
+    kind           TEXT    NOT NULL CHECK (kind IN ('ModelCall', 'Fetch', 'NoteProposed', 'MemoryProposed', 'McpCall',
+                                                    'RecordsFound', 'RecordChanged', 'FilesListed', 'DocumentRead',
+                                                    'DocumentProposed', 'SkillUsed')),
+    status         TEXT    NOT NULL CHECK (status IN ('Running', 'Done', 'Failed')),
+    detail_json    TEXT    NOT NULL CHECK (json_valid(detail_json)),
+    started_at_ms  INTEGER NOT NULL,
+    finished_at_ms INTEGER,
+    CHECK ((status = 'Running') = (finished_at_ms IS NULL)),
+    UNIQUE (message_id, seq)
+) STRICT;
+INSERT INTO agent_steps_v23
+    (id, message_id, seq, kind, status, detail_json, started_at_ms, finished_at_ms)
+SELECT id, message_id, seq, kind, status, detail_json, started_at_ms, finished_at_ms
+FROM agent_steps;
+DROP TABLE agent_steps;
+ALTER TABLE agent_steps_v23 RENAME TO agent_steps;
+CREATE INDEX agent_steps_by_start ON agent_steps (started_at_ms);
+CREATE INDEX agent_steps_by_status ON agent_steps (status);
+"#;
 
 pub fn migrate(conn: &mut Connection) -> Result<(), StorageError> {
     migrate_until(conn, SUPPORTED_VERSION)

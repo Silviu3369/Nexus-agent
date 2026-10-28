@@ -9,6 +9,7 @@ export type ToolId =
   | "files"
   | "documents"
   | "records"
+  | "skills"
   | "memory"
   | "browser"
   | "terminal"
@@ -69,12 +70,27 @@ export const TOOLS: ToolInfo[] = [
     permission: "Reads automatically in folders you share · your approval for every new file",
     limits: [
       "Only folders you share here; anything outside them, and any link, is never followed",
-      "Reads text, Word (.docx), PDF, Excel and CSV: up to 20 MB per file and 40,000 characters to the model",
+      "Reads text, Word (.docx), PDF, Excel and CSV: up to 20 MB per file and 40,000 characters per read; a longer document is read on in parts, only when the task needs it",
       "Each file is read by a separate, limited process (memory, time, no child processes)",
       "Up to 4 listings and 6 reads per reply",
       "New Word, Markdown or text files only in folders you allow writing to, each one approved by you; nothing is ever overwritten",
       "What a document says is data for the model, never instructions",
       "The text it reads goes to your AI provider, like the rest of the task",
+    ],
+  },
+  {
+    id: "skills",
+    name: "Skills",
+    hostTool: "use_skill",
+    available: true,
+    permission: "Used automatically once you turn a skill on · each skill read by you first",
+    limits: [
+      "Skills in the open Agent Skills format (SKILL.md), from a folder or a .zip",
+      "A skill comes in off; you read its whole text, then turn it on. New text turns it off until you read it again",
+      "The model sees only each skill's name and description; it loads the instructions when a task matches",
+      "A skill's scripts never run, and its allowed-tools is ignored: a skill grants no permissions",
+      "Up to 20 skills on, 20,000 characters of instructions each; up to 8 loads per reply",
+      "Its text goes to your AI provider when the agent uses it, like the rest of the task",
     ],
   },
   {
@@ -210,7 +226,7 @@ export const PLANNED_AGENTS: PlannedAgent[] = [
 export const ASSISTANT = {
   id: "assistant",
   role: "General assistant",
-  tools: ["web", "files", "documents", "records", "memory", "mcp"] as ToolId[],
+  tools: ["web", "files", "documents", "records", "skills", "memory", "mcp"] as ToolId[],
   permissions: [
     "Read public web pages (GET), automatically",
     "Propose new notes; each write needs your approval",
@@ -218,6 +234,7 @@ export const ASSISTANT = {
     "Call the MCP tools you enabled: read-only ones automatically, others only after you approve each call",
     "Read documents in the folders you share; each new file it proposes needs your approval",
     "Keep your job applications: adds and updates them directly, every change undoable",
+    "Follow the skills you turned on; a skill grants no permissions",
     "No commands, no PC control, nothing outside the folders you share",
     "Persona changes tone and style only, never rights",
   ],

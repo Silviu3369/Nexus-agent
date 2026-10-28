@@ -1,9 +1,22 @@
 //! Support shared by the storage tests.
 
+/// Takes a database from the current schema back to version 22: version
+/// 23 only added the skills (the steps keep their wider CHECK list, which
+/// accepts every older row).
+#[allow(dead_code)]
+pub fn undo_v23(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "DROP TABLE skill_files;
+         DROP TABLE skills;
+         PRAGMA user_version = 22;",
+    )
+}
+
 /// Takes a database from the current schema back to version 21: version
 /// 22 only added the data classes and what the user says about connections.
 #[allow(dead_code)]
 pub fn undo_v22(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    undo_v23(conn)?;
     conn.execute_batch(
         "ALTER TABLE folders DROP COLUMN data_class;
          ALTER TABLE registers DROP COLUMN data_class;

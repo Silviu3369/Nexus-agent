@@ -265,6 +265,7 @@ Pentru mai mulți utilizatori se adaugă un proiect explicit de identitate, sepa
 | ADR-IDENTITY-001 | Actori cu identificator stabil: tu, agentul, automatizările, inboxul, Host-ul, ulterior canalele | **Implementat** (schema v18, 2026-10-25) |
 | ADR-POLICY-001 | Politica de aprobare ca date, cu limite fixe; aprobări în lot; confirmare de încredere pentru efectele externe | **Implementat** (schema v19–v21, 2026-10-25); rămân selecția pe elemente în lot și regulile pe flux (cu pachetele) |
 | ADR-PROVIDER-002 | Ce date pot pleca la ce furnizor: clase de date pe surse, profilul conexiunii, refuz în Host | **Implementat** (schema v22, 2026-10-25); rămân regiunea UE pentru pilot, mascarea, modelul local |
+| ADR-PACK-001 | Pachete first-party declarative, fără cod; instrucțiunile în formatul deschis Agent Skills (`SKILL.md`), fără scripturi și fără permisiuni proprii | Acceptat (2026-10-28); pasul 1 (skill-urile tale) implementat (schema v23) |
 
 Rezultatele ADR-urilor se înregistrează în acest document, cu alternativa aleasă, motiv, dependențe, limitări și probe. Progresul rămâne în plan; aici se schimbă deciziile de proiectare.
 
@@ -744,3 +745,114 @@ Revizuirea de produs cere, pentru un pilot: date de business doar la furnizori p
   - mascarea;
   - modelul local;
   - proba reală a unui furnizor plătit, cu cheia ta.
+
+### ADR-PACK-001 — pachete și skill-uri (acceptat 2026-10-28)
+
+**Context.**
+
+- Tot ce ține de Jobs e scris direct în Host:
+  - evidența `job_applications` (coloane, statusuri) în `records.rs`;
+  - instrucțiunea pentru un anunț nou din inbox în `inbox.rs`;
+  - cifrele din Jobs → Results în `job_results.rs`.
+
+  Un al doilea flux (DocumentOps în M5, intake și email în M4) ar adăuga încă un set de cod special.
+- Revizuirea de produs cere pachete first-party declarative, versionate și fără cod: scheme, reguli, instrucțiuni, surse de intake, automatizări, permisiuni, metrici.
+- La 2026-10-25 ai decis ca instrucțiunile pachetelor să folosească formatul deschis Agent Skills: doar instrucțiuni, fără scripturi și fără permisiuni proprii. Ai deja două skill-uri în contul claude.ai: `cover-letters` și `ticket-replies`.
+- **Formatul, din [specificație](https://agentskills.io/specification), verificat la 2026-10-28:**
+  - un skill e un folder cu `SKILL.md`;
+  - antetul are `name` (1–64 caractere, litere mici, cifre și cratime, egal cu numele folderului) și `description` (1–1024 caractere: ce face și când se folosește);
+  - câmpuri opționale: `license`, `compatibility`, `metadata` și `allowed-tools` (experimental);
+  - textul care urmează sunt instrucțiunile;
+  - subfoldere opționale: `references/` (documentație citită la nevoie), `assets/` (șabloane, date) și `scripts/` (cod executabil);
+  - încărcarea e treptată: la pornire doar numele și descrierea (~100 de tokeni), textul (recomandat sub 5.000 de tokeni și 500 de rânduri) doar când e folosit, iar restul fișierelor doar când e nevoie.
+
+**Decizie.**
+
+1. **Un skill e text de instrucțiuni.**
+   - Nexus citește din el doar `SKILL.md` și fișierele text din `references/` și `assets/` (`.md`, `.txt`, `.csv`, `.json`).
+   - **`scripts/` nu rulează niciodată.** E cod străin, iar izolarea lui a fost scoasă (ADR-ISO-001). Skill-ul se poate folosi, dar fără scripturi, și se vede că le are.
+   - **`allowed-tools` se ignoră.** Un skill nu aprobă nimic dinainte. Orice efect trece prin broker, politică și aprobarea ta.
+   - Un skill nu adaugă unelte și nu schimbă reguli sau clase de date.
+2. **Instrucțiunile din skill sunt instrucțiuni, nu date.** De aceea un skill intră doar după ce îl citești:
+   - la import, Nexus îți arată tot textul și ce fișiere are;
+   - îl pornești tu;
+   - dacă textul se schimbă după pornire (alt hash), skill-ul se oprește până îl revezi.
+3. **Încărcarea e treptată, ca în specificație:**
+   - în instrucțiunile modelului intră doar numele și descrierea skill-urilor pornite;
+   - când sarcina o cere, modelul cheamă `use_skill(name)` și primește textul din `SKILL.md`, plus lista fișierelor din `references/` și `assets/`;
+   - cu `read_skill_file(name, path)` citește un astfel de fișier.
+   - Fiecare folosire e un pas în Activitate („Used skill cover-letters”).
+   - Limite: textul skill-ului are cel mult 20.000 de caractere, iar un fișier se citește pe bucăți de câte 40.000, ca documentele. Un skill are cel mult 50 de fișiere și 2 MiB, iar pornite pot fi cel mult 20 de skill-uri.
+4. **Unde stau.**
+   - **Skill-urile tale se importă dintr-un folder sau dintr-un `.zip`** (formatul pe care claude.ai îl primește la încărcare) și se păstrează în baza de date (schema v23), deci intră în backup.
+     - Se refuză cu motivul: un nume în afara regulilor, un nume diferit de folder, un antet pe care nu-l înțelegem, fișiere peste limite, căi care ies din folder.
+     - Antetul se citește cu un parser restrâns, scris de noi (câmpurile din specificație, valori simple și blocuri de text). Nu intră nicio dependență nouă: nu mai e nevoie de o bibliotecă YAML.
+   - **Skill-urile din pachetele first-party** sunt incluse în Host, revizuite ca orice cod, și nu se pot modifica din afară.
+5. **Un pachet first-party e declarativ.**
+   - Are un manifest `pack.json`, cu identificator și versiune.
+   - Conține evidențele lui (schemele), skill-urile, intake-ul (ce evidență, ce instrucțiune), regulile de aprobare pe flux, care pot doar strânge (ADR-POLICY-001), iar mai târziu metricile.
+   - Pachetele sunt incluse în Host. Pachete de la terți nu intră: fără cod, fără SDK, fără magazin.
+   - **Jobs devine primul pachet:**
+     - evidența `job_applications`;
+     - instrucțiunea pentru anunțul din inbox, ca skill `job-ad-intake`;
+     - ulterior cifrele din Results, cu `job_results.rs` devenit motor configurat de pachet.
+     - Comportamentul pentru tine rămâne același.
+6. **Datele trimise la furnizor (ADR-PROVIDER-002):** textul unui skill de-al tău e `Personal`, iar textul unui skill dintr-un pachet first-party e `Public`.
+
+**Ordinea implementării (pași mici, fiecare încercat de tine):**
+
+1. **Skill-urile tale în Nexus:**
+   - import, citire, pornire și oprire;
+   - `use_skill` și `read_skill_file`;
+   - pasul în Activitate.
+   - Caz real: importi `cover-letters` și îi ceri o scrisoare de motivație pentru un anunț TopJobs din folderul Jobs.
+2. **Pachetul Jobs:**
+   - manifestul;
+   - evidența și instrucțiunea inboxului mutate în pachet;
+   - regulile pe flux, care pot doar strânge.
+3. **Results configurat de pachet,** când apare al doilea pachet cu cifre (DocumentOps în M5).
+
+**Ce nu se schimbă:**
+
+- brokerul, politica, aprobările și dialogul Windows pentru efectele externe;
+- politica de date pe furnizor;
+- nicio unealtă nouă cu efect.
+
+**Alternative respinse:**
+
+- **rularea scripturilor din skill-uri:** cod străin fără izolare;
+- **skill-urile găzduite de API-ul Anthropic:** merg doar cu Claude, rulează cod în containerul lor și trimit datele la Anthropic;
+- **tot textul skill-urilor în fiecare cerere:** contextul crește fără folos (Context Rot) și costă; specificația cere încărcare treptată;
+- **pachete cu cod (plugin-uri, WASM, DLL-uri) sau un SDK pentru terți:** cod străin, contrar revizuirii de produs;
+- **o bibliotecă YAML:** dependență nouă pentru un antet de câteva câmpuri.
+
+**Întrebări pentru tine:**
+
+1. **Unde se aplică skill-urile tale.** Recomand peste tot, cu pornire și oprire pe fiecare skill. Varianta: doar în proiectul în care le pornești.
+2. **Cum aduci cele două skill-uri.** claude.ai nu documentează un export. Le aduci din arhiva ta originală (`.zip` sau folder). Altfel, le scriu eu din conținutul pe care îl văd în sesiune, iar tu le citești în Nexus înainte să le pornești.
+3. **Cum pornești un skill.** Recomand din fereastră, după ce vezi tot textul: un skill nu dă permisiuni, iar orice efect trece prin aprobare. Varianta: prin dialogul Windows, ca la relaxarea regulilor.
+
+**Răspunsurile tale (2026-10-28):** skill-urile tale se aplică peste tot, cu pornire și oprire pe fiecare; cele două skill-uri le scriu eu din sesiune, iar tu le citești în Nexus înainte să le pornești; pornirea se face din fereastră, după ce vezi tot textul.
+
+**Implementare, pasul 1 (2026-10-28): skill-urile tale în Nexus.**
+
+- **Citirea** e în `nexus-host/src/skills.rs`:
+  - antetul `SKILL.md`, cu un parser restrâns (valori simple, între ghilimele, blocuri `>` și `|`, `metadata` pe un nivel);
+  - folder sau `.zip`, cu un singur folder de top, ca la claude.ai;
+  - limitele: 20.000 de caractere de instrucțiuni, 50 de fișiere text și 2 MiB pe skill, 20 de skill-uri pornite;
+  - hash-ul conținutului.
+- **Ce nu intră:** scripturile, imaginile și alte fișiere care nu sunt text apar doar în lista „Not imported”.
+- **Schema v23:** `skills` și `skill_files`, plus pasul `SkillUsed`. Un skill e pornit doar cât `enabled_sha256` e egal cu `content_sha256`, deci un import cu alt text îl oprește singur.
+- **Agentul:**
+  - instrucțiunea primește doar numele și descrierea skill-urilor pornite;
+  - `use_skill` dă textul instrucțiunilor și lista fișierelor, iar `read_skill_file` dă un fișier, pe bucăți;
+  - limita e de 8 încărcări pe răspuns;
+  - uneltele trec prin registru (`UseSkill`, o citire), deci se pot opri din Permisiuni, iar datele sunt `Personal` (ADR-PROVIDER-002);
+  - la o pauză pentru aprobare, textul încărcat nu se păstrează în tură; modelul îl cere din nou dacă îi trebuie.
+- **Ce se vede:**
+  - în Tools → Skills: importul, textul complet, „Turn on” activ abia după „Read skill” pe aceeași revizie, oprirea și ștergerea;
+  - în Activitate: „Used skill …”.
+- **Cele două skill-uri ale tale:** le-am copiat, neschimbate, din folderul pe care Claude îl folosește în sesiune, în `Documents\Nexus skills\`. Ambele trec de cititor:
+  - `cover-letters`: descriere de 544 de caractere, instrucțiuni de 7.762;
+  - `ticket-replies`: descriere de 776, instrucțiuni de 11.485.
+- **Rămân pașii 2 și 3:** pachetul Jobs, apoi cifrele din Results configurate de pachet.

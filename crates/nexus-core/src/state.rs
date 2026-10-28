@@ -200,6 +200,7 @@ closed_enum!(AgentStepKind {
     FilesListed,
     DocumentRead,
     DocumentProposed,
+    SkillUsed,
 });
 
 closed_enum!(AgentStepStatus {

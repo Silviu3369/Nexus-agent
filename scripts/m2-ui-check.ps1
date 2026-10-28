@@ -832,6 +832,31 @@ try {
   Check ($null -ne (Wait-Contains $win "No folder is shared yet")) "the folders are no longer shared"
   Check (Test-Path $letter) "unsharing touches nothing in the folder"
 
+  # --- skills: imported off, read in full, then turned on; scripts never kept ---
+  $skillDir = Join-Path $shareDir "skills\ui-letter"
+  New-Item -ItemType Directory (Join-Path $skillDir "scripts") -Force | Out-Null
+  Set-Content -Path (Join-Path $skillDir "SKILL.md") -Value "---`nname: ui-letter`ndescription: Writes short cover letters. Use when asked for one.`n---`n`nWrite the letter in three short paragraphs." -Encoding utf8
+  Set-Content -Path (Join-Path $skillDir "scripts\run.py") -Value "print('never run')" -Encoding utf8
+  Click-Button $win "Tools"
+  $skillsRow = Wait-Like $win "Skills"
+  Check ($null -ne $skillsRow) "Tools lists skills"
+  if ($skillsRow) { Invoke-Element $skillsRow }
+  Check ($null -ne (Wait-Contains $win "No skill yet")) "no skill until you import one"
+  Set-Field $win "Skill folder or .zip" $skillDir
+  Click-Button $win "Import skill"
+  Check ($null -ne (Wait-Contains $win "Read the skill before you turn it on")) "an imported skill starts off and asks to be read"
+  Check ($null -ne (Wait-Contains $win "present, never run in Nexus")) "its scripts are shown as never run"
+  $turnOn = Find-Named $win "Turn on" ([System.Windows.Automation.ControlType]::Button)
+  Check ($null -ne $turnOn -and -not $turnOn.Current.IsEnabled) "it cannot be turned on before it is read"
+  Click-Button $win "Read skill"
+  Check ($null -ne (Wait-Contains $win "Write the letter in three short paragraphs.")) "the whole text can be read"
+  Click-Button $win "Turn on"
+  Click-Button $win "Turn off"
+  Check ($null -ne (Wait-Like $win "Turn on")) "it can be turned on and off from the window"
+  Click-Button $win "Remove"
+  Click-Button $win "Remove now"
+  Check ($null -ne (Wait-Contains $win "No skill yet")) "the skill is removed"
+
   # --- removing the connection removes its key ---
   Click-Button $win "Models"
   Check (Wait-Text $win "No backup model.") "there is no backup model unless one is chosen"

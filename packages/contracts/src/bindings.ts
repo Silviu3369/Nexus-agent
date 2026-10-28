@@ -174,7 +174,7 @@ export type AgentStepStatus = "Running" | "Done" | "Failed"
  * One step's kind-specific facts. Metadata only: a web read shows its
  * address, status and size, never the page's text.
  */
-export type AgentStepDetail = { kind: "ModelCall"; model: string; first_byte_ms: number | null; duration_ms: number | null; error: string | null; attempt: number | null; backup: boolean | null; memory_items: number | null; mcp_servers: string[] | null; mcp_tools: number | null; prompt_tokens: number | null; output_tokens: number | null } | { kind: "Fetch"; url: string; final_url: string | null; http_status: number | null; text_bytes: number | null; truncated: boolean | null; error: string | null } | { kind: "MemoryProposed"; content: string; scope: MemoryScope | null; memory_id: MemoryId | null; error: string | null } | { kind: "McpCall"; server: string; tool: string; arguments: string; result_chars: number | null; truncated: boolean | null; is_error: boolean | null; duration_ms: number | null; error: string | null; run_id: RunId | null } | { kind: "NoteProposed"; title: string; run_id: RunId | null; error: string | null } | { kind: "RecordsFound"; register: string; query: string; count: number | null; error: string | null } | { kind: "FilesListed"; folder: string; path: string; count: number | null; error: string | null } | { kind: "DocumentRead"; folder: string; path: string; format: string | null; chars: number | null; offset: number | null; truncated: boolean | null; error: string | null } | { kind: "DocumentProposed"; folder: string; file_name: string; run_id: RunId | null; error: string | null } | { kind: "RecordChanged"; register: string; action: string; title: string; fields: string[]; record_id: RecordId | null; change_id: number | null; undone: boolean; error: string | null }
+export type AgentStepDetail = { kind: "ModelCall"; model: string; first_byte_ms: number | null; duration_ms: number | null; error: string | null; attempt: number | null; backup: boolean | null; memory_items: number | null; mcp_servers: string[] | null; mcp_tools: number | null; prompt_tokens: number | null; output_tokens: number | null } | { kind: "Fetch"; url: string; final_url: string | null; http_status: number | null; text_bytes: number | null; truncated: boolean | null; error: string | null } | { kind: "MemoryProposed"; content: string; scope: MemoryScope | null; memory_id: MemoryId | null; error: string | null } | { kind: "McpCall"; server: string; tool: string; arguments: string; result_chars: number | null; truncated: boolean | null; is_error: boolean | null; duration_ms: number | null; error: string | null; run_id: RunId | null } | { kind: "NoteProposed"; title: string; run_id: RunId | null; error: string | null } | { kind: "RecordsFound"; register: string; query: string; count: number | null; error: string | null } | { kind: "FilesListed"; folder: string; path: string; count: number | null; error: string | null } | { kind: "DocumentRead"; folder: string; path: string; format: string | null; chars: number | null; offset: number | null; truncated: boolean | null; error: string | null } | { kind: "SkillUsed"; skill: string; file: string | null; chars: number | null; error: string | null } | { kind: "DocumentProposed"; folder: string; file_name: string; run_id: RunId | null; error: string | null } | { kind: "RecordChanged"; register: string; action: string; title: string; fields: string[]; record_id: RecordId | null; change_id: number | null; undone: boolean; error: string | null }
 
 export type AgentStepView = { step_id: AgentStepId; message_id: MessageId; conversation_id: ConversationId; conversation_title: string; seq: number; status: AgentStepStatus; detail: AgentStepDetail; started_at_ms: number; finished_at_ms: number | null }
 
@@ -263,6 +263,21 @@ export type SaveFolderRequest = { folder_id: FolderId | null; revision: number; 
  * One file or folder inside a shared folder.
  */
 export type FolderEntryView = { path: string; is_dir: boolean; size_bytes: number; modified_ms: number; readable: boolean }
+
+export type SkillId = string
+
+export type SkillView = { skill_id: SkillId; name: string; description: string; license: string | null; compatibility: string | null; allowed_tools: string | null; has_scripts: boolean; skipped: string[]; files: SkillFileView[]; enabled: boolean; changed_since_enabled: boolean; content_sha256: string; revision: number; created_at_ms: number; updated_at_ms: number }
+
+export type SkillFileView = { path: string; chars: number }
+
+/**
+ * A skill with every file's text, to read before turning it on.
+ */
+export type SkillContentView = { skill: SkillView; files: SkillFileText[] }
+
+export type SkillFileText = { path: string; text: string }
+
+export type SetSkillEnabledRequest = { skill_id: SkillId; revision: number; enabled: boolean }
 
 /**
  * A register written to an Excel file in a shared folder.

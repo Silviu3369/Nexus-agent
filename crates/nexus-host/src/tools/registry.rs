@@ -76,6 +76,7 @@ pub const MEMORY_FACT_ID: &str = "MemoryFact";
 pub const UNDO_RECORD_ID: &str = "UndoRecordChange";
 pub const RECORD_BATCH_ID: &str = "RecordWriteBatch";
 pub const DELETE_DOCUMENT_ID: &str = "DeleteCreatedDocument";
+pub const SKILL_ID: &str = "UseSkill";
 
 pub static TOOLS: &[ToolDescriptor] = &[
     ToolDescriptor {
@@ -116,6 +117,19 @@ pub static TOOLS: &[ToolDescriptor] = &[
         execution: Execution::Immediate,
         approval: false,
         sends: "the document's text (up to its limit) to the AI provider",
+    },
+    ToolDescriptor {
+        id: SKILL_ID,
+        label: "Use the skills you turned on",
+        model_names: &["use_skill", "read_skill_file"],
+        version: 1,
+        effect: EffectClass::Read,
+        retry: Retry::ReadOnly,
+        evidence: Evidence::Verified,
+        compensation: Compensation::None,
+        execution: Execution::Immediate,
+        approval: false,
+        sends: "the skill's instructions and files to the AI provider",
     },
     ToolDescriptor {
         id: "FindRecords",

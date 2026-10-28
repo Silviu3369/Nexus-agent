@@ -10,6 +10,7 @@ import { ago, clock } from "../model/format.ts";
 import { NotesPanel } from "../Notes";
 import { McpServers } from "../components/McpServers";
 import { SharedFolders } from "../components/SharedFolders";
+import { Skills } from "../components/Skills";
 import { useGoTo } from "../shell/nav";
 import { useDerived, useNexus, useNow } from "../state/store";
 import { Empty, Facts, Panel, StatusPill, Unavailable } from "../ui";
@@ -25,6 +26,7 @@ import {
   NotesIcon,
   PlugIcon,
   TerminalIcon,
+  ToolIcon,
 } from "../icons";
 
 const ICON: Record<ToolId, (p: { size?: number }) => ReactElement> = {
@@ -32,6 +34,7 @@ const ICON: Record<ToolId, (p: { size?: number }) => ReactElement> = {
   files: NotesIcon,
   documents: FolderIcon,
   records: BriefcaseIcon,
+  skills: ToolIcon,
   memory: MemoryIcon,
   browser: BrowserIcon,
   terminal: TerminalIcon,
@@ -102,6 +105,7 @@ function useToolUsage(): Partial<Record<ToolId, Usage>> {
     const calls = steps.filter((s) => s.detail.kind === "McpCall");
     const docs = steps.filter((s) => ["FilesListed", "DocumentRead", "DocumentProposed"].includes(s.detail.kind));
     const records = steps.filter((s) => s.detail.kind === "RecordsFound" || s.detail.kind === "RecordChanged");
+    const skills = steps.filter((s) => s.detail.kind === "SkillUsed");
     const artifactTimes = runs.flatMap((r) => (r.artifact ? [r.artifact.created_at_ms] : []));
     const fileTimes = [...proposals.map((s) => s.started_at_ms), ...artifactTimes];
     return {
@@ -115,6 +119,7 @@ function useToolUsage(): Partial<Record<ToolId, Usage>> {
       mcp: { running: calls.some((s) => s.status === "Running"), lastAt: calls[0]?.started_at_ms ?? null, count: calls.length },
       documents: { running: docs.some((s) => s.status === "Running"), lastAt: docs[0]?.started_at_ms ?? null, count: docs.length },
       records: { running: records.some((s) => s.status === "Running"), lastAt: records[0]?.started_at_ms ?? null, count: records.length },
+      skills: { running: skills.some((s) => s.status === "Running"), lastAt: skills[0]?.started_at_ms ?? null, count: skills.length },
     };
   }, [d.steps, d.runs]);
 }
@@ -174,6 +179,12 @@ function ToolDetail({ tool }: { tool: ToolInfo }) {
           <RecentSteps kind="DocumentRead" title="Recent reads" empty="No documents read yet." />
         </>
       )}
+      {tool.id === "skills" && (
+        <>
+          <Skills />
+          <RecentSteps kind="SkillUsed" title="Recent uses" empty="No skill used yet." />
+        </>
+      )}
       {tool.id === "files" && (
         <div className="notes-workspace">
           <NotesPanel />
@@ -188,15 +199,15 @@ function RecentSteps({
   title: heading,
   empty,
 }: {
-  kind: "Fetch" | "McpCall" | "DocumentRead";
+  kind: "Fetch" | "McpCall" | "DocumentRead" | "SkillUsed";
   title: string;
   empty: string;
 }) {
   const d = useNexus();
   const goTo = useGoTo();
   const reads = (d.steps ?? []).filter((s) => s.detail.kind === kind).slice(0, 12);
-  const Icon = kind === "Fetch" ? GlobeIcon : kind === "DocumentRead" ? FolderIcon : PlugIcon;
-  const id = kind === "Fetch" ? "recent-reads" : kind === "DocumentRead" ? "recent-documents" : "recent-mcp-calls";
+  const Icon = { Fetch: GlobeIcon, DocumentRead: FolderIcon, SkillUsed: ToolIcon, McpCall: PlugIcon }[kind];
+  const id = { Fetch: "recent-reads", DocumentRead: "recent-documents", SkillUsed: "recent-skills", McpCall: "recent-mcp-calls" }[kind];
   return (
     <Panel title={heading} icon={<Icon size={15} />} id={id}>
       {reads.length === 0 ? (

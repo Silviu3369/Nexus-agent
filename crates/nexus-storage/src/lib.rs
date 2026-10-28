@@ -16,6 +16,7 @@ mod policy;
 mod records;
 mod repo;
 mod schema;
+mod skills;
 mod steps;
 mod usage;
 
@@ -41,6 +42,7 @@ pub use repo::{
     ActionRow, ApprovalRow, ArtifactRow, Decision, EffectRequester, EventRow, NewAction,
     NewOperation, OperationRow, RunDetail, RunError, RunOrigin, RunRow, SubmitOutcome, TaskRow,
 };
+pub use skills::{NewSkill, SkillFileRow, SkillRow};
 pub use steps::AgentStepRow;
 pub use usage::{PriceRow, UsageRow};
 

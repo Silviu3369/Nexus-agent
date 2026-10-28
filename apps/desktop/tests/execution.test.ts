@@ -728,6 +728,32 @@ test("document steps say what was read and proposed, and a document run is a fil
   );
 });
 
+test("a skill step says which skill and file the agent loaded", () => {
+  const used = step({ kind: "SkillUsed", skill: "cover-letters", file: null, chars: 1800, error: null }, "Done", T0 + 900, T0 + 905);
+  const file = step(
+    { kind: "SkillUsed", skill: "cover-letters", file: "references/style.md", chars: 240, error: null },
+    "Done",
+    T0 + 906,
+    T0 + 910,
+  );
+  const missing = step(
+    { kind: "SkillUsed", skill: "cover-letters", file: "scripts/run.py", chars: null, error: "the skill has no file" },
+    "Failed",
+    T0 + 911,
+    T0 + 912,
+  );
+  const [run] = buildRuns(conversation(message("Model", REPLY, [model("Done", T0, T0 + 900), used, file, missing])), new Map(), "Nexus");
+  const skills = run.items.filter((i) => i.kind === "skill");
+  assert.deepEqual(
+    skills.map((i) => [i.title, i.outcome, i.tool, i.status]),
+    [
+      ["Used skill cover-letters", "instructions · 1,800 characters to the model", "Skills", "completed"],
+      ["Used skill cover-letters: references/style.md", "file · 240 characters to the model", "Skills", "completed"],
+      ["Used skill cover-letters: scripts/run.py", "the skill has no file", "Skills", "failed"],
+    ],
+  );
+});
+
 test("folder and document events refresh what they describe", () => {
   const ev = (kind: string) => ({ seq: 1, kind, entity_id: "x", created_at_ms: T0 });
   for (const kind of ["FolderShared", "FolderUpdated", "FolderUnshared"]) {

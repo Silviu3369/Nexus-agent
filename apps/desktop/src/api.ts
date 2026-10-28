@@ -56,6 +56,9 @@ import type {
   SaveRecordRequest,
   Schedule,
   SendMessageResponse,
+  SetSkillEnabledRequest,
+  SkillContentView,
+  SkillView,
   Snapshot,
   SubmitNoteResponse,
   SystemStatusView,
@@ -181,6 +184,12 @@ export const api = {
     invoke<UsageView>("set_model_price", { provider, model, price }),
 
   /** The user's registers (job applications first), with their fields and counts. */
+  /** Your skills (Agent Skills format): read each one, then turn it on. */
+  listSkills: () => invoke<SkillView[]>("list_skills"),
+  getSkill: (skillId: string) => invoke<SkillContentView>("get_skill", { skillId }),
+  importSkill: (path: string) => invoke<SkillView>("import_skill", { path }),
+  setSkillEnabled: (request: SetSkillEnabledRequest) => invoke<SkillView>("set_skill_enabled", { request }),
+  removeSkill: (skillId: string) => invoke<null>("remove_skill", { skillId }),
   /** Folders you share with Nexus; documents are read only inside them. */
   listFolders: () => invoke<FolderView[]>("list_folders"),
   saveFolder: (request: SaveFolderRequest) => invoke<FolderView>("save_folder", { request }),

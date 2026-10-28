@@ -811,6 +811,7 @@ async fn every_agent_step_is_recorded_and_shown_in_the_reply_and_the_activity() 
             AgentStepDetail::FilesListed { .. }
             | AgentStepDetail::DocumentRead { .. }
             | AgentStepDetail::DocumentProposed { .. } => "document",
+            AgentStepDetail::SkillUsed { .. } => "skill",
         })
         .collect();
     assert_eq!(kinds, ["model", "fetch", "model", "note"]);

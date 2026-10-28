@@ -266,6 +266,16 @@ pub enum AgentStepDetail {
         truncated: Option<bool>,
         error: Option<String>,
     },
+    /// The agent used one of the user's skills: its instructions, or one of
+    /// its files.
+    SkillUsed {
+        skill: String,
+        /// The file read, when not the instructions (`SKILL.md`).
+        file: Option<String>,
+        /// Characters of text given to the model.
+        chars: Option<u32>,
+        error: Option<String>,
+    },
     /// The agent proposed a new document in a folder; it waits for the
     /// user's approval of the exact file as this run.
     DocumentProposed {

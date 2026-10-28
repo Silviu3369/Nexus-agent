@@ -60,7 +60,7 @@ export type CoreState =
   | "SUCCESS"
   | "ERROR";
 
-export type ItemKind = "model" | "web" | "note" | "doc" | "memory" | "mcp" | "record" | "approval" | "write";
+export type ItemKind = "model" | "web" | "note" | "doc" | "skill" | "memory" | "mcp" | "record" | "approval" | "write";
 
 export interface TimelineItem {
   id: string;
@@ -192,6 +192,12 @@ export function describeStep(step: AgentStepView): { title: string; detail: stri
         d.truncated ? "more follows" : null,
       ].filter(Boolean);
       return { title, detail: parts.join(" · ") };
+    }
+    case "SkillUsed": {
+      const title = `${running ? "Using" : "Used"} skill ${d.skill}${d.file ? `: ${d.file}` : ""}`;
+      if (d.error) return { title, detail: d.error };
+      if (d.chars === null) return { title, detail: null };
+      return { title, detail: `${d.file ? "file" : "instructions"} · ${d.chars.toLocaleString("en-US")} characters to the model` };
     }
     case "DocumentProposed": {
       const title = `Proposed ${d.file_name || "a file"} in ${d.folder}`;
@@ -354,6 +360,20 @@ function stepItem(step: AgentStepView, agent: string, pendingMemory: ReadonlySet
           ["Folder", d.folder],
           ["Path", d.path || null],
           ["Format", d.kind === "DocumentRead" ? d.format : null],
+          ["Error", d.error],
+        ]),
+      };
+    case "SkillUsed":
+      return {
+        ...base,
+        kind: "skill",
+        title: describeStep(step).title,
+        model: null,
+        tool: "Skills",
+        outcome: detail,
+        facts: compact([
+          ["Skill", d.skill],
+          ["File", d.file],
           ["Error", d.error],
         ]),
       };
@@ -811,6 +831,7 @@ const NODE_OF: Record<ItemKind, NodeKind> = {
   mcp: "mcp",
   record: "records",
   doc: "files",
+  skill: "memory",
   write: "files",
   approval: "approval",
 };
@@ -1072,7 +1093,7 @@ export function modelStats(steps: AgentStepView[]): ModelStats[] {
 
 // ---------- Activity log ----------
 
-export type ActivityTool = "Model" | "Web read" | "Notes" | "Documents" | "Memory" | "Records" | "MCP" | "Automations" | "System";
+export type ActivityTool = "Model" | "Web read" | "Notes" | "Documents" | "Skills" | "Memory" | "Records" | "MCP" | "Automations" | "System";
 
 export interface ActivityEntry {
   id: string;
@@ -1235,6 +1256,7 @@ const TOOL_OF_STEP: Record<AgentStepView["detail"]["kind"], ActivityTool> = {
   FilesListed: "Documents",
   DocumentRead: "Documents",
   DocumentProposed: "Documents",
+  SkillUsed: "Skills",
 };
 
 function splitWords(kind: string): string {

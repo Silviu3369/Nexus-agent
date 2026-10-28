@@ -5,6 +5,7 @@ pub mod fault;
 pub mod runtime;
 pub mod schedule;
 pub mod server;
+pub mod skills;
 pub mod system;
 pub mod tools;
 pub mod vault;

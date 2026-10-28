@@ -82,7 +82,7 @@ fn text_arg<'a>(arguments: &'a Value, key: &str) -> &'a str {
 
 /// Where a read starts: the beginning unless the model names a place (a
 /// whole number of characters, which some models send as `40000.0`).
-fn offset_arg(arguments: &Value) -> Result<usize, String> {
+pub(super) fn offset_arg(arguments: &Value) -> Result<usize, String> {
     match arguments.get("offset") {
         None | Some(Value::Null) => Ok(0),
         Some(value) => value

@@ -17,8 +17,9 @@ use nexus_protocol::{
     RecordId, RecordQuery, RecordView, RegisterId, RegisterView, RunId, RunView,
     SaveAutomationRequest, SaveConnectionRequest, SaveFolderRequest, SaveInboxRequest,
     SaveMcpServerRequest, SavePersonaRequest, SaveProjectRequest, SaveRecordRequest,
-    SendMessageRequest, SendMessageResponse, SetDataPolicyRequest, SetPermissionRequest, Snapshot,
-    SubmitNoteRequest, SubmitNoteResponse, SystemStatusView, ThinkingLevel, UsageView,
+    SendMessageRequest, SendMessageResponse, SetDataPolicyRequest, SetPermissionRequest,
+    SetSkillEnabledRequest, SkillContentView, SkillId, SkillView, Snapshot, SubmitNoteRequest,
+    SubmitNoteResponse, SystemStatusView, ThinkingLevel, UsageView,
 };
 use tarpc::context::Context;
 use tarpc::server::{BaseChannel, Channel};
@@ -568,6 +569,39 @@ impl NexusService for HostServer {
     ) -> Result<Vec<FolderEntryView>, NexusError> {
         self.require_session()?;
         self.runtime.folder_entries(folder_id).await
+    }
+
+    async fn list_skills(self, _ctx: Context) -> Result<Vec<SkillView>, NexusError> {
+        self.require_session()?;
+        self.runtime.list_skills().await
+    }
+
+    async fn get_skill(
+        self,
+        _ctx: Context,
+        skill_id: SkillId,
+    ) -> Result<SkillContentView, NexusError> {
+        self.require_session()?;
+        self.runtime.get_skill(skill_id).await
+    }
+
+    async fn import_skill(self, _ctx: Context, path: String) -> Result<SkillView, NexusError> {
+        self.require_session()?;
+        self.runtime.import_skill(path).await
+    }
+
+    async fn set_skill_enabled(
+        self,
+        _ctx: Context,
+        request: SetSkillEnabledRequest,
+    ) -> Result<SkillView, NexusError> {
+        self.require_session()?;
+        self.runtime.set_skill_enabled(request).await
+    }
+
+    async fn remove_skill(self, _ctx: Context, skill_id: SkillId) -> Result<(), NexusError> {
+        self.require_session()?;
+        self.runtime.remove_skill(skill_id).await
     }
 
     async fn list_registers(self, _ctx: Context) -> Result<Vec<RegisterView>, NexusError> {

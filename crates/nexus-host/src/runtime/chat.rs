@@ -37,6 +37,7 @@ use super::document_run::{self, DOC_TOOL};
 use super::files::{self, LIST_TOOL, MAX_LISTS, MAX_READS, READ_TOOL};
 use super::record_batch::{BatchItem, BatchRequest};
 use super::records::{self, ADD_TOOL, FIND_TOOL, MAX_RECORD_READS, UPDATE_TOOL};
+use super::skills::{FILE_TOOL as SKILL_FILE_TOOL, MAX_SKILL_READS, USE_TOOL as SKILL_USE_TOOL};
 use super::{Runtime, to_nexus_error};
 
 pub(super) const MAX_MESSAGE_BYTES: usize = 16 * 1024;
@@ -962,8 +963,15 @@ impl Runtime {
         };
         // The folders the user shared, as they are now.
         let folders = self.shared_folders().await;
+        // The skills the user turned on (ADR-PACK-001): only their names and
+        // descriptions go in the instruction; each loads when it is used.
+        let skills = if permissions.allows(crate::tools::registry::SKILL_ID) {
+            self.enabled_skills().await
+        } else {
+            Vec::new()
+        };
         let system_instruction = format!(
-            "{}{}{}{}{}",
+            "{}{}{}{}{}{}",
             system_instruction(persona),
             if mcp_offer.is_empty() { "" } else { MCP_NOTE },
             if registers.is_empty() {
@@ -975,6 +983,11 @@ impl Runtime {
                 String::new()
             } else {
                 files::files_note(&folders)
+            },
+            if skills.is_empty() {
+                String::new()
+            } else {
+                super::skills::skills_note(&skills)
             },
             memory_block(&memory)
         );
@@ -1030,6 +1043,12 @@ impl Runtime {
                 &folders,
                 budget.file_lists < MAX_LISTS && allows("ListFiles"),
                 budget.file_reads < MAX_READS && allows("ReadDocument"),
+            ));
+            // A skill is the user's own text (ADR-PROVIDER-002: Personal).
+            tools.extend(super::skills::skill_tools(
+                &skills,
+                budget.skill_reads < MAX_SKILL_READS
+                    && data_policy::may_use(allowed, DataClass::Personal),
             ));
             tools.extend(records::record_tools(
                 &registers,
@@ -1126,6 +1145,7 @@ impl Runtime {
                     && !(c.name == DOC_TOOL && folders.iter().any(|f| f.can_write))
                     && !(is_record_tool(&c.name) && !registers.is_empty())
                     && !(is_file_tool(&c.name) && !folders.is_empty())
+                    && !(is_skill_tool(&c.name) && !skills.is_empty())
                     && !mcp_offer.iter().any(|o| o.function == c.name)
                 {
                     tracing::warn!(tool = %c.name, "ignored a tool proposal the host does not offer");
@@ -1200,6 +1220,32 @@ impl Runtime {
                             &mut budget.read_hosts,
                         )
                         .await
+                    };
+                    handled.push((c, response));
+                }
+            }
+
+            // The user's skills: their instructions and files, which only read.
+            if !skills.is_empty() {
+                let mut skill_calls: Vec<&ToolCall> = call
+                    .calls
+                    .iter()
+                    .filter(|c| is_skill_tool(&c.name) && !off(c))
+                    .collect();
+                skill_calls.sort_by_key(|c| c.order);
+                for c in skill_calls {
+                    let response = if !data_policy::may_use(allowed, DataClass::Personal) {
+                        data_policy::refused_source("your skills", allowed)
+                    } else if budget.skill_reads >= MAX_SKILL_READS {
+                        json!({ "error": BUDGET_SPENT })
+                    } else {
+                        budget.skill_reads += 1;
+                        if c.name == SKILL_USE_TOOL {
+                            self.agent_use_skill(reply, &skills, &c.arguments).await
+                        } else {
+                            self.agent_read_skill_file(reply, &skills, &c.arguments)
+                                .await
+                        }
                     };
                     handled.push((c, response));
                 }
@@ -2261,6 +2307,12 @@ fn step_view(row: &AgentStepRow) -> AgentStepView {
             truncated: d.get("truncated").and_then(Value::as_bool),
             error: text("error"),
         },
+        AgentStepKind::SkillUsed => AgentStepDetail::SkillUsed {
+            skill: text("skill").unwrap_or_default(),
+            file: text("file"),
+            chars: number("chars").and_then(|n| u32::try_from(n).ok()),
+            error: text("error"),
+        },
         AgentStepKind::DocumentProposed => AgentStepDetail::DocumentProposed {
             folder: text("folder").unwrap_or_default(),
             file_name: text("file_name").unwrap_or_default(),
@@ -2467,6 +2519,9 @@ struct TurnBudget {
     file_lists: u32,
     #[serde(default)]
     file_reads: u32,
+    /// Skill instructions and files loaded (ADR-PACK-001).
+    #[serde(default)]
+    skill_reads: u32,
 }
 
 struct ReplyOutcome {
@@ -2622,12 +2677,26 @@ fn is_file_tool(name: &str) -> bool {
     [LIST_TOOL, READ_TOOL].contains(&name)
 }
 
+fn is_skill_tool(name: &str) -> bool {
+    [SKILL_USE_TOOL, SKILL_FILE_TOOL].contains(&name)
+}
+
 /// What a waiting turn keeps of a tool's result: a web page's, an MCP
 /// tool's and a register lookup's are replaced by a stub (an error stays:
 /// it is the host's own message); the model looks again if it still needs
 /// them.
 fn kept_response(name: &str, response: &Value) -> Value {
-    if [FETCH_TOOL, FIND_TOOL, LIST_TOOL, READ_TOOL].contains(&name) || name.starts_with("mcp") {
+    if [
+        FETCH_TOOL,
+        FIND_TOOL,
+        LIST_TOOL,
+        READ_TOOL,
+        SKILL_USE_TOOL,
+        SKILL_FILE_TOOL,
+    ]
+    .contains(&name)
+        || name.starts_with("mcp")
+    {
         match response.get("error") {
             Some(error) => json!({ "error": error }),
             None => json!({ "note": NOT_KEPT }),
