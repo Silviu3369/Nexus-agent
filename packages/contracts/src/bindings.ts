@@ -279,6 +279,19 @@ export type SkillFileText = { path: string; text: string }
 
 export type SetSkillEnabledRequest = { skill_id: SkillId; revision: number; enabled: boolean }
 
+export type PackView = { pack_id: string; name: string; version: number; description: string; registers: string[]; skills: PackSkillView[]; intake: PackFlowView | null }
+
+/**
+ * A skill of a pack: part of Nexus, read-only.
+ */
+export type PackSkillView = { name: string; description: string; text: string }
+
+/**
+ * The tasks a pack's intake starts, one per new file, and what they may do
+ * beyond the user's own rules.
+ */
+export type PackFlowView = { label: string; skill: string; turned_off: string[]; record_writes_without_asking: number | null }
+
 /**
  * A register written to an Excel file in a shared folder.
  */

@@ -1,12 +1,17 @@
 //! Bridge commands for the user's skills (ADR-PACK-001). The host reads the
 //! folder or `.zip` the user names and checks it; turning a skill on names
-//! the revision the user read.
+//! the revision the user read. The packs built into Nexus are read-only.
 
-use nexus_protocol::{SetSkillEnabledRequest, SkillContentView, SkillId, SkillView};
+use nexus_protocol::{PackView, SetSkillEnabledRequest, SkillContentView, SkillId, SkillView};
 
 use crate::host::{BridgeError, HostConnection};
 
 type State<'a> = tauri::State<'a, HostConnection>;
+
+#[tauri::command]
+pub async fn list_packs(connection: State<'_>) -> Result<Vec<PackView>, BridgeError> {
+    connection.call(async |c| c.packs().await).await
+}
 
 #[tauri::command]
 pub async fn list_skills(connection: State<'_>) -> Result<Vec<SkillView>, BridgeError> {

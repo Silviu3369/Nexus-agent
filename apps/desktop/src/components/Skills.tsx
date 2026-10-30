@@ -1,10 +1,12 @@
 // The user's skills (ADR-PACK-001): instructions in the open Agent Skills
 // format. A skill comes in off; the user reads its whole text and turns it
 // on. It grants nothing: its scripts never run and its allowed-tools is
-// ignored. New text turns it off until the user reads it again.
+// ignored. New text turns it off until the user reads it again. The packs
+// built into Nexus are shown too, read-only: their skills and the rules of
+// the tasks their intake starts, which only take away from the user's.
 
 import { useCallback, useEffect, useState } from "react";
-import type { SkillContentView, SkillView } from "@nexus/contracts";
+import type { PackSkillView, PackView, SkillContentView, SkillView } from "@nexus/contracts";
 import { api, describeError } from "../api";
 import { ago } from "../model/format.ts";
 import { useNow } from "../state/store";
@@ -13,10 +15,13 @@ import { PlusIcon, ToolIcon } from "../icons";
 
 export function Skills() {
   const [skills, setSkills] = useState<SkillView[] | null>(null);
+  const [packs, setPacks] = useState<PackView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(async () => {
     try {
-      setSkills(await api.listSkills());
+      const [mine, built] = await Promise.all([api.listSkills(), api.listPacks()]);
+      setSkills(mine);
+      setPacks(built);
       setError(null);
     } catch (err) {
       setError(describeError(err));
@@ -39,7 +44,63 @@ export function Skills() {
       ) : (
         skills.map((s) => <SkillCard key={s.skill_id} skill={s} onChange={load} />)
       )}
+      {packs.map((p) => (
+        <PackCard key={p.pack_id} pack={p} />
+      ))}
     </>
+  );
+}
+
+function PackCard({ pack }: { pack: PackView }) {
+  const intake = pack.intake;
+  const writes = intake?.record_writes_without_asking;
+  return (
+    <Panel title={`${pack.name} pack`} icon={<ToolIcon size={15} />} id={`pack-${pack.pack_id}`}>
+      <p>{pack.description}</p>
+      <Facts
+        rows={(
+          [
+            ["Version", String(pack.version)],
+            ["Registers", pack.registers.join(", ")],
+            ["Tasks it starts", intake ? `${intake.label}: one task per file, following ${intake.skill}` : null],
+            ["Turned off in them", intake && intake.turned_off.length > 0 ? intake.turned_off.join("; ") : null],
+            [
+              "Register changes without asking",
+              writes !== null && writes !== undefined
+                ? `at most ${writes} per task (fewer if you set fewer in Permissions); the rest wait for you`
+                : null,
+            ],
+          ] as [string, string | null][]
+        ).filter((row): row is [string, string] => row[1] !== null)}
+      />
+      <p className="muted">
+        Part of Nexus: it cannot be changed. Its rules only take away from yours; what you write in one of its tasks
+        runs under your rules alone.
+      </p>
+      {pack.skills.map((s) => (
+        <PackSkill key={s.name} skill={s} />
+      ))}
+    </Panel>
+  );
+}
+
+function PackSkill({ skill }: { skill: PackSkillView }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className="stack">
+      <h3 className="mono">{skill.name}</h3>
+      <p>{skill.description}</p>
+      <div className="actions">
+        <button type="button" className="ghost" aria-expanded={open} onClick={() => setOpen(!open)}>
+          {open ? "Hide text" : "Read skill"}
+        </button>
+      </div>
+      {open && (
+        <div className="skill-text" aria-label={`Text of ${skill.name}`}>
+          <pre className="skill-file">{skill.text}</pre>
+        </div>
+      )}
+    </section>
   );
 }
 

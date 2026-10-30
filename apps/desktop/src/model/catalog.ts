@@ -91,6 +91,7 @@ export const TOOLS: ToolInfo[] = [
       "A skill's scripts never run, and its allowed-tools is ignored: a skill grants no permissions",
       "Up to 20 skills on, 20,000 characters of instructions each; up to 8 loads per reply",
       "Its text goes to your AI provider when the agent uses it, like the rest of the task",
+      "The Jobs pack built into Nexus has its own skill, job-ad-intake, for the ads in your inbox: read-only, shown below",
     ],
   },
   {

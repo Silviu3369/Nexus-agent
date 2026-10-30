@@ -265,7 +265,7 @@ Pentru mai mulți utilizatori se adaugă un proiect explicit de identitate, sepa
 | ADR-IDENTITY-001 | Actori cu identificator stabil: tu, agentul, automatizările, inboxul, Host-ul, ulterior canalele | **Implementat** (schema v18, 2026-10-25) |
 | ADR-POLICY-001 | Politica de aprobare ca date, cu limite fixe; aprobări în lot; confirmare de încredere pentru efectele externe | **Implementat** (schema v19–v21, 2026-10-25); rămân selecția pe elemente în lot și regulile pe flux (cu pachetele) |
 | ADR-PROVIDER-002 | Ce date pot pleca la ce furnizor: clase de date pe surse, profilul conexiunii, refuz în Host | **Implementat** (schema v22, 2026-10-25); rămân regiunea UE pentru pilot, mascarea, modelul local |
-| ADR-PACK-001 | Pachete first-party declarative, fără cod; instrucțiunile în formatul deschis Agent Skills (`SKILL.md`), fără scripturi și fără permisiuni proprii | Acceptat (2026-10-28); pasul 1 (skill-urile tale) implementat (schema v23) |
+| ADR-PACK-001 | Pachete first-party declarative, fără cod; instrucțiunile în formatul deschis Agent Skills (`SKILL.md`), fără scripturi și fără permisiuni proprii | Acceptat (2026-10-28); pasul 1 (skill-urile tale, schema v23) și pasul 2 (pachetul Jobs) implementate |
 
 Rezultatele ADR-urilor se înregistrează în acest document, cu alternativa aleasă, motiv, dependențe, limitări și probe. Progresul rămâne în plan; aici se schimbă deciziile de proiectare.
 
@@ -856,3 +856,25 @@ Revizuirea de produs cere, pentru un pilot: date de business doar la furnizori p
   - `cover-letters`: descriere de 544 de caractere, instrucțiuni de 7.762;
   - `ticket-replies`: descriere de 776, instrucțiuni de 11.485.
 - **Rămân pașii 2 și 3:** pachetul Jobs, apoi cifrele din Results configurate de pachet.
+
+**Implementare, pasul 2 (2026-10-30): pachetul Jobs.**
+
+- **Pachetul** e în `nexus-host/packs/jobs/`: manifestul `pack.json` (identificatorul `jobs`, versiunea 1) și skill-ul `skills/job-ad-intake/SKILL.md`.
+  - Host-ul le include la compilare și le verifică (`runtime/packs.rs`): câmpurile evidenței și statusurile ei, numele skill-ului, uneltele oprite, limita de scrieri.
+  - Un câmp necunoscut în manifest e refuzat, deci un pachet nu poate declara ceva ce Host-ul nu înțelege, de exemplu o unealtă pornită.
+- **Evidența** `job_applications` vine din manifest. Schema e identică cu cea de până acum, verificat față de textul salvat în baza ta, deci baza nu se schimbă și nu e nevoie de migrare.
+- **Instrucțiunea pentru un anunț nou** e acum skill-ul `job-ad-intake`.
+  - Pentru fiecare fișier, Host-ul scrie unde e fișierul și unde e CV-ul, apoi pune instrucțiunile skill-ului direct în cerere. Host-ul știe deja că ele se aplică, așa că nu mai e nevoie de un apel `use_skill`.
+  - În Activitate apare „Used skill job-ad-intake”.
+  - Skill-ul spune și că textul anunțului e informație despre job, nu instrucțiuni.
+- **Regulile pentru sarcinile pornite de inbox** doar strâng:
+  - sarcinile nu primesc citirea paginilor web, lista fișierelor, uneltele MCP, faptele de memorie, notele și fișierele noi;
+  - fac cel mult 2 schimbări în evidență fără întrebare, sau mai puține dacă ai setat mai puține; restul așteaptă aprobarea ta în lot.
+  - Motivul: anunțul e un document străin. Dacă ascunde instrucțiuni, sarcina nu are pe unde să-ți trimită datele în afară, de exemplu într-o adresă web cu CV-ul în ea sau într-un apel MCP.
+  - Regulile țin toată tura, și după o pauză pentru aprobare (`TurnBudget.intake`). Ce scrii tu după aceea în aceeași conversație rulează doar după regulile tale.
+  - Dacă modelul cere totuși o unealtă oprită, primește motivul: „Tasks of this kind cannot use this tool”.
+- **Ce se vede:** în Tools → Skills, cardul „Jobs pack” arată:
+  - evidența și sarcinile pornite de inbox;
+  - ce e oprit în ele și limita de 2;
+  - textul `job-ad-intake`, doar de citit.
+- **Rămâne pasul 3:** cifrele din Results configurate de pachet, când apare al doilea pachet cu cifre (DocumentOps în M5).

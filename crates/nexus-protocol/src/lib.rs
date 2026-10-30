@@ -12,6 +12,7 @@ pub mod handshake;
 pub mod ids;
 pub mod mcp;
 pub mod memory;
+pub mod packs;
 pub mod pairing;
 pub mod permissions;
 pub mod records;
@@ -54,6 +55,7 @@ pub use memory::{
     AddMemoryRequest, MemoryContextView, MemoryItemView, MemoryQuery, MemoryScope, MemorySource,
     MemoryStatus, ProjectView, SaveProjectRequest,
 };
+pub use packs::{PackFlowView, PackSkillView, PackView};
 pub use records::{
     AdsHandlingView, CauseCountView, ExportView, FieldChange, FieldDef, FieldKind, GroupCountView,
     ImportPreviewView, ImportRequest, ImportResultView, ImportSkipView, InboxFileStatus,

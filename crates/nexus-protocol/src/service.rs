@@ -21,6 +21,7 @@ use crate::memory::{
     AddMemoryRequest, MemoryContextView, MemoryItemView, MemoryQuery, ProjectView,
     SaveProjectRequest,
 };
+use crate::packs::PackView;
 use crate::permissions::{PermissionView, SetPermissionRequest};
 use crate::records::{
     ExportView, ImportPreviewView, ImportRequest, ImportResultView, InboxView, JobResultsView,
@@ -251,6 +252,10 @@ pub trait NexusService {
 
     /// For good; nothing it was used for is touched.
     async fn remove_skill(skill_id: SkillId) -> Result<(), NexusError>;
+
+    /// The packs built into Nexus, with their skills and the rules of
+    /// their intake (ADR-PACK-001).
+    async fn list_packs() -> Result<Vec<PackView>, NexusError>;
 
     /// The user's registers (job applications first) with their fields.
     async fn list_registers() -> Result<Vec<RegisterView>, NexusError>;

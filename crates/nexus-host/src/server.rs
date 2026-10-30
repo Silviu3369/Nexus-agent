@@ -604,6 +604,11 @@ impl NexusService for HostServer {
         self.runtime.remove_skill(skill_id).await
     }
 
+    async fn list_packs(self, _ctx: Context) -> Result<Vec<nexus_protocol::PackView>, NexusError> {
+        self.require_session()?;
+        Ok(self.runtime.list_packs())
+    }
+
     async fn list_registers(self, _ctx: Context) -> Result<Vec<RegisterView>, NexusError> {
         self.require_session()?;
         self.runtime.list_registers().await

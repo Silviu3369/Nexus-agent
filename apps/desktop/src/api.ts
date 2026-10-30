@@ -40,6 +40,7 @@ import type {
   MessageId,
   ModelPrice,
   ModelView,
+  PackView,
   PermissionView,
   PersonaView,
   ProjectId,
@@ -190,6 +191,8 @@ export const api = {
   importSkill: (path: string) => invoke<SkillView>("import_skill", { path }),
   setSkillEnabled: (request: SetSkillEnabledRequest) => invoke<SkillView>("set_skill_enabled", { request }),
   removeSkill: (skillId: string) => invoke<null>("remove_skill", { skillId }),
+  /** The packs built into Nexus: their skills and the rules of their intake. */
+  listPacks: () => invoke<PackView[]>("list_packs"),
   /** Folders you share with Nexus; documents are read only inside them. */
   listFolders: () => invoke<FolderView[]>("list_folders"),
   saveFolder: (request: SaveFolderRequest) => invoke<FolderView>("save_folder", { request }),

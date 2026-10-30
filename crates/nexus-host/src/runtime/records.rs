@@ -1,5 +1,6 @@
 //! Registers (`PLAN_NEXUS_RO.md` §3a): tables Nexus keeps for the user, job
-//! applications first. The Host owns each register's fields and checks every
+//! applications first; their fields come from the packs built in
+//! (ADR-PACK-001). The Host owns each register's fields and checks every
 //! value against them, whoever writes. The agent reads them with
 //! `find_records` and writes with `add_record` / `update_record` directly
 //! (the user's decision, 2026-10-18): each change is a visible step and a
@@ -35,7 +36,6 @@ const FIND_DEFAULT: u32 = 20;
 const FIND_MAX: u32 = 50;
 const LIST_DEFAULT: u32 = 200;
 const LIST_MAX: u32 = 500;
-const SCHEMA_VERSION: u32 = 3;
 pub const JOB_APPLICATIONS: &str = "job_applications";
 
 /// A register's fields and rules, kept with it in the database (the
@@ -61,192 +61,6 @@ pub(super) struct RegisterSchema {
 pub(super) struct Register {
     pub(super) row: RegisterRow,
     pub(super) schema: RegisterSchema,
-}
-
-fn field(key: &str, label: &str, kind: FieldKind, max_chars: u32, help: &str) -> FieldDef {
-    FieldDef {
-        key: key.to_string(),
-        label: label.to_string(),
-        kind,
-        required: false,
-        choices: Vec::new(),
-        max_chars,
-        help: help.to_string(),
-        min: None,
-        max: None,
-    }
-}
-
-fn number(key: &str, label: &str, min: i64, max: i64, help: &str) -> FieldDef {
-    FieldDef {
-        min: Some(min),
-        max: Some(max),
-        ..field(key, label, FieldKind::Number, 10, help)
-    }
-}
-
-fn required(mut f: FieldDef) -> FieldDef {
-    f.required = true;
-    f
-}
-
-fn choice(key: &str, label: &str, choices: &[&str], help: &str) -> FieldDef {
-    FieldDef {
-        choices: choices.iter().map(|c| c.to_string()).collect(),
-        ..field(key, label, FieldKind::Choice, 40, help)
-    }
-}
-
-pub(super) const JOB_STATUSES: [&str; 6] = [
-    "To apply",
-    "Applied",
-    "Interviewing",
-    "Offer",
-    "Rejected",
-    "Withdrawn",
-];
-
-fn job_applications() -> (&'static str, &'static str, RegisterSchema) {
-    use FieldKind::*;
-    let schema = RegisterSchema {
-        version: SCHEMA_VERSION,
-        item_name: "application".to_string(),
-        purpose: "the jobs the user saved or applied for, and where each one stands".to_string(),
-        fields: vec![
-            required(field(
-                "company",
-                "Company",
-                Text,
-                200,
-                "The employer (or the agency, if no employer is named)",
-            )),
-            required(field(
-                "role",
-                "Role",
-                Text,
-                200,
-                "The job title as the ad names it",
-            )),
-            field(
-                "reference",
-                "Reference no.",
-                Text,
-                100,
-                "The ad's own reference or vacancy number (for example TopJobs's vacature number), if it shows one",
-            ),
-            required(choice(
-                "status",
-                "Status",
-                &JOB_STATUSES,
-                "To apply: saved, not applied yet. Applied: the application was sent. Interviewing: an interview is \
-                 planned or done. Offer, Rejected, Withdrawn: the outcome",
-            )),
-            field(
-                "applied_on",
-                "Applied on",
-                Date,
-                10,
-                "The day the application was sent",
-            ),
-            field(
-                "follow_up_on",
-                "Follow up on",
-                Date,
-                10,
-                "When to check back or act next",
-            ),
-            field(
-                "next_step",
-                "Next step",
-                Text,
-                300,
-                "What happens next, e.g. send a reminder or prepare the interview",
-            ),
-            field("link", "Link", Url, 2000, "The job ad's address"),
-            field(
-                "ad_file",
-                "Ad file",
-                Text,
-                400,
-                "The job ad saved in a shared folder, as folder/path",
-            ),
-            field(
-                "source",
-                "Source",
-                Text,
-                100,
-                "Where it was found or sent: TopJobs, LinkedIn, Indeed, the company site, an agency, a recruiter…",
-            ),
-            field("location", "Location", Text, 200, "City or region"),
-            choice(
-                "work_mode",
-                "Work mode",
-                &["On-site", "Hybrid", "Remote"],
-                "Where the work happens",
-            ),
-            field(
-                "salary",
-                "Salary",
-                Text,
-                100,
-                "As the ad or the employer states it",
-            ),
-            field(
-                "contact",
-                "Contact",
-                Text,
-                300,
-                "Recruiter or contact person: name, email, phone",
-            ),
-            field("deadline", "Apply by", Date, 10, "The ad's closing date"),
-            field(
-                "documents",
-                "Documents sent",
-                Text,
-                300,
-                "Which CV, cover letter, or other documents went with it",
-            ),
-            field(
-                "requirements",
-                "Requirements",
-                LongText,
-                4000,
-                "The main requirements of the ad, in short",
-            ),
-            number(
-                "match_score",
-                "Match",
-                0,
-                100,
-                "How well the user's CV fits the ad's requirements, from 0 (not at all) to 100 (fully)",
-            ),
-            field(
-                "match_notes",
-                "Match notes",
-                LongText,
-                1000,
-                "What in the CV fits the ad and what is missing, in two or three short lines",
-            ),
-            field(
-                "notes",
-                "Notes",
-                LongText,
-                4000,
-                "Anything else worth keeping",
-            ),
-        ],
-        status_field: "status".to_string(),
-        default_status: "To apply".to_string(),
-        closed_statuses: vec!["Rejected".to_string(), "Withdrawn".to_string()],
-        follow_up_field: Some("follow_up_on".to_string()),
-        title_fields: vec!["company".to_string(), "role".to_string()],
-        key_field: Some("reference".to_string()),
-    };
-    (JOB_APPLICATIONS, "Job applications", schema)
-}
-
-fn builtin_registers() -> Vec<(&'static str, &'static str, RegisterSchema)> {
-    vec![job_applications()]
 }
 
 fn invalid(message: impl Into<String>) -> NexusError {
@@ -516,10 +330,12 @@ fn values_json(values: &Values) -> Value {
 }
 
 impl Runtime {
-    /// Creates the built-in registers, or brings their fields up to date.
+    /// Creates the registers of the packs built in, or brings their fields
+    /// up to date.
     pub(super) async fn ensure_registers(&self) -> Result<(), StorageError> {
-        for (key, name, schema) in builtin_registers() {
-            let schema_json = serde_json::to_string(&schema)
+        for register in super::packs::builtin().iter().flat_map(|p| &p.registers) {
+            let (key, name, schema) = (&register.key, &register.name, &register.schema);
+            let schema_json = serde_json::to_string(schema)
                 .map_err(|e| StorageError::Corrupt(format!("register schema: {e}")))?;
             self.store
                 .ensure_register(
@@ -1345,7 +1161,9 @@ mod tests {
     use super::*;
 
     fn schema() -> RegisterSchema {
-        job_applications().2
+        super::super::packs::by_id("jobs").unwrap().registers[0]
+            .schema
+            .clone()
     }
 
     fn change(k: &str, v: &str) -> (String, Option<String>) {

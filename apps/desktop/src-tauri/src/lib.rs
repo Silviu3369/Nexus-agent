@@ -75,6 +75,7 @@ pub fn run() {
             files::export_register,
             files::import_preview,
             files::import_records,
+            skills::list_packs,
             skills::list_skills,
             skills::get_skill,
             skills::import_skill,

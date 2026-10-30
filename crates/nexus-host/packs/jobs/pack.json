@@ -1,0 +1,281 @@
+{
+  "id": "jobs",
+  "version": 1,
+  "name": "Jobs",
+  "description": "Tracks the jobs you save or apply for, and records each job ad you put in the inbox folder.",
+  "registers": [
+    {
+      "key": "job_applications",
+      "name": "Job applications",
+      "schema": {
+        "version": 3,
+        "item_name": "application",
+        "purpose": "the jobs the user saved or applied for, and where each one stands",
+        "fields": [
+          {
+            "key": "company",
+            "label": "Company",
+            "kind": "Text",
+            "required": true,
+            "choices": [],
+            "max_chars": 200,
+            "help": "The employer (or the agency, if no employer is named)",
+            "min": null,
+            "max": null
+          },
+          {
+            "key": "role",
+            "label": "Role",
+            "kind": "Text",
+            "required": true,
+            "choices": [],
+            "max_chars": 200,
+            "help": "The job title as the ad names it",
+            "min": null,
+            "max": null
+          },
+          {
+            "key": "reference",
+            "label": "Reference no.",
+            "kind": "Text",
+            "required": false,
+            "choices": [],
+            "max_chars": 100,
+            "help": "The ad's own reference or vacancy number (for example TopJobs's vacature number), if it shows one",
+            "min": null,
+            "max": null
+          },
+          {
+            "key": "status",
+            "label": "Status",
+            "kind": "Choice",
+            "required": true,
+            "choices": [
+              "To apply",
+              "Applied",
+              "Interviewing",
+              "Offer",
+              "Rejected",
+              "Withdrawn"
+            ],
+            "max_chars": 40,
+            "help": "To apply: saved, not applied yet. Applied: the application was sent. Interviewing: an interview is planned or done. Offer, Rejected, Withdrawn: the outcome",
+            "min": null,
+            "max": null
+          },
+          {
+            "key": "applied_on",
+            "label": "Applied on",
+            "kind": "Date",
+            "required": false,
+            "choices": [],
+            "max_chars": 10,
+            "help": "The day the application was sent",
+            "min": null,
+            "max": null
+          },
+          {
+            "key": "follow_up_on",
+            "label": "Follow up on",
+            "kind": "Date",
+            "required": false,
+            "choices": [],
+            "max_chars": 10,
+            "help": "When to check back or act next",
+            "min": null,
+            "max": null
+          },
+          {
+            "key": "next_step",
+            "label": "Next step",
+            "kind": "Text",
+            "required": false,
+            "choices": [],
+            "max_chars": 300,
+            "help": "What happens next, e.g. send a reminder or prepare the interview",
+            "min": null,
+            "max": null
+          },
+          {
+            "key": "link",
+            "label": "Link",
+            "kind": "Url",
+            "required": false,
+            "choices": [],
+            "max_chars": 2000,
+            "help": "The job ad's address",
+            "min": null,
+            "max": null
+          },
+          {
+            "key": "ad_file",
+            "label": "Ad file",
+            "kind": "Text",
+            "required": false,
+            "choices": [],
+            "max_chars": 400,
+            "help": "The job ad saved in a shared folder, as folder/path",
+            "min": null,
+            "max": null
+          },
+          {
+            "key": "source",
+            "label": "Source",
+            "kind": "Text",
+            "required": false,
+            "choices": [],
+            "max_chars": 100,
+            "help": "Where it was found or sent: TopJobs, LinkedIn, Indeed, the company site, an agency, a recruiter…",
+            "min": null,
+            "max": null
+          },
+          {
+            "key": "location",
+            "label": "Location",
+            "kind": "Text",
+            "required": false,
+            "choices": [],
+            "max_chars": 200,
+            "help": "City or region",
+            "min": null,
+            "max": null
+          },
+          {
+            "key": "work_mode",
+            "label": "Work mode",
+            "kind": "Choice",
+            "required": false,
+            "choices": [
+              "On-site",
+              "Hybrid",
+              "Remote"
+            ],
+            "max_chars": 40,
+            "help": "Where the work happens",
+            "min": null,
+            "max": null
+          },
+          {
+            "key": "salary",
+            "label": "Salary",
+            "kind": "Text",
+            "required": false,
+            "choices": [],
+            "max_chars": 100,
+            "help": "As the ad or the employer states it",
+            "min": null,
+            "max": null
+          },
+          {
+            "key": "contact",
+            "label": "Contact",
+            "kind": "Text",
+            "required": false,
+            "choices": [],
+            "max_chars": 300,
+            "help": "Recruiter or contact person: name, email, phone",
+            "min": null,
+            "max": null
+          },
+          {
+            "key": "deadline",
+            "label": "Apply by",
+            "kind": "Date",
+            "required": false,
+            "choices": [],
+            "max_chars": 10,
+            "help": "The ad's closing date",
+            "min": null,
+            "max": null
+          },
+          {
+            "key": "documents",
+            "label": "Documents sent",
+            "kind": "Text",
+            "required": false,
+            "choices": [],
+            "max_chars": 300,
+            "help": "Which CV, cover letter, or other documents went with it",
+            "min": null,
+            "max": null
+          },
+          {
+            "key": "requirements",
+            "label": "Requirements",
+            "kind": "LongText",
+            "required": false,
+            "choices": [],
+            "max_chars": 4000,
+            "help": "The main requirements of the ad, in short",
+            "min": null,
+            "max": null
+          },
+          {
+            "key": "match_score",
+            "label": "Match",
+            "kind": "Number",
+            "required": false,
+            "choices": [],
+            "max_chars": 10,
+            "help": "How well the user's CV fits the ad's requirements, from 0 (not at all) to 100 (fully)",
+            "min": 0,
+            "max": 100
+          },
+          {
+            "key": "match_notes",
+            "label": "Match notes",
+            "kind": "LongText",
+            "required": false,
+            "choices": [],
+            "max_chars": 1000,
+            "help": "What in the CV fits the ad and what is missing, in two or three short lines",
+            "min": null,
+            "max": null
+          },
+          {
+            "key": "notes",
+            "label": "Notes",
+            "kind": "LongText",
+            "required": false,
+            "choices": [],
+            "max_chars": 4000,
+            "help": "Anything else worth keeping",
+            "min": null,
+            "max": null
+          }
+        ],
+        "status_field": "status",
+        "default_status": "To apply",
+        "closed_statuses": [
+          "Rejected",
+          "Withdrawn"
+        ],
+        "follow_up_field": "follow_up_on",
+        "title_fields": [
+          "company",
+          "role"
+        ],
+        "key_field": "reference"
+      }
+    }
+  ],
+  "skills": [
+    "job-ad-intake"
+  ],
+  "intake": {
+    "register": "job_applications",
+    "skill": "job-ad-intake",
+    "title": "Job ad",
+    "label": "A new job ad in the inbox",
+    "turned_off": [
+      "WebRead",
+      "ListFiles",
+      "McpRead",
+      "McpToolCall",
+      "MemoryFact",
+      "CreateMarkdownArtifact",
+      "CreateDocument"
+    ],
+    "record_writes_without_asking": 2
+  }
+}

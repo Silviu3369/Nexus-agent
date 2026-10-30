@@ -645,6 +645,12 @@ impl Runtime {
             (None, None) => Some(self.store.active_project().await.map_err(to_nexus_error)?),
         };
 
+        // A task an intake started runs under its pack's rules; what the user
+        // writes in it later does not.
+        let intake = pack.clone().filter(|id| {
+            matches!(requester, Requester::Inbox)
+                && super::packs::by_id(id).is_some_and(|p| p.intake.is_some())
+        });
         let exchange = self
             .store
             .append_exchange(
@@ -673,8 +679,11 @@ impl Runtime {
             let reply = exchange.model_message.id;
             self.replies.start(reply);
             let runtime = Arc::clone(self);
-            let task =
-                tokio::spawn(async move { runtime.generate(exchange, connection, persona).await });
+            let task = tokio::spawn(async move {
+                runtime
+                    .generate(exchange, connection, persona, intake)
+                    .await
+            });
             self.replies.set_abort(reply, task.abort_handle());
         }
         Ok(response)
@@ -685,9 +694,27 @@ impl Runtime {
         exchange: Exchange,
         connection: ConnectionRow,
         persona: PersonaRow,
+        intake: Option<String>,
     ) {
         let reply = exchange.model_message.id;
-        let outcome = match self.fresh_turn(&exchange, &connection) {
+        if let Some(skill) = intake.as_deref().and_then(intake_skill) {
+            // The intake's instructions came with the request: one step
+            // says which, as when the agent loads a skill itself.
+            let step = self
+                .begin_step(
+                    reply,
+                    AgentStepKind::SkillUsed,
+                    json!({"skill": skill.name}),
+                )
+                .await;
+            self.finish_step(
+                step,
+                AgentStepStatus::Done,
+                json!({"skill": skill.name, "chars": skill.instructions.chars().count()}),
+            )
+            .await;
+        }
+        let outcome = match self.fresh_turn(&exchange, &connection, intake) {
             Ok(start) => self.call_model(start, &connection, &persona).await,
             Err(err) => Err(err),
         };
@@ -700,6 +727,7 @@ impl Runtime {
         &self,
         exchange: &Exchange,
         connection: &ConnectionRow,
+        intake: Option<String>,
     ) -> Result<TurnStart, NexusError> {
         Ok(TurnStart {
             conversation_id: exchange.conversation_id,
@@ -714,7 +742,10 @@ impl Runtime {
                 backup: false,
             },
             so_far: Vec::new(),
-            budget: TurnBudget::default(),
+            budget: TurnBudget {
+                intake,
+                ..TurnBudget::default()
+            },
         })
     }
 
@@ -937,8 +968,21 @@ impl Runtime {
             .memory_context(project, MEMORY_CONTEXT_ITEMS, MEMORY_CONTEXT_CHARS)
             .await
             .map_err(to_nexus_error)?;
-        // The user's approval rules (ADR-POLICY-001), read once per reply.
+        // The user's approval rules (ADR-POLICY-001), read once per reply,
+        // and those of the pack whose intake started the task.
         let permissions = self.permissions_in_force().await?;
+        let permissions = match budget.intake.as_deref() {
+            None => permissions,
+            Some(id) => match super::packs::by_id(id).and_then(|p| p.intake.as_ref()) {
+                Some(intake) => permissions.within(&intake.rules),
+                None => {
+                    return Err(NexusError::new(
+                        ErrorCode::InternalFailure,
+                        "this task's pack is not in this version of Nexus",
+                    ));
+                }
+            },
+        };
         // What the connection in use may receive (ADR-PROVIDER-002).
         let data = self.store.data_settings().await.map_err(to_nexus_error)?;
         let mut route_row = connection.clone();
@@ -1157,7 +1201,10 @@ impl Runtime {
             // the other tools. Extra proposals past the budget are ignored.
             let mut handled: Vec<(&ToolCall, Value)> = Vec::new();
             for c in call.calls.iter().filter(|c| off(c)) {
-                handled.push((c, json!({ "error": TURNED_OFF })));
+                let by_pack = super::broker::route(&c.name, &mcp_offer, writable)
+                    .is_some_and(|t| permissions.off_in_flow(t.id));
+                let error = if by_pack { OFF_IN_FLOW } else { TURNED_OFF };
+                handled.push((c, json!({ "error": error })));
             }
             for proposal in call
                 .calls
@@ -2522,6 +2569,10 @@ struct TurnBudget {
     /// Skill instructions and files loaded (ADR-PACK-001).
     #[serde(default)]
     skill_reads: u32,
+    /// The pack whose intake started the task: its rules hold for the whole
+    /// turn, after a pause too (ADR-PACK-001).
+    #[serde(default)]
+    intake: Option<String>,
 }
 
 struct ReplyOutcome {
@@ -2575,6 +2626,13 @@ struct AwaitingCall {
 
 /// What the model is told about a tool the user turned off.
 const TURNED_OFF: &str = "The user turned this tool off in Nexus's Permissions; do not use it, and tell the user if the task needs it.";
+const OFF_IN_FLOW: &str = "Tasks of this kind cannot use this tool (the rules of the Nexus pack that started the task); do not use it, and tell the user if the task needs it.";
+
+/// The skill a pack's intake gives the tasks it starts.
+fn intake_skill(pack: &str) -> Option<&'static super::packs::PackSkill> {
+    let pack = super::packs::by_id(pack)?;
+    pack.skill(&pack.intake.as_ref()?.skill)
+}
 
 /// What the model is told about a call that stopped its turn.
 const NOT_RUN: &str =

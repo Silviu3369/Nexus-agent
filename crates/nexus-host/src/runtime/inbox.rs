@@ -19,7 +19,8 @@ use nexus_protocol::{
 };
 use nexus_storage::{FolderRow, InboxFileRow, InboxSettle, Requester, now_ms};
 
-use super::records::{JOB_APPLICATIONS, Register};
+use super::packs;
+use super::records::Register;
 use super::{Runtime, to_nexus_error};
 use crate::documents::{self, Format};
 use crate::tools::markdown_artifact::sha256_hex;
@@ -128,32 +129,30 @@ fn file_sha256(path: &Path) -> Option<String> {
 }
 
 /// The message the agent receives for one file, written by Nexus (the
-/// file's own text is only read through `read_document`, as data).
+/// file's own text is only read through `read_document`, as data): where
+/// the file and the CV are, then the instructions of the skill the pack's
+/// intake names (ADR-PACK-001), given at once rather than loaded later.
 fn task_text(
     register: &Register,
     folder: &FolderRow,
     file: &str,
     cv: Option<(&str, &str)>,
 ) -> String {
-    if register.row.key == JOB_APPLICATIONS {
-        let compare = match cv {
-            Some((cv_folder, cv_path)) => format!(
-                " Then read the user's CV with read_document (folder \"{cv_folder}\", path \"{cv_path}\") and set \
-                 match_score (0 to 100: how well the CV fits the ad's requirements) and match_notes (what fits and what \
-                 is missing, in two or three short lines)."
-            ),
-            None => String::new(),
+    let skill =
+        packs::intake_of(&register.row.key).and_then(|(pack, intake)| pack.skill(&intake.skill));
+    if let Some(skill) = skill {
+        let cv = match cv {
+            Some((cv_folder, cv_path)) => {
+                format!(" The user's CV is in the folder \"{cv_folder}\", path \"{cv_path}\".")
+            }
+            None => " No CV is set to compare it with.".to_string(),
         };
         format!(
-            "A new job ad was saved in the shared folder \"{label}\" as \"{file}\". Read it with read_document and record \
-             it in job_applications: if an application with the same reference number, or the same company and role, \
-             is already there, update it; otherwise add it with status \"To apply\". Fill every field the ad states: \
-             company, role, reference (its reference or vacancy number, for example TopJobs's vacature number), source \
-             (the platform or site it comes from, such as TopJobs, LinkedIn or Indeed), link (the ad's own web address, if it \
-             shows one), location, work_mode, salary, contact, deadline (YYYY-MM-DD), requirements (the main ones, in \
-             short). Set ad_file to \"{label}/{file}\".{compare} Do not apply, write or send anything else. Reply in one \
-             or two lines with what you saved. If the file is not a job ad, save nothing and say so.",
-            label = folder.label
+            "A new document was saved in the shared folder \"{label}\" as \"{file}\"; its ad_file is \
+             \"{label}/{file}\".{cv} Follow the instructions of the skill {name}:\n\n{instructions}",
+            label = folder.label,
+            name = skill.name,
+            instructions = skill.instructions
         )
     } else {
         format!(
@@ -538,7 +537,11 @@ impl Runtime {
                 },
                 Some(format!("{} · {}", inbox_title(register), file.path)),
                 Requester::Inbox,
-                Some(register.row.key.clone()),
+                // The pack whose intake rules the task runs under, if any.
+                Some(match packs::intake_of(&register.row.key) {
+                    Some((pack, _)) => pack.id.clone(),
+                    None => register.row.key.clone(),
+                }),
             )
             .await;
         let (conversation, failure) = match sent {
@@ -566,9 +569,5 @@ impl Runtime {
 }
 
 fn inbox_title(register: &Register) -> &'static str {
-    if register.row.key == JOB_APPLICATIONS {
-        "Job ad"
-    } else {
-        "New document"
-    }
+    packs::intake_of(&register.row.key).map_or("New document", |(_, intake)| intake.title.as_str())
 }

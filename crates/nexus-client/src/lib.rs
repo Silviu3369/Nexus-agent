@@ -535,6 +535,10 @@ impl NexusClient {
         Ok(self.client.remove_skill(context::current(), id).await??)
     }
 
+    pub async fn packs(&self) -> Result<Vec<nexus_protocol::PackView>, CallError> {
+        Ok(self.client.list_packs(context::current()).await??)
+    }
+
     pub async fn folders(&self) -> Result<Vec<nexus_protocol::FolderView>, CallError> {
         Ok(self.client.list_folders(context::current()).await??)
     }

@@ -12,6 +12,7 @@ use nexus_core::policy::{self, MAX_BATCH_ITEMS, RECORD_WRITES_PER_TURN};
 use nexus_protocol::{ApprovalPath, ErrorCode, NexusError, PermissionView, SetPermissionRequest};
 use nexus_storage::{Actor, PolicyRuleRow, now_ms};
 
+use super::packs::FlowRules;
 use super::{Runtime, to_nexus_error};
 use crate::tools::registry::{self, RECORD_WRITE_ID};
 
@@ -19,28 +20,59 @@ use crate::tools::registry::{self, RECORD_WRITE_ID};
 #[derive(Debug, Default)]
 pub(super) struct Permissions {
     rules: HashMap<String, PolicyRuleRow>,
+    /// A pack's rules for the flow the reply belongs to: they only take
+    /// away from the user's (ADR-PACK-001).
+    flow: Option<FlowRules>,
 }
 
 impl Permissions {
     fn from_rules(rules: Vec<PolicyRuleRow>) -> Self {
         Self {
             rules: rules.into_iter().map(|r| (r.tool_id.clone(), r)).collect(),
+            flow: None,
         }
     }
 
-    /// The tool may be offered and used: the user did not turn it off.
+    /// The same rules, tightened by a pack's rules for the reply's flow.
+    pub fn within(self, flow: &FlowRules) -> Self {
+        Self {
+            flow: Some(flow.clone()),
+            ..self
+        }
+    }
+
+    /// The tool may be offered and used: neither the user nor the flow's
+    /// pack turned it off.
     pub fn allows(&self, tool_id: &str) -> bool {
         self.rules
             .get(tool_id)
             .is_none_or(|r| r.decision != PolicyDecision::Deny)
+            && !self.off_in_flow(tool_id)
     }
 
-    /// How many register writes a reply makes without asking.
+    /// The flow's pack turned the tool off (the user's rules may allow it).
+    pub fn off_in_flow(&self, tool_id: &str) -> bool {
+        self.flow
+            .as_ref()
+            .is_some_and(|f| f.turned_off.contains(&tool_id))
+    }
+
+    /// How many register writes a reply makes without asking: the user's
+    /// number, or the flow's if it is lower.
     pub fn record_threshold(&self) -> u32 {
-        self.rules
+        let users = self
+            .rules
             .get(RECORD_WRITE_ID)
             .and_then(|r| r.max_auto)
-            .unwrap_or(RECORD_WRITES_PER_TURN)
+            .unwrap_or(RECORD_WRITES_PER_TURN);
+        match self
+            .flow
+            .as_ref()
+            .and_then(|f| f.record_writes_without_asking)
+        {
+            Some(flow) => users.min(flow),
+            None => users,
+        }
     }
 
     /// The most register writes a reply makes, with the batch.
@@ -166,5 +198,35 @@ mod tests {
         assert!(set.allows(RECORD_WRITE_ID));
         assert_eq!(set.record_threshold(), 0, "every write asks");
         assert_eq!(set.max_record_writes(), 25);
+    }
+
+    #[test]
+    fn a_flow_of_a_pack_only_takes_away_from_the_user() {
+        let flow = FlowRules {
+            turned_off: vec!["WebRead"],
+            record_writes_without_asking: Some(2),
+        };
+        let defaults = Permissions::default().within(&flow);
+        assert!(!defaults.allows("WebRead") && defaults.off_in_flow("WebRead"));
+        assert!(defaults.allows("ReadDocument"));
+        assert_eq!(defaults.record_threshold(), 2, "fewer than the user's 10");
+
+        // What the user turned off stays off; a lower number stays lower.
+        let users = Permissions::from_rules(vec![
+            rule("ReadDocument", PolicyDecision::Deny, None),
+            rule(RECORD_WRITE_ID, PolicyDecision::Auto, Some(0)),
+        ])
+        .within(&flow);
+        assert!(!users.allows("ReadDocument") && !users.off_in_flow("ReadDocument"));
+        assert_eq!(users.record_threshold(), 0);
+
+        // A flow that names no number keeps the user's.
+        let open =
+            Permissions::from_rules(vec![rule(RECORD_WRITE_ID, PolicyDecision::Auto, Some(25))])
+                .within(&FlowRules {
+                    turned_off: Vec::new(),
+                    record_writes_without_asking: None,
+                });
+        assert_eq!(open.record_threshold(), 25);
     }
 }
