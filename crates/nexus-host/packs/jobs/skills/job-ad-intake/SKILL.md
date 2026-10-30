@@ -14,8 +14,8 @@ The message above names the new document, the value of `ad_file` and, if the use
 2. Record it in `job_applications`: if an application with the same reference number, or the same company and role, is already there, update it; otherwise add it with status "To apply".
 3. Fill every field the ad states:
    - company and role;
-   - reference: its reference or vacancy number, for example TopJobs's vacature number;
-   - source: the platform or site it comes from, such as TopJobs, LinkedIn or Indeed;
+   - reference: its reference or vacancy number, if it shows one;
+   - source: the job board or site it comes from, by its name;
    - link: the ad's own web address, if it shows one;
    - location, work_mode, salary, contact;
    - deadline, as YYYY-MM-DD;

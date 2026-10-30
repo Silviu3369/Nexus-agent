@@ -702,7 +702,7 @@ async fn the_same_reference_number_is_the_same_application() {
             values: values(&[
                 ("company", "Acme NV"),
                 ("role", "Service Desk"),
-                ("reference", "TopJobs-70123456"),
+                ("reference", "TJ-70123456"),
             ]),
         })
         .await
@@ -711,7 +711,7 @@ async fn the_same_reference_number_is_the_same_application() {
     fake.push(Reply::calls(&[(
         "add_record",
         json!({"register": "job_applications", "values": {
-            "company": "ACME", "role": "Service Desk Agent", "reference": "topjobs-70123456"}}),
+            "company": "ACME", "role": "Service Desk Agent", "reference": "tj-70123456"}}),
     )]));
     fake.push(Reply::text(&["It is already there."]));
     let sent = send(&client, None, "ref1", "Add this ad").await;
@@ -722,7 +722,7 @@ async fn the_same_reference_number_is_the_same_application() {
         .unwrap()
         .to_string();
     assert!(
-        refused.contains("reference topjobs-70123456 is already in the register"),
+        refused.contains("reference tj-70123456 is already in the register"),
         "{refused}"
     );
     assert!(refused.contains("Acme NV · Service Desk"));

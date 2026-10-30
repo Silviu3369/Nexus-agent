@@ -582,11 +582,11 @@ pub fn instructions(skill_md: &str) -> String {
 mod tests {
     use super::*;
 
-    const SKILL: &str = "---\nname: cv-letter\ndescription: Writes cover letters. Use when the user asks for one.\n---\n\n# Letter\nWrite it in Dutch.\n";
+    const SKILL: &str = "---\nname: cv-letter\ndescription: Writes cover letters. Use when the user asks for one.\n---\n\n# Letter\nWrite it in plain words.\n";
 
     #[test]
     fn names_follow_the_specification() {
-        for good in ["pdf-processing", "a", "cover-letters", "x2"] {
+        for good in ["pdf-processing", "a", "cover-letters-v2", "x2"] {
             check_name(good).unwrap();
         }
         for bad in [
@@ -611,7 +611,7 @@ mod tests {
             header.description,
             "Writes cover letters. Use when the user asks for one."
         );
-        assert_eq!(body, "# Letter\nWrite it in Dutch.");
+        assert_eq!(body, "# Letter\nWrite it in plain words.");
 
         let text = "\u{feff}---\r\nname: \"pdf-tools\"\r\ndescription: >\r\n  Extracts text\r\n  from PDFs.\r\n\r\n  Use for forms.\r\nlicense: 'Apache-2.0'\r\nmetadata:\r\n  author: example-org\r\n  version: \"1.0\"\r\nallowed-tools: Bash(git:*) Read\r\ncompatibility: |\r\n  Needs:\r\n  - internet\r\nunknown: ignored # a comment\r\n---\r\nDo it.\r\n";
         let (header, body) = parse_skill_md(text).unwrap();

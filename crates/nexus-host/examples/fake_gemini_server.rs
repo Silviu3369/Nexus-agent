@@ -127,7 +127,7 @@ async fn main() {
     // as a task of its own.
     fake.push(Reply::calls(&[(
         "read_document",
-        serde_json::json!({"folder": "Ads", "path": "TopJobs vacature.txt"}),
+        serde_json::json!({"folder": "Ads", "path": "Ad 70123456.txt"}),
     )]));
     fake.push(Reply::calls(&[(
         "read_document",
@@ -137,8 +137,8 @@ async fn main() {
         "add_record",
         serde_json::json!({"register": "job_applications", "values": {
             "company": "Acme NV", "role": "Service Desk Agent", "status": "To apply",
-            "reference": "70123456", "source": "TopJobs", "ad_file": "Ads/TopJobs vacature.txt",
-            "match_score": "82", "match_notes": "Fits: service desk work. Missing: Dutch at C1."
+            "reference": "70123456", "source": "TopJobs", "ad_file": "Ads/Ad 70123456.txt",
+            "match_score": "82", "match_notes": "Fits: service desk work. Missing: Spanish at C1."
         }}),
     )]));
     fake.push(Reply::text(&[

@@ -36,7 +36,7 @@ fn helpdesk(connection: Option<nexus_protocol::ConnectionId>) -> NewAgent {
     NewAgent {
         name: "Support desk".into(),
         description: "Tickets and Microsoft 365 questions at work.".into(),
-        instructions: "SENTINEL-agent-instructions: answer in Dutch.".into(),
+        instructions: "SENTINEL-agent-instructions: answer with the ticket number first.".into(),
         tools_off: vec!["WebRead".into()],
         skills: vec!["ticket-replies".into()],
         mcp_servers: Vec::new(),

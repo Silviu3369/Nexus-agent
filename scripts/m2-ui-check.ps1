@@ -772,11 +772,11 @@ try {
   Check ($null -ne (Wait-Contains $win "Comparing with Jobs/CV.txt")) "the CV for the match score is saved"
   Click-Button $win "Turn inbox on"
   Check ($null -ne (Wait-Contains $win 'On · reading “Ads”')) "the inbox is on, reading the folder chosen"
-  Set-Content -Path (Join-Path $adsDir "TopJobs vacature.txt") -Value "Vacature 70123456 - Service Desk Agent bij Acme NV, Springfield" -Encoding utf8
+  Set-Content -Path (Join-Path $adsDir "Ad 70123456.txt") -Value "Vacancy 70123456 - Service Desk Agent at Acme NV, Springfield" -Encoding utf8
   Check ($null -ne (Wait-Like $win "Acme NV · Service Desk Agent" 40)) "the ad becomes an application on its own"
   Check ($null -ne (Wait-Contains $win "Ref 70123456")) "with the ad's reference number"
   Check ($null -ne (Wait-Contains $win "Match 82")) "the ad is scored against the CV"
-  Check (Wait-InList $win "Inbox files" "Done*TopJobs vacature.txt*" 20) "the inbox lists the ad as done once the agent finished"
+  Check (Wait-InList $win "Inbox files" "Done*Ad 70123456.txt*" 20) "the inbox lists the ad as done once the agent finished"
   Click-Button $win "Results"
   Check ($null -ne (Wait-Contains $win "Counted from your applications and their history")) "Jobs shows its results, counted from the history"
   Check ($null -ne (Wait-Match $win "^This week: \d+ sent$")) "the weekly chart names each week's count"

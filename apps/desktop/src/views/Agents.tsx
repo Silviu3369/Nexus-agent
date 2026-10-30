@@ -229,7 +229,7 @@ function YourAgents({ defaultName }: { defaultName: string }) {
           {agents === null ? (
             <p className="muted">Loading…</p>
           ) : agents.length === 0 ? (
-            <Empty>No agent yet. Create one for each kind of work, for example your job search and your helpdesk.</Empty>
+            <Empty>No agent yet. Create one for each kind of work you give Nexus.</Empty>
           ) : (
             <ul className="planned-list agent-list">
               {agents.map((a) => (

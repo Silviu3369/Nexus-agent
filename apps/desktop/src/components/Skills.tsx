@@ -139,7 +139,7 @@ function ImportSkill({ onDone }: { onDone: () => Promise<void> }) {
             value={path}
             spellCheck={false}
             maxLength={1024}
-            placeholder="C:\Users\you\Documents\Skills\cover-letters  ·  or …\cover-letters.zip"
+            placeholder="C:\…\my-skill  ·  or …\my-skill.zip"
             onChange={(e) => setPath(e.currentTarget.value)}
           />
         </label>

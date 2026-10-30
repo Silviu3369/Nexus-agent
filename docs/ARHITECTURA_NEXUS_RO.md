@@ -934,7 +934,7 @@ Revizuirea de produs cere, pentru un pilot: date de business doar la furnizori p
    - alegerea agentului la o sarcină nouă;
    - la fiecare tură se aplică instrucțiunile, skill-urile, uneltele, modelul și memoria agentului;
    - agentul se vede în sarcină și în Activitate.
-   - Caz real: creezi agenții „Jobs” și „Support desk” și pui aceeași întrebare la amândoi.
+   - Caz real: creezi doi agenți, unul pentru joburi și unul pentru helpdesk, și pui aceeași întrebare la amândoi.
 2. **Inboxul și automatizările cu agentul ales.**
 
 **Ce nu se schimbă:**

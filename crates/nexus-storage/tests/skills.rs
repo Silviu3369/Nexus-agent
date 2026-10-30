@@ -30,7 +30,7 @@ fn env() -> Env {
     }
 }
 
-const TEXT: &str = "SENTINEL-skill-text: write the letter in Dutch.";
+const TEXT: &str = "SENTINEL-skill-text: write the letter in plain words.";
 
 fn skill(name: &str, text: &str, sha: char) -> NewSkill {
     NewSkill {

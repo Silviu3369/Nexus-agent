@@ -21,8 +21,7 @@ use support::fake_gemini::{FakeGemini, MODEL, Reply};
 
 const TOKEN: &str = "skills-token";
 const KEY: &str = "SENTINEL-gemini-key-skills-7d21";
-const BODY: &str =
-    "SENTINEL-instructions: write the letter in Dutch, formal, under one page.";
+const BODY: &str = "SENTINEL-instructions: write the letter formal, under one page.";
 const DESCRIPTION: &str =
     "Writes cover letters for IT jobs. Use when the user asks for a motivation letter.";
 

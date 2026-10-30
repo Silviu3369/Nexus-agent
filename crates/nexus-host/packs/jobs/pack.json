@@ -41,7 +41,7 @@
             "required": false,
             "choices": [],
             "max_chars": 100,
-            "help": "The ad's own reference or vacancy number (for example TopJobs's vacature number), if it shows one",
+            "help": "The ad's own reference or vacancy number, if it shows one",
             "min": null,
             "max": null
           },
@@ -125,7 +125,7 @@
             "required": false,
             "choices": [],
             "max_chars": 100,
-            "help": "Where it was found or sent: TopJobs, LinkedIn, Indeed, the company site, an agency, a recruiter…",
+            "help": "Where it was found or sent: a job board, the company site, an agency, a recruiter…",
             "min": null,
             "max": null
           },

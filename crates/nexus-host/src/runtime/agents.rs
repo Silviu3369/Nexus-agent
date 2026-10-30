@@ -265,13 +265,13 @@ mod tests {
 
     #[test]
     fn the_instruction_names_the_agent_and_says_its_text_grants_nothing() {
-        let note = agent_note(&agent(&[], "Tickets at work", "Answer in Dutch."));
+        let note = agent_note(&agent(&[], "Tickets at work", "Answer briefly."));
         assert!(
             note.contains(
                 "you work as \"Support desk\", one of the user's agents: Tickets at work."
             )
         );
-        assert!(note.contains("grant no permissions:\nAnswer in Dutch."));
+        assert!(note.contains("grant no permissions:\nAnswer briefly."));
         let bare = agent_note(&agent(&[], "", ""));
         assert!(bare.ends_with("one of the user's agents."));
     }

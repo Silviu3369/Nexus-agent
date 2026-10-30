@@ -83,7 +83,7 @@ export function AgentForm({
     >
       <label>
         Agent name
-        <input value={name} maxLength={60} onChange={(e) => setName(e.currentTarget.value)} placeholder="Support desk" />
+        <input value={name} maxLength={60} onChange={(e) => setName(e.currentTarget.value)} placeholder="A short name, e.g. Research" />
       </label>
       <label>
         What it is for
@@ -91,7 +91,7 @@ export function AgentForm({
           value={description}
           maxLength={500}
           onChange={(e) => setDescription(e.currentTarget.value)}
-          placeholder="Tickets and Microsoft 365 questions at work"
+          placeholder="The kind of work it does"
         />
       </label>
       <label>

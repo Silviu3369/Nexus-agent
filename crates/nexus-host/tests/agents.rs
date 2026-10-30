@@ -23,8 +23,7 @@ use support::fake_gemini::{FakeGemini, MODEL, Reply};
 
 const TOKEN: &str = "agents-token";
 const KEY: &str = "SENTINEL-gemini-key-agents-5e70";
-const HELPDESK: &str =
-    "SENTINEL-helpdesk-instructions: answer in Dutch, with the ticket number first.";
+const HELPDESK: &str = "SENTINEL-support-instructions: answer with the ticket number first.";
 
 fn config(fake: &FakeGemini) -> RuntimeConfig {
     RuntimeConfig {
@@ -237,7 +236,7 @@ async fn a_task_started_with_an_agent_runs_as_that_agent_and_nexus_stays_as_it_w
     );
 
     // A follow-up stays with its agent, whatever the request names.
-    fake.push(Reply::text(&["Still Dutch."]));
+    fake.push(Reply::text(&["Still the ticket first."]));
     let again = ask(&client, Some(sent.conversation_id), None, "h2").await;
     settled(&client, &again).await;
     let follow = fake.generations()[2].json();

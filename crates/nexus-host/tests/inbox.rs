@@ -173,14 +173,14 @@ async fn a_job_ad_put_in_the_inbox_becomes_an_application_once() {
 
     fake.push(Reply::calls(&[(
         "read_document",
-        json!({"folder": "Ads", "path": "TopJobs vacature.pdf"}),
+        json!({"folder": "Ads", "path": "Ad 70123456.pdf"}),
     )]));
     fake.push(Reply::calls(&[(
         "add_record",
         json!({"register": "job_applications", "values": {
             "company": "Acme", "role": "Service Desk Agent", "status": "To apply",
             "reference": "70123456", "source": "TopJobs", "location": "Springfield",
-            "ad_file": "Ads/TopJobs vacature.pdf"
+            "ad_file": "Ads/Ad 70123456.pdf"
         }}),
     )]));
     fake.push(Reply::text(&[
@@ -188,8 +188,8 @@ async fn a_job_ad_put_in_the_inbox_becomes_an_application_once() {
     ]));
     std::fs::write(ads.0.join("~$draft.docx"), b"lock").unwrap();
     std::fs::write(ads.0.join("list.csv"), "a;b").unwrap();
-    let pdf = tiny_pdf("Vacature 70123456 Service Desk Agent bij Acme in Springfield");
-    std::fs::write(ads.0.join("TopJobs vacature.pdf"), &pdf).unwrap();
+    let pdf = tiny_pdf("Vacancy 70123456 Service Desk Agent at Acme in Springfield");
+    std::fs::write(ads.0.join("Ad 70123456.pdf"), &pdf).unwrap();
 
     let view = inbox_until(&client, &register, |v| {
         v.files
@@ -204,7 +204,7 @@ async fn a_job_ad_put_in_the_inbox_becomes_an_application_once() {
         view.files
     );
     let started = &view.files[0];
-    assert_eq!(started.path, "TopJobs vacature.pdf");
+    assert_eq!(started.path, "Ad 70123456.pdf");
     let conversation = started.conversation_id.unwrap();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     let record = loop {
@@ -218,10 +218,10 @@ async fn a_job_ad_put_in_the_inbox_becomes_an_application_once() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     };
     assert_eq!(record.values["reference"], "70123456");
-    assert_eq!(record.values["ad_file"], "Ads/TopJobs vacature.pdf");
+    assert_eq!(record.values["ad_file"], "Ads/Ad 70123456.pdf");
     assert_eq!(record.created_by, nexus_protocol::RecordActor::Agent);
     let task = client.conversation(conversation).await.unwrap();
-    assert_eq!(task.title, "Job ad · TopJobs vacature.pdf");
+    assert_eq!(task.title, "Job ad · Ad 70123456.pdf");
     assert_eq!(
         task.requested_by,
         Some(nexus_protocol::ActorView {
@@ -232,8 +232,8 @@ async fn a_job_ad_put_in_the_inbox_becomes_an_application_once() {
     );
     let asked = &task.messages[0].text;
     assert!(
-        asked.contains("\"Ads\" as \"TopJobs vacature.pdf\"")
-            && asked.contains("TopJobs's vacature number"),
+        asked.contains("\"Ads\" as \"Ad 70123456.pdf\"")
+            && asked.contains("reference or vacancy number"),
         "{asked}"
     );
     let read = fake.generations()[1].json().to_string();
@@ -332,7 +332,7 @@ async fn a_job_ad_put_in_the_inbox_becomes_an_application_once() {
         })
         .await
         .unwrap();
-    std::fs::write(ads.0.join("Another ad.txt"), "Vacature 2 at Beta").unwrap();
+    std::fs::write(ads.0.join("Another ad.txt"), "Vacancy 2 at Beta").unwrap();
     tokio::time::sleep(Duration::from_millis(900)).await;
     assert_eq!(
         client
@@ -377,7 +377,7 @@ async fn without_a_model_a_file_fails_and_can_be_retried() {
         })
         .await
         .unwrap();
-    std::fs::write(ads.0.join("ad.txt"), "Vacature at Acme").unwrap();
+    std::fs::write(ads.0.join("ad.txt"), "Vacancy at Acme").unwrap();
     let view = inbox_until(&client, &register, |v| {
         v.files.iter().any(|f| f.status == InboxFileStatus::Failed)
     })
@@ -516,14 +516,14 @@ async fn a_rate_limited_ad_is_tried_again_on_its_own_and_scored_against_the_cv()
         "add_record",
         json!({"register": "job_applications", "values": {
             "company": "Acme", "role": "M365 Support", "status": "To apply", "reference": "4711",
-            "match_score": 78, "match_notes": "Fits: Microsoft 365. Missing: Dutch C1.",
+            "match_score": 78, "match_notes": "Fits: Microsoft 365. Missing: Spanish C1.",
             "ad_file": "Ads/ad.txt"
         }}),
     )]));
     fake.push(Reply::text(&["Saved Acme, M365 Support, match 78."]));
     std::fs::write(
         ads.0.join("ad.txt"),
-        "Vacature 4711: M365 Support at Acme. Dutch C1 required.",
+        "Vacancy 4711: M365 Support at Acme. Spanish C1 required.",
     )
     .unwrap();
 
@@ -536,7 +536,7 @@ async fn a_rate_limited_ad_is_tried_again_on_its_own_and_scored_against_the_cv()
     assert_eq!(done.files.len(), 1, "one file, tried twice");
     let record = records(&client, &register).await.remove(0);
     assert_eq!(record.values["match_score"], "78");
-    assert!(record.values["match_notes"].contains("Missing: Dutch C1"));
+    assert!(record.values["match_notes"].contains("Missing: Spanish C1"));
     let titled: Vec<_> = client
         .conversations(20)
         .await
@@ -593,7 +593,7 @@ async fn with_the_daily_budget_used_up_a_file_waits_for_tomorrow() {
         })
         .await
         .unwrap();
-    std::fs::write(ads.0.join("ad.txt"), "Vacature at Acme").unwrap();
+    std::fs::write(ads.0.join("ad.txt"), "Vacancy at Acme").unwrap();
     let view = inbox_until(&client, &register, |v| {
         v.files.first().is_some_and(|f| f.reason.is_some())
     })
