@@ -393,6 +393,7 @@ impl Runtime {
             .start_message(
                 SendMessageRequest {
                     conversation_id: None,
+                    agent_id: None,
                     project_id: row.project_id,
                     idempotency_key: key,
                     text: row.prompt.clone(),

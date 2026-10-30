@@ -74,6 +74,7 @@ fn exchange(
     NewExchange {
         requester: nexus_storage::Requester::User,
         pack: None,
+        agent: None,
         conversation_id: conversation,
         project_id: None,
         idempotency_key: key.to_string(),

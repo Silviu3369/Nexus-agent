@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::StorageError;
 
-pub const SUPPORTED_VERSION: i64 = 23;
+pub const SUPPORTED_VERSION: i64 = 24;
 
 /// Version 1: everything M1 persists. State columns are closed lists that a
 /// test keeps identical to the `nexus-core` enums. Times are UTC unix ms.
@@ -1047,6 +1047,10 @@ const MIGRATIONS: &[Migration] = &[
         sql: V23,
         rebuilds_parent_table: false,
     },
+    Migration {
+        sql: V24,
+        rebuilds_parent_table: false,
+    },
 ];
 
 /// Version 23 (ADR-PACK-001): the user's skills, imported as text and kept
@@ -1154,3 +1158,32 @@ pub(crate) fn migrate_until(conn: &mut Connection, target: i64) -> Result<(), St
     }
     Ok(())
 }
+
+/// Version 24 (ADR-AGENT-001): the user's specialised agents. An agent is
+/// a configuration, not a process: its instructions, the tools it does not
+/// use, the skills and MCP servers it may use, its model and its project.
+/// It only takes away from the user's permissions. Each agent is an actor,
+/// so what it wrote names it; an agent is archived, never deleted. A task
+/// keeps the agent it was started with (none: the default agent, Nexus).
+const V24: &str = r#"
+CREATE TABLE agents (
+    id               TEXT    PRIMARY KEY,
+    name             TEXT    NOT NULL CHECK (length(name) BETWEEN 1 AND 60),
+    description      TEXT    NOT NULL CHECK (length(description) <= 500),
+    instructions     TEXT    NOT NULL CHECK (length(instructions) <= 8000),
+    tools_off_json   TEXT    NOT NULL CHECK (json_valid(tools_off_json)),
+    skills_json      TEXT    NOT NULL CHECK (json_valid(skills_json)),
+    mcp_servers_json TEXT    NOT NULL CHECK (json_valid(mcp_servers_json)),
+    connection_id    TEXT    REFERENCES provider_connections (id) ON DELETE SET NULL,
+    model            TEXT    CHECK (model IS NULL OR length(model) BETWEEN 1 AND 200),
+    project_id       TEXT    REFERENCES projects (id) ON DELETE SET NULL,
+    actor_id         TEXT    NOT NULL UNIQUE REFERENCES actors (id),
+    revision         INTEGER NOT NULL CHECK (revision >= 1),
+    archived_at_ms   INTEGER,
+    created_at_ms    INTEGER NOT NULL,
+    updated_at_ms    INTEGER NOT NULL
+) STRICT;
+CREATE UNIQUE INDEX agents_active_name ON agents (lower(name)) WHERE archived_at_ms IS NULL;
+
+ALTER TABLE tasks ADD COLUMN agent_id TEXT REFERENCES agents (id);
+"#;

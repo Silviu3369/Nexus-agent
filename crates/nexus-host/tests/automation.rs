@@ -490,6 +490,7 @@ async fn a_run_sent_just_before_a_stop_is_recorded_not_sent_again() {
                 NewExchange {
                     requester: nexus_storage::Requester::User,
                     pack: None,
+                    agent: None,
                     conversation_id: None,
                     project_id: None,
                     idempotency_key: format!("auto:{id}:{due}"),

@@ -266,6 +266,7 @@ Pentru mai mulți utilizatori se adaugă un proiect explicit de identitate, sepa
 | ADR-POLICY-001 | Politica de aprobare ca date, cu limite fixe; aprobări în lot; confirmare de încredere pentru efectele externe | **Implementat** (schema v19–v21, 2026-10-25); rămân selecția pe elemente în lot și regulile pe flux (cu pachetele) |
 | ADR-PROVIDER-002 | Ce date pot pleca la ce furnizor: clase de date pe surse, profilul conexiunii, refuz în Host | **Implementat** (schema v22, 2026-10-25); rămân regiunea UE pentru pilot, mascarea, modelul local |
 | ADR-PACK-001 | Pachete first-party declarative, fără cod; instrucțiunile în formatul deschis Agent Skills (`SKILL.md`), fără scripturi și fără permisiuni proprii | Acceptat (2026-10-28); pasul 1 (skill-urile tale, schema v23) și pasul 2 (pachetul Jobs) implementate |
+| ADR-AGENT-001 | Agenți specializați: configurații cu instrucțiunile, skill-urile, uneltele, modelul și proiectul lor, care doar strâng Permisiunile tale | Acceptat (2026-10-30); pasul 1 (agenții în Host și în fereastră, schema v24) implementat |
 
 Rezultatele ADR-urilor se înregistrează în acest document, cu alternativa aleasă, motiv, dependențe, limitări și probe. Progresul rămâne în plan; aici se schimbă deciziile de proiectare.
 
@@ -878,3 +879,100 @@ Revizuirea de produs cere, pentru un pilot: date de business doar la furnizori p
   - ce e oprit în ele și limita de 2;
   - textul `job-ad-intake`, doar de citit.
 - **Rămâne pasul 3:** cifrele din Results configurate de pachet, când apare al doilea pachet cu cifre (DocumentOps în M5).
+
+### ADR-AGENT-001 — agenți specializați (acceptat 2026-10-30)
+
+**Context.**
+
+- Azi Nexus are un singur agent. Toate sarcinile primesc:
+  - persona ta (nume, ton, stil);
+  - toate uneltele permise în Permisiuni;
+  - toate skill-urile pornite;
+  - modelul activ, cu rezerva lui;
+  - memoria proiectului activ.
+- Cazurile tale reale sunt diferite: căutarea de job (CV, anunțuri, scrisori, evidența Job applications) și helpdesk-ul de la serviciu (tickete, Microsoft 365, Microsoft Learn prin MCP). Un singur agent le amestecă. O întrebare de helpdesk primește și CV-ul ca sursă, și skill-ul pentru scrisori, și evidența de joburi.
+- Ecranul Agents arată deja „un singur agent” și spune că agenții specializați nu există încă.
+- La 2026-10-30 ai propus mai mulți agenți și ai ales varianta „agenți specializați”, nu agenți care lucrează împreună.
+- **Practica, verificată la 2026-10-30:**
+  - Claude Code definește un sub-agent ca fișier Markdown cu antet: `name`, `description` (când se folosește), `tools` (lista permisă), `disallowedTools`, `model`, `skills`, `mcpServers`, `memory`. Textul de sub antet e instrucțiunea agentului ([documentația](https://code.claude.com/docs/en/sub-agents)).
+  - OpenAI Agents SDK: un agent e un nume, instrucțiuni, un model și unelte, plus predări (handoffs) către alți agenți.
+  - Anthropic: un agent folosește de obicei de vreo 4 ori mai mulți tokeni decât un chat, iar un sistem cu mai mulți agenți de vreo 15 ori. Nu se potrivește când agenții trebuie să împartă același context sau depind mult unul de altul ([Anthropic Engineering](https://www.anthropic.com/engineering/multi-agent-research-system)).
+
+**Decizie.**
+
+1. **Un agent e o configurație, nu un proces.** Are:
+   - un nume și o descriere (pentru ce e);
+   - instrucțiunile lui, scrise de tine;
+   - skill-urile lui, alese dintre cele pornite;
+   - uneltele lui: ce oprește din ce permiți tu în Permisiuni, plus serverele MCP pe care le poate folosi;
+   - modelul lui (o conexiune și un model), opțional; fără el, folosește modelul activ;
+   - proiectul lui, cu memoria lui, opțional.
+2. **Agentul de azi rămâne implicit**, sub numele „Nexus”, cu tot ce are acum. Nimic nu se schimbă pentru sarcinile tale existente.
+3. **Un agent doar strânge.**
+   - Uneltele lui sunt cele din Permisiunile tale, minus ce oprește el. Nu poate porni o unealtă oprită de tine și nici nu poate ridica numărul de scrieri fără întrebare.
+   - Se folosește același mecanism ca la regulile pachetelor (`Permissions::within`).
+   - Instrucțiunile lui sunt text de-al tău: spun cum lucrează agentul, dar nu dau permisiuni. Orice efect trece prin broker, politică și aprobarea ta, ca acum.
+   - Politica de date pe furnizor (ADR-PROVIDER-002) se aplică modelului agentului, ca oricărui model.
+4. **Alegerea.**
+   - O sarcină nouă primește un agent, ales în bara de comenzi; implicit „Nexus”.
+   - O conversație rămâne cu agentul ei.
+   - Agentul se vede în sarcină, în Activitate și pe cardurile de aprobare.
+5. **Fiecare agent e un actor** (ADR-IDENTITY-001), deci istoricul unei înregistrări spune ce agent a scris-o. Un agent nu se șterge, doar se arhivează, ca istoricul vechi să rămână citibil.
+6. **Pachetele:** inboxul Jobs poate rula cu un agent ales de tine, dar regulile pachetului rămân: se aplică amândouă, fiecare doar strânge.
+7. **Stocare:** schema v24:
+   - tabelul `agents`, cu reviziile lui;
+   - agentul fiecărei sarcini.
+8. **Nu intră acum:**
+   - agenți care se cheamă între ei (predări, sub-agenți, lucru în paralel), de reluat doar cu o decizie nouă;
+   - importul și exportul în formatul de fișier al Claude Code;
+   - un agent care rulează singur, fără o sarcină pornită de tine, de inbox sau de o automatizare.
+
+**Ordinea implementării (pași mici, fiecare încercat de tine):**
+
+1. **Agenții în Host și în fereastră:**
+   - în Agents: creare, editare și arhivare;
+   - alegerea agentului la o sarcină nouă;
+   - la fiecare tură se aplică instrucțiunile, skill-urile, uneltele, modelul și memoria agentului;
+   - agentul se vede în sarcină și în Activitate.
+   - Caz real: creezi agenții „Jobs” și „Support desk” și pui aceeași întrebare la amândoi.
+2. **Inboxul și automatizările cu agentul ales.**
+
+**Ce nu se schimbă:**
+
+- Permisiunile tale, aprobările și dialogul Windows;
+- politica de date pe furnizor;
+- skill-urile se citesc și se pornesc tot de tine, o singură dată, pentru toți agenții.
+
+**Alternative respinse:**
+
+- **agenți care lucrează împreună acum:** costă de vreo 15 ori mai mulți tokeni decât un chat, iar cu Gemini gratuit, care dă deja 503, ar însemna mai multe căderi;
+- **un proces separat pentru fiecare agent:** nu aduce izolare reală (AGENTS.md) și complică Host-ul;
+- **agenți cu permisiuni proprii, mai largi decât ale tale:** un agent ar ocoli Permisiunile.
+
+**Întrebări pentru tine:**
+
+1. **Persona.** Recomand ca numele și tonul tău să rămână pentru toți, iar agentul să adauge instrucțiunile lui. Varianta: fiecare agent cu persona lui.
+2. **Skill-urile.** Recomand ca un agent să vadă doar skill-urile alese pentru el, iar „Nexus” pe toate cele pornite, cum ai decis la ADR-PACK-001. Varianta: toți agenții văd toate skill-urile pornite.
+3. **Memoria.** Recomand ca un agent să poată fi legat de un proiect: sarcinile lui intră acolo și folosesc memoria lui. Varianta: memoria rămâne după proiectul activ, ca acum.
+
+**Răspunsurile tale (2026-10-30):** numele și tonul tău rămân pentru toți agenții, iar fiecare agent adaugă instrucțiunile lui; un agent vede doar skill-urile alese pentru el, iar „Nexus” pe toate cele pornite; un agent poate fi legat de un proiect, iar sarcinile lui intră acolo și folosesc memoria lui.
+
+**Implementare, pasul 1 (2026-10-30): agenții în Host și în fereastră.**
+
+- **Schema v24:**
+  - tabelul `agents`: nume, descriere, instrucțiuni, uneltele oprite, skill-urile și serverele MCP alese, conexiunea și modelul, proiectul, revizia, arhivarea;
+  - coloana `tasks.agent_id`.
+
+  Fiecare agent are un actor `Agent` cu numele lui. Un agent nu se șterge: arhivat, actorul lui e dezactivat, iar istoricul îi păstrează numele. O conexiune ștearsă îl întoarce la modelul activ.
+- **Host-ul** (`runtime/agents.rs`):
+  - verifică fiecare parte față de ce există: numele (nu „Nexus”, nu numele personei, nu al altui agent), uneltele din registru, skill-urile importate, serverele MCP, conexiunea împreună cu modelul, proiectul;
+  - la fiecare tură, agentul sarcinii adaugă instrucțiunile lui după persona; oprește uneltele lui prin același mecanism ca pachetele, dar fiecare refuz spune cine a oprit unealta; lasă doar skill-urile și serverele MCP alese.
+  - O sarcină nouă cu un agent folosește modelul și proiectul lui. O continuare rămâne cu agentul conversației, orice ar spune cererea.
+- **Actorul:** ce scrie agentul (o schimbare în evidență, un fapt propus) e o acțiune a actorului lui; istoricul înregistrării numește agentul.
+- **Ce se vede:**
+  - în Agents: „Nexus” și lista „Your agents”, cu creare, editare și arhivare;
+  - în bara de comenzi și în compozitorul unei sarcini noi: alegerea agentului;
+  - în sarcină: „Agent: …”;
+  - în Activitate: numele agentului după titlul sarcinii;
+  - pe cardul de aprobare: agentul care a cerut.
+- **Rămâne pasul 2:** inboxul și automatizările cu agentul ales.

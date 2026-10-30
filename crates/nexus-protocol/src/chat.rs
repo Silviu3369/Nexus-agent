@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::ids::{
-    AgentStepId, ConnectionId, ConversationId, MemoryId, MessageId, ProjectId, RecordId, RunId,
+    AgentId, AgentStepId, ConnectionId, ConversationId, MemoryId, MessageId, ProjectId, RecordId,
+    RunId,
 };
 use crate::memory::MemoryScope;
 use crate::runs::RunStatus;
@@ -307,6 +308,8 @@ pub struct AgentStepView {
     pub message_id: MessageId,
     pub conversation_id: ConversationId,
     pub conversation_title: String,
+    /// The agent of the step's task (`None`: the default agent, Nexus).
+    pub agent: Option<String>,
     pub seq: i64,
     pub status: AgentStepStatus,
     pub detail: AgentStepDetail,
@@ -319,6 +322,8 @@ pub struct ConversationSummary {
     pub conversation_id: ConversationId,
     pub project_id: Option<ProjectId>,
     pub title: String,
+    /// The agent its task was started with (`None`: Nexus).
+    pub agent: Option<String>,
     pub updated_at_ms: i64,
 }
 
@@ -330,6 +335,9 @@ pub struct ConversationView {
     /// Who asked for its task: the user, an automation or the inbox
     /// (ADR-IDENTITY-001; `None` when no longer known).
     pub requested_by: Option<ActorView>,
+    /// The agent its task was started with (`None`: Nexus); every message
+    /// in it is answered by that agent.
+    pub agent: Option<String>,
     pub messages: Vec<ChatMessageView>,
 }
 
@@ -342,6 +350,10 @@ pub struct SendMessageRequest {
     pub project_id: Option<ProjectId>,
     pub idempotency_key: String,
     pub text: String,
+    /// The agent a new conversation is started with (`None`: Nexus). A
+    /// follow-up stays with its conversation's agent.
+    #[serde(default)]
+    pub agent_id: Option<AgentId>,
 }
 
 /// What a deletion removed.

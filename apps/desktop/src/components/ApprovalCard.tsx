@@ -116,7 +116,7 @@ export function ApprovalCard({ run, agentName, compact = false }: { run: RunView
         </div>
         <div className="kv-row">
           <dt>Requested by</dt>
-          <dd>{origin ? `${agentName} · task “${origin.conversation_title}”` : "You · Tools → Notes"}</dd>
+          <dd>{origin ? `${origin.agent ?? agentName} · task “${origin.conversation_title}”` : "You · Tools → Notes"}</dd>
         </div>
         <div className="kv-row">
           <dt>Reason</dt>

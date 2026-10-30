@@ -57,6 +57,8 @@ pub struct RecordChangeRow {
     pub read_hosts: Vec<String>,
     pub undone_at_ms: Option<i64>,
     pub at_ms: i64,
+    /// The agent of the task it was made in (`None`: Nexus, or the user).
+    pub agent: Option<String>,
 }
 
 /// Where an agent's change came from.
@@ -110,7 +112,9 @@ const RECORD_COLUMNS: &str =
     "id, register_id, values_json, status, follow_up_on, revision, created_by,
     created_at_ms, updated_at_ms";
 const CHANGE_COLUMNS: &str = "id, record_id, kind, actor, before_json, after_json, revision_after,
-    conversation_id, message_id, read_hosts_json, undone_at_ms, at_ms";
+    conversation_id, message_id, read_hosts_json, undone_at_ms, at_ms,
+    (SELECT a.name FROM tasks t JOIN agents a ON a.id = t.agent_id
+     WHERE t.conversation_id = record_changes.conversation_id LIMIT 1)";
 
 impl Store {
     /// Creates a register, or brings its name and fields up to date.
@@ -884,6 +888,7 @@ struct RawChange {
     read_hosts_json: String,
     undone_at_ms: Option<i64>,
     at_ms: i64,
+    agent: Option<String>,
 }
 
 fn raw_change(r: &rusqlite::Row) -> rusqlite::Result<RawChange> {
@@ -900,6 +905,7 @@ fn raw_change(r: &rusqlite::Row) -> rusqlite::Result<RawChange> {
         read_hosts_json: r.get(9)?,
         undone_at_ms: r.get(10)?,
         at_ms: r.get(11)?,
+        agent: r.get(12)?,
     })
 }
 
@@ -924,6 +930,7 @@ impl RawChange {
             read_hosts: serde_json::from_str(&self.read_hosts_json).unwrap_or_default(),
             undone_at_ms: self.undone_at_ms,
             at_ms: self.at_ms,
+            agent: self.agent,
         })
     }
 }

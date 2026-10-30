@@ -295,6 +295,15 @@ test("the activity log names tasks and runs, and skips events the steps already 
   assert.equal(entries[1].taskId, CONV);
 });
 
+test("a task started with one of your agents names it, and saving an agent reloads only the agents", () => {
+  const helpdesk = { ...model("Done", T0, T0 + 1), agent: "Support desk" };
+  const entries = buildActivity({ steps: [helpdesk], events: [], runs: [], conversations: [], agent: "Nexus" });
+  assert.equal(entries[0].taskTitle, "Check the site · Support desk");
+  const ev = (kind: string) => ({ seq: 1, kind, entity_id: "x", created_at_ms: T0 });
+  assert.deepEqual([...invalidatedBy([ev("AgentSaved"), ev("AgentArchived")])], ["agents"]);
+  assert.ok(!invalidatedBy([ev("AgentStepStarted")]).has("agents"));
+});
+
 test("events invalidate only what they describe", () => {
   const ev = (kind: string) => ({ seq: 1, kind, entity_id: "x", created_at_ms: T0 });
   assert.deepEqual([...invalidatedBy([ev("ApprovalRequested")])].sort(), ["focus", "runs"]);

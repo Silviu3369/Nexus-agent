@@ -1204,7 +1204,8 @@ export function buildActivity(input: {
       title,
       detail,
       taskId: s.conversation_id,
-      taskTitle: s.conversation_title,
+      // A task started with one of the user's agents names it.
+      taskTitle: s.agent ? `${s.conversation_title} · ${s.agent}` : s.conversation_title,
       projectId: projectOf.get(s.conversation_id) ?? null,
       tool,
       model: s.detail.kind === "ModelCall" ? s.detail.model : null,
@@ -1279,6 +1280,7 @@ export type Collection =
   | "automations"
   | "registers"
   | "folders"
+  | "agents"
   | "focus";
 
 /** What each durable event invalidates. Events are notifications only;
@@ -1318,6 +1320,8 @@ export function invalidatedBy(events: EventView[]): Set<Collection> {
       out.add("focus");
     } else if (k.startsWith("Project") || k === "ActiveProjectChanged") {
       out.add("projects");
+    } else if (k === "AgentSaved" || k === "AgentArchived") {
+      out.add("agents");
     } else if (k.startsWith("Connection") || k === "ActiveConnectionChanged") {
       out.add("connections");
       // The chosen models are listed with their usage.

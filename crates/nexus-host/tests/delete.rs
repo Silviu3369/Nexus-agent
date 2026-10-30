@@ -166,6 +166,7 @@ async fn a_task_is_deleted_whole_but_not_while_its_reply_is_being_written() {
             project_id: None,
             idempotency_key: "w2".into(),
             text: "More".into(),
+            agent_id: None,
         })
         .await
         .unwrap_err();

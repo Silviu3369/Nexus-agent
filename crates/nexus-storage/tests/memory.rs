@@ -340,6 +340,7 @@ async fn projects_are_explicit_and_the_default_one_takes_new_tasks_until_another
             NewExchange {
                 requester: nexus_storage::Requester::User,
                 pack: None,
+                agent: None,
                 conversation_id: None,
                 project_id: Some(side.id),
                 idempotency_key: "p1".into(),

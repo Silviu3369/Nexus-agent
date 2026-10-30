@@ -3288,3 +3288,17 @@ button.ghost.danger-ghost {
 .data-connections p {
   margin: 4px 0 0;
 }
+
+/* The user's agents (ADR-AGENT-001): unlike planned items, they are real. */
+.agent-list li {
+  opacity: 1;
+}
+
+.agent-form fieldset {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}

@@ -210,20 +210,8 @@ export const PROVIDERS: ProviderInfo[] = [
   { id: "local", name: "Local models", stored: null, adapter: false, note: "No local runtime in this build" },
 ];
 
-export interface PlannedAgent {
-  name: string;
-  role: string;
-  planned: string;
-}
-
-/** Specialised agents the roadmap names. None of them runs today. */
-export const PLANNED_AGENTS: PlannedAgent[] = [
-  { name: "Research Agent", role: "Multi-source reading with citations", planned: "After memory and documents (M5)" },
-  { name: "System Agent", role: "Controlled operations on this PC", planned: "M3, after isolation" },
-  { name: "Verification Agent", role: "Independent checks of results", planned: "With the orchestrator" },
-];
-
-/** The one agent that exists: the assistant, defined by the persona. */
+/** Nexus, the default agent, defined by the persona (the user's own agents
+ *  come from the Host). */
 export const ASSISTANT = {
   id: "assistant",
   role: "General assistant",

@@ -3,6 +3,7 @@
 //! contracts (`CONTRACTE_NEXUS_RO.md` §1) — `nexus-host` and `nexus-client`
 //! depend on it; it depends on neither.
 
+pub mod agents;
 pub mod automation;
 pub mod chat;
 pub mod data;
@@ -22,6 +23,7 @@ pub mod skills;
 pub mod usage;
 pub mod version;
 
+pub use agents::{AgentView, SaveAgentRequest};
 pub use data::{
     ConnectionDataView, DataChange, DataPolicyView, SetDataPolicyRequest, SourceDataView,
 };
@@ -46,7 +48,7 @@ pub use error::{ErrorCode, NexusError};
 pub use files::{FolderEntryView, FolderView, SaveFolderRequest};
 pub use handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse, HealthStatus};
 pub use ids::{
-    ActionId, ActorId, AgentStepId, ApprovalId, ArtifactId, AutomationId, ConnectionId,
+    ActionId, ActorId, AgentId, AgentStepId, ApprovalId, ArtifactId, AutomationId, ConnectionId,
     ConversationId, EventId, FolderId, McpServerId, MemoryId, MessageId, OperationId, PolicyRuleId,
     ProjectId, RecordId, RegisterId, RequestId, RunId, SkillId, StepId, TaskId,
 };

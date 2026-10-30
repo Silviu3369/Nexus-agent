@@ -1,17 +1,20 @@
-// Agents: the one agent this build has — the assistant, shaped by the
-// persona — with its model, tools, rights and recent work. The specialised
-// agents of the roadmap are listed as not available, with no controls.
+// Agents: Nexus, the default agent shaped by the persona — with its model,
+// tools, rights and recent work — and the user's own agents (ADR-AGENT-001),
+// each a configuration that only takes away from Nexus's permissions.
 
 import { useMemo, useState } from "react";
-import { ASSISTANT, PLANNED_AGENTS, TOOLS } from "../model/catalog.ts";
+import type { AgentView } from "@nexus/contracts";
+import { api, describeError } from "../api";
+import { AgentForm } from "../components/AgentForm";
+import { ASSISTANT, TOOLS } from "../model/catalog.ts";
 import { describeStep, stepStatus } from "../model/execution.ts";
 import type { ExecStatus } from "../model/execution.ts";
 import { ago, clock } from "../model/format.ts";
 import { PersonaCard } from "../Settings";
 import { useGoTo } from "../shell/nav";
-import { useDerived, useNexus, useNow } from "../state/store";
-import { AgentGlyph, Empty, Facts, Panel, StatusPill } from "../ui";
-import { AgentIcon, AlertIcon } from "../icons";
+import { useDerived, useNexus, useNexusActions, useNow } from "../state/store";
+import { AgentGlyph, Empty, ErrorLine, Facts, Panel, StatusPill } from "../ui";
+import { AgentIcon, AlertIcon, PlusIcon } from "../icons";
 
 export function AgentsView() {
   const d = useNexus();
@@ -60,21 +63,7 @@ export function AgentsView() {
             ]}
           />
         </article>
-        <Panel title="Planned agents" icon={<AgentIcon size={15} />} id="planned-agents" className="agent-planned">
-          <p className="muted small">Named in the roadmap; none of them runs in this build, so none can be started.</p>
-          <ul className="planned-list">
-            {PLANNED_AGENTS.map((a) => (
-              <li key={a.name}>
-                <AgentGlyph id={a.name} size={24} />
-                <span>
-                  <b>{a.name}</b>
-                  <small>{a.role}</small>
-                </span>
-                <span className="pill pill-unknown">{a.planned}</span>
-              </li>
-            ))}
-          </ul>
-        </Panel>
+        <YourAgents defaultName={agentName} />
       </div>
 
       <section className="panel inspector" aria-labelledby="inspector-heading">
@@ -176,5 +165,109 @@ export function AgentsView() {
         )}
       </section>
     </div>
+  );
+}
+
+/** The user's agents: each one with what it is for, its model and project,
+ *  and how many tasks it started; created, edited and archived here. */
+function YourAgents({ defaultName }: { defaultName: string }) {
+  const { agents, connections, projects } = useNexus();
+  const { refresh } = useNexusActions();
+  // `"new"` or the agent being edited.
+  const [editing, setEditing] = useState<AgentView | "new" | null>(null);
+  const [archiving, setArchiving] = useState<AgentView | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function archive(agent: AgentView) {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.archiveAgent(agent.agent_id);
+      setArchiving(null);
+      await refresh(["agents"]);
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const modelOf = (a: AgentView) =>
+    a.connection_id === null
+      ? "the active model"
+      : `${a.model ?? "?"} · ${connections?.find((c) => c.connection_id === a.connection_id)?.display_name ?? "connection"}`;
+  const projectOf = (a: AgentView) =>
+    a.project_id === null ? "the active project" : (projects?.find((p) => p.project_id === a.project_id)?.name ?? "a project");
+
+  return (
+    <Panel
+      title="Your agents"
+      icon={<AgentIcon size={15} />}
+      id="your-agents"
+      actions={
+        editing === null && (
+          <button type="button" className="ghost" onClick={() => setEditing("new")}>
+            <PlusIcon size={13} /> New agent
+          </button>
+        )
+      }
+    >
+      {editing !== null ? (
+        <AgentForm
+          agent={editing === "new" ? null : editing}
+          onDone={(saved) => {
+            setEditing(null);
+            if (saved) void refresh(["agents"]);
+          }}
+        />
+      ) : (
+        <>
+          <p className="muted small">
+            {`A new task starts with ${defaultName} unless you pick an agent in the command bar. An agent uses its own instructions, skills, model and project, and only the tools you allow it.`}
+          </p>
+          {agents === null ? (
+            <p className="muted">Loading…</p>
+          ) : agents.length === 0 ? (
+            <Empty>No agent yet. Create one for each kind of work, for example your job search and your helpdesk.</Empty>
+          ) : (
+            <ul className="planned-list agent-list">
+              {agents.map((a) => (
+                <li key={a.agent_id}>
+                  <AgentGlyph id={a.name} size={24} />
+                  <span>
+                    <b>{a.name}</b>
+                    <small>{a.description || "No description"}</small>
+                    <small>{`Model: ${modelOf(a)} · Project: ${projectOf(a)} · ${a.tasks} ${a.tasks === 1 ? "task" : "tasks"}`}</small>
+                  </span>
+                  <span className="actions">
+                    <button type="button" className="ghost" onClick={() => setEditing(a)}>
+                      Edit
+                    </button>
+                    <button type="button" className="ghost" onClick={() => setArchiving(a)}>
+                      Archive
+                    </button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {archiving && (
+            <div className="confirm-bar" role="alert">
+              <p>{`Archive “${archiving.name}”? No new task starts with it; its tasks and what it wrote keep its name.`}</p>
+              <div className="actions">
+                <button type="button" className="danger" disabled={busy} onClick={() => void archive(archiving)}>
+                  Archive now
+                </button>
+                <button type="button" className="ghost" disabled={busy} onClick={() => setArchiving(null)}>
+                  Keep
+                </button>
+              </div>
+            </div>
+          )}
+          <ErrorLine error={error} />
+        </>
+      )}
+    </Panel>
   );
 }

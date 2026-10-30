@@ -186,6 +186,7 @@ async fn the_daily_budget_stops_a_reply_between_steps_and_new_requests() {
             project_id: None,
             idempotency_key: "b2".to_string(),
             text: "Again".to_string(),
+            agent_id: None,
         })
         .await
         .unwrap_err();
@@ -204,6 +205,7 @@ async fn the_daily_budget_stops_a_reply_between_steps_and_new_requests() {
             project_id: None,
             idempotency_key: "b3".to_string(),
             text: "Again".to_string(),
+            agent_id: None,
         })
         .await
         .unwrap_err();

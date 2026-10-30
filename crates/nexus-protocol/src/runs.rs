@@ -177,6 +177,8 @@ pub struct RunOrigin {
     pub message_id: MessageId,
     pub conversation_id: ConversationId,
     pub conversation_title: String,
+    /// The agent of that task (`None`: the default agent, Nexus).
+    pub agent: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]

@@ -103,6 +103,7 @@ test("the history says who changed what", () => {
       { key: "follow_up_on", before: null, after: "2026-10-27" },
     ],
     conversation_id: "c-1",
+    agent: null,
     read_hosts: [],
     undone: false,
     can_undo: true,
@@ -110,6 +111,7 @@ test("the history says who changed what", () => {
   });
   assert.equal(changeText(register, change({}), "Nexus"), "Nexus changed status, follow up on");
   assert.equal(changeText(register, change({ kind: "Created" }), "Nexus"), "Nexus added it");
+  assert.equal(changeText(register, change({ kind: "Created", agent: "Jobs" }), "Nexus"), "Jobs added it");
   assert.equal(changeText(register, change({ kind: "Undo", actor: "User" }), "Nexus"), "You undid a change");
   assert.deepEqual(changeLines(register, change({})), ["Status: Applied → Interviewing", "Follow up on: — → 27 Oct 2026"]);
 });

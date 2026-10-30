@@ -110,6 +110,8 @@ pub struct RecordChangeView {
     pub fields: Vec<FieldChange>,
     /// The task in which the agent made it.
     pub conversation_id: Option<ConversationId>,
+    /// The agent of that task (`None`: Nexus, or the user's own change).
+    pub agent: Option<String>,
     /// Web hosts the agent had read in that reply before making it.
     pub read_hosts: Vec<String>,
     pub undone: bool,

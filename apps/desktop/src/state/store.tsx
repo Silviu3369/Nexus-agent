@@ -9,6 +9,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ReactNode } from "react";
 import type {
   AgentStepView,
+  AgentView,
   AutomationView,
   ConnectionView,
   ConversationId,
@@ -63,6 +64,8 @@ export interface NexusData {
   registers: RegisterView[] | null;
   /** Folders the user shared with Nexus. */
   folders: FolderView[] | null;
+  /** The user's agents in use (Nexus, the default, is not one of them). */
+  agents: AgentView[] | null;
   /** Bumped whenever records change, so views with their own lists reread. */
   recordsRev: number;
   events: EventView[];
@@ -90,6 +93,7 @@ const EMPTY: NexusData = {
   automations: null,
   registers: null,
   folders: null,
+  agents: null,
   recordsRev: 0,
   events: [],
   focusId: null,
@@ -153,7 +157,7 @@ export function NexusProvider({ children }: { children: ReactNode }) {
 
   const fetchCollections = useCallback(
     async (what: Set<Collection>) => {
-      const [runs, steps, conversations, connections, persona, projects, proposals, mcp, usage, automations, registers, folders] =
+      const [runs, steps, conversations, connections, persona, projects, proposals, mcp, usage, automations, registers, folders, agents] =
         await Promise.all([
         what.has("runs") ? api.listRuns().then((s) => s.runs) : Promise.resolve(undefined),
         what.has("steps") ? api.getActivity() : Promise.resolve(undefined),
@@ -167,6 +171,7 @@ export function NexusProvider({ children }: { children: ReactNode }) {
         what.has("automations") ? api.listAutomations() : Promise.resolve(undefined),
         what.has("registers") ? api.listRegisters() : Promise.resolve(undefined),
         what.has("folders") ? api.listFolders() : Promise.resolve(undefined),
+        what.has("agents") ? api.listAgents() : Promise.resolve(undefined),
       ]);
       const current = latest.current;
       const nextSteps = steps ?? current.steps ?? [];
@@ -187,6 +192,7 @@ export function NexusProvider({ children }: { children: ReactNode }) {
         automations: automations ?? d.automations,
         registers: registers ?? d.registers,
         folders: folders ?? d.folders,
+        agents: agents ?? d.agents,
         recordsRev: registers ? d.recordsRev + 1 : d.recordsRev,
         focusId,
         focus: focusId === d.focusId ? d.focus : null,
@@ -198,7 +204,7 @@ export function NexusProvider({ children }: { children: ReactNode }) {
   );
 
   const bootstrap = useCallback(async () => {
-    const [snapshot, steps, conversations, connections, persona, projects, proposals, mcp, usage, automations, registers, folders] =
+    const [snapshot, steps, conversations, connections, persona, projects, proposals, mcp, usage, automations, registers, folders, agents] =
       await Promise.all([
       api.listRuns(),
       api.getActivity(),
@@ -212,6 +218,7 @@ export function NexusProvider({ children }: { children: ReactNode }) {
       api.listAutomations(),
       api.listRegisters(),
       api.listFolders(),
+      api.listAgents(),
     ]);
     // Everything after the snapshot's watermark arrives through the events.
     const history = await api.getEvents(Math.max(0, snapshot.watermark - 200));
@@ -232,6 +239,7 @@ export function NexusProvider({ children }: { children: ReactNode }) {
       automations,
       registers,
       folders,
+      agents,
       recordsRev: d.recordsRev + 1,
       events: history.events.filter((e) => e.seq <= snapshot.watermark),
       focusId,
@@ -337,7 +345,7 @@ export function NexusProvider({ children }: { children: ReactNode }) {
       refresh: async (what) => {
         try {
           await fetchCollections(
-            new Set(what ?? ["runs", "steps", "conversations", "connections", "projects", "memory", "mcp", "usage", "automations", "registers", "folders", "focus"]),
+            new Set(what ?? ["runs", "steps", "conversations", "connections", "projects", "memory", "mcp", "usage", "automations", "registers", "folders", "agents", "focus"]),
           );
         } catch (err) {
           patch({ syncError: describeError(err) });

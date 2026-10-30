@@ -2,6 +2,7 @@
 //! (ADR-IPC-001: tarpc instead of a separate schema language). `nexus-host`
 //! implements this; `nexus-client` calls the generated client stub.
 
+use crate::agents::{AgentView, SaveAgentRequest};
 use crate::automation::{AutomationRunView, AutomationView, SaveAutomationRequest};
 use crate::chat::{
     AgentStepView, BackupModelView, ConnectionView, ConversationSummary, ConversationView,
@@ -13,8 +14,8 @@ use crate::error::NexusError;
 use crate::files::{FolderEntryView, FolderView, SaveFolderRequest};
 use crate::handshake::{GetHealthResponse, HandshakeRequest, HandshakeResponse};
 use crate::ids::{
-    ArtifactId, AutomationId, ConnectionId, ConversationId, FolderId, McpServerId, MemoryId,
-    MessageId, ProjectId, RecordId, RegisterId, RunId, SkillId,
+    AgentId, ArtifactId, AutomationId, ConnectionId, ConversationId, FolderId, McpServerId,
+    MemoryId, MessageId, ProjectId, RecordId, RegisterId, RunId, SkillId,
 };
 use crate::mcp::{McpServerView, SaveMcpServerRequest};
 use crate::memory::{
@@ -256,6 +257,16 @@ pub trait NexusService {
     /// The packs built into Nexus, with their skills and the rules of
     /// their intake (ADR-PACK-001).
     async fn list_packs() -> Result<Vec<PackView>, NexusError>;
+
+    /// The user's agents in use (ADR-AGENT-001); Nexus, the default, is
+    /// not among them.
+    async fn list_agents() -> Result<Vec<AgentView>, NexusError>;
+
+    /// Creates an agent, or changes the revision the user edited.
+    async fn save_agent(request: SaveAgentRequest) -> Result<AgentView, NexusError>;
+
+    /// No new task starts with it; what it did keeps its name.
+    async fn archive_agent(agent_id: AgentId) -> Result<(), NexusError>;
 
     /// The user's registers (job applications first) with their fields.
     async fn list_registers() -> Result<Vec<RegisterView>, NexusError>;

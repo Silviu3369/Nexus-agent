@@ -65,6 +65,7 @@ async fn exchange(store: &Store, key: &str) -> Exchange {
                 title: None,
                 requester: Requester::User,
                 pack: None,
+                agent: None,
             },
             2,
         )

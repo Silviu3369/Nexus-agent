@@ -1,3 +1,4 @@
+mod agents;
 mod automation;
 mod autostart;
 mod bindings;
@@ -76,6 +77,9 @@ pub fn run() {
             files::import_preview,
             files::import_records,
             skills::list_packs,
+            agents::list_agents,
+            agents::save_agent,
+            agents::archive_agent,
             skills::list_skills,
             skills::get_skill,
             skills::import_skill,

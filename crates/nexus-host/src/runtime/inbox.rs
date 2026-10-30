@@ -526,6 +526,7 @@ impl Runtime {
             .start_message(
                 SendMessageRequest {
                     conversation_id: None,
+                    agent_id: None,
                     project_id: None,
                     idempotency_key: key,
                     text: task_text(

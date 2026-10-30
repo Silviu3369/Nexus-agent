@@ -296,6 +296,7 @@ fn change_view(change: &RecordChangeRow, current_revision: i64) -> RecordChangeV
         at_ms: change.at_ms,
         fields: diff(change.before.as_ref(), &change.after),
         conversation_id: change.conversation_id,
+        agent: change.agent.clone(),
         read_hosts: change.read_hosts.clone(),
         undone: change.undone_at_ms.is_some(),
         can_undo: change.undone_at_ms.is_none()

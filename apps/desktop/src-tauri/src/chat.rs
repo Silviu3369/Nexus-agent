@@ -2,7 +2,7 @@
 //! to the host's vault; nothing here stores, logs or returns it.
 
 use nexus_protocol::{
-    AgentStepView, BackupModelView, ConnectionId, ConnectionView, ConversationId,
+    AgentId, AgentStepView, BackupModelView, ConnectionId, ConnectionView, ConversationId,
     ConversationSummary, ConversationView, DeletedView, MessageId, ModelView, PersonaView,
     ProjectId, ProviderChoice, SaveConnectionRequest, SavePersonaRequest, SendMessageRequest,
     SendMessageResponse, ThinkingLevel,
@@ -153,6 +153,7 @@ pub async fn send_message(
     project_id: Option<ProjectId>,
     idempotency_key: String,
     text: String,
+    agent_id: Option<AgentId>,
 ) -> Result<SendMessageResponse, BridgeError> {
     connection
         .call(async |c| {
@@ -161,6 +162,7 @@ pub async fn send_message(
                 project_id,
                 idempotency_key,
                 text,
+                agent_id,
             })
             .await
         })

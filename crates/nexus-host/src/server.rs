@@ -609,6 +609,32 @@ impl NexusService for HostServer {
         Ok(self.runtime.list_packs())
     }
 
+    async fn list_agents(
+        self,
+        _ctx: Context,
+    ) -> Result<Vec<nexus_protocol::AgentView>, NexusError> {
+        self.require_session()?;
+        self.runtime.list_agents().await
+    }
+
+    async fn save_agent(
+        self,
+        _ctx: Context,
+        request: nexus_protocol::SaveAgentRequest,
+    ) -> Result<nexus_protocol::AgentView, NexusError> {
+        self.require_session()?;
+        self.runtime.save_agent(request).await
+    }
+
+    async fn archive_agent(
+        self,
+        _ctx: Context,
+        agent_id: nexus_protocol::AgentId,
+    ) -> Result<(), NexusError> {
+        self.require_session()?;
+        self.runtime.archive_agent(agent_id).await
+    }
+
     async fn list_registers(self, _ctx: Context) -> Result<Vec<RegisterView>, NexusError> {
         self.require_session()?;
         self.runtime.list_registers().await

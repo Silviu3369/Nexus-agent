@@ -70,6 +70,7 @@ async fn exchange(
                 title: None,
                 requester,
                 pack: pack.map(str::to_string),
+                agent: None,
             },
             2,
         )

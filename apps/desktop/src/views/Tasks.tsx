@@ -5,6 +5,7 @@ import { causeText } from "../model/records.ts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ConversationView } from "@nexus/contracts";
 import { api, describeError } from "../api";
+import { AgentSelect } from "../components/AgentSelect";
 import { ApprovalCard } from "../components/ApprovalCard";
 import { Timeline } from "../components/Timeline";
 import {
@@ -249,9 +250,10 @@ function TaskDetail({
             read public web pages, and asks before writing or remembering anything.
           </Empty>
         )}
-        {taskId !== null && (taskProject || view?.requested_by) && (
+        {taskId !== null && (taskProject || view?.requested_by || view?.agent) && (
           <p className="muted small task-facts">
             {[
+              view?.agent ? `Agent: ${view.agent}` : null,
               taskProject ? `Project: ${taskProject.name}` : null,
               view?.requested_by ? `Requested by ${actorText(view.requested_by, agentName)}` : null,
             ]
@@ -407,9 +409,13 @@ function Composer({
   onSent: (taskId: string) => void;
 }) {
   const { refresh } = useNexusActions();
+  const { agents } = useNexus();
+  const { agentName } = useDerived();
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A new task starts with this agent; a follow-up keeps its task's.
+  const [agentId, setAgentId] = useState<string | null>(null);
   // One key per message: a retry after a lost answer is the same turn.
   const intentKey = useRef<string>(crypto.randomUUID());
 
@@ -419,7 +425,13 @@ function Composer({
     setError(null);
     try {
       // A follow-up stays in its task's project; only a new task is placed.
-      const sent = await api.sendMessage(taskId, taskId === null ? projectId : null, intentKey.current, text);
+      const sent = await api.sendMessage(
+        taskId,
+        taskId === null ? projectId : null,
+        intentKey.current,
+        text,
+        taskId === null ? agentId : null,
+      );
       intentKey.current = crypto.randomUUID();
       setText("");
       onSent(sent.conversation_id);
@@ -459,6 +471,9 @@ function Composer({
         />
       </label>
       <div className="actions">
+        {taskId === null && agents && agents.length > 0 && (
+          <AgentSelect agents={agents} defaultName={agentName} value={agentId} onChange={setAgentId} />
+        )}
         <button type="submit" className="primary" disabled={disabled || busy || text.trim() === ""}>
           <SendIcon size={14} /> {busy ? "Sending…" : "Send"}
         </button>

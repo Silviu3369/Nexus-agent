@@ -34,6 +34,7 @@ pub async fn send(
             project_id: None,
             idempotency_key: key.to_string(),
             text: text.to_string(),
+            agent_id: None,
         })
         .await
         .unwrap()

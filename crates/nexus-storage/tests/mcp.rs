@@ -77,6 +77,7 @@ async fn migrating_to_v7_keeps_the_steps_and_accepts_mcp_calls() {
                 NewExchange {
                     requester: nexus_storage::Requester::User,
                     pack: None,
+                    agent: None,
                     conversation_id: None,
                     project_id: None,
                     idempotency_key: "k-v7".into(),

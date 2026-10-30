@@ -73,6 +73,7 @@ async fn exchange(
                 title: None,
                 requester,
                 pack: None,
+                agent: None,
             },
             2,
         )

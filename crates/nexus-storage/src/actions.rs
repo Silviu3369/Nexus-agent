@@ -57,7 +57,12 @@ pub(crate) fn record(
             effect.as_str(),
             evidence.as_str(),
             compensates,
-            crate::actors::id_of(tx, actor)?,
+            // The agent's work names the agent its task was started with.
+            match actor {
+                Actor::Agent => crate::agents::actor_of_run(tx, run)?,
+                _ => None,
+            }
+            .map_or_else(|| crate::actors::id_of(tx, actor), Ok)?,
             policy.map(PolicyDecision::as_str),
             policy.map(|_| nexus_core::policy::BUILT_IN_REVISION)
         ],

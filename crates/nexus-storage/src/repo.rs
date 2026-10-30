@@ -168,6 +168,8 @@ pub struct RunOrigin {
     pub message_id: MessageId,
     pub conversation_id: ConversationId,
     pub conversation_title: String,
+    /// The agent of that task (`None`: the default agent).
+    pub agent: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1571,23 +1573,27 @@ fn load_detail(tx: &Transaction, run_id: RunId) -> Result<RunDetail, StorageErro
 /// A settled reply records the run it proposed; while it is still being
 /// settled, its NoteProposed step already names the run.
 fn load_origin(tx: &Transaction, run_id: RunId) -> Result<Option<RunOrigin>, StorageError> {
-    let raw: Option<(String, String, String)> = tx
+    let raw: Option<(String, String, String, Option<String>)> = tx
         .query_row(
-            "SELECT m.id, m.conversation_id, c.title FROM messages m
+            &format!(
+                "SELECT m.id, m.conversation_id, c.title, {} FROM messages m
              JOIN conversations c ON c.id = m.conversation_id
              WHERE m.proposed_run_id = ?1
                 OR m.id IN (SELECT message_id FROM agent_steps WHERE kind = 'NoteProposed'
                             AND json_extract(detail_json, '$.run_id') = ?1)
              ORDER BY m.seq LIMIT 1",
+                crate::chat::AGENT_NAME
+            ),
             [run_id.to_string()],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .optional()?;
-    raw.map(|(message, conversation, title)| {
+    raw.map(|(message, conversation, title, agent)| {
         Ok(RunOrigin {
             message_id: MessageId(parse_uuid(&message)?),
             conversation_id: ConversationId(parse_uuid(&conversation)?),
             conversation_title: title,
+            agent,
         })
     })
     .transpose()

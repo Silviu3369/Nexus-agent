@@ -158,6 +158,8 @@ async fn main() {
         .collect();
     fake.push(Reply::calls(&twelve));
     fake.push(Reply::text(&["Saved all twelve."]));
+    // Agents: a task started with one of the user's agents.
+    fake.push(Reply::text(&["Ticket first, from the helpdesk agent."]));
     println!("{}", fake.base_url);
     println!("{}", mcp.url);
     std::io::stdout().flush().expect("stdout");

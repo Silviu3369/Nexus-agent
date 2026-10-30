@@ -74,9 +74,10 @@ export function statusTone(register: RegisterView, status: string | null): "queu
   return status === open[open.length - 1] ? "completed" : "running";
 }
 
-/** "Nexus added it", "You changed status, next step", "You undid a change". */
+/** "Nexus added it", "You changed status, next step", "You undid a change".
+ *  A change made in a task of one of your agents names that agent. */
 export function changeText(register: RegisterView, change: RecordChangeView, agent: string): string {
-  const who = change.actor === "Agent" ? agent : "You";
+  const who = change.actor === "Agent" ? (change.agent ?? agent) : "You";
   if (change.kind === "Created") return `${who} added it`;
   if (change.kind === "Undo") return `${who} undid a change`;
   const labels = change.fields.map((c) => register.fields.find((f) => f.key === c.key)?.label ?? c.key);

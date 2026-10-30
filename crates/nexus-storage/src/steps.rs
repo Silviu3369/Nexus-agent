@@ -17,6 +17,8 @@ pub struct AgentStepRow {
     pub message_id: MessageId,
     pub conversation_id: ConversationId,
     pub conversation_title: String,
+    /// The agent of the step's task (`None`: the default agent).
+    pub agent: Option<String>,
     pub seq: i64,
     pub kind: AgentStepKind,
     pub status: AgentStepStatus,
@@ -28,7 +30,8 @@ pub struct AgentStepRow {
 
 const STEP_COLUMNS: &str =
     "s.id, s.message_id, m.conversation_id, c.title, s.seq, s.kind, s.status,
-    s.detail_json, s.started_at_ms, s.finished_at_ms";
+    s.detail_json, s.started_at_ms, s.finished_at_ms,
+    (SELECT a.name FROM tasks t JOIN agents a ON a.id = t.agent_id WHERE t.conversation_id = c.id LIMIT 1)";
 const STEP_FROM: &str = "FROM agent_steps s
     JOIN messages m ON m.id = s.message_id
     JOIN conversations c ON c.id = m.conversation_id";
@@ -204,6 +207,7 @@ type RawStep = (
     String,
     i64,
     Option<i64>,
+    Option<String>,
 );
 
 fn raw_step(r: &rusqlite::Row<'_>) -> rusqlite::Result<RawStep> {
@@ -218,17 +222,30 @@ fn raw_step(r: &rusqlite::Row<'_>) -> rusqlite::Result<RawStep> {
         r.get(7)?,
         r.get(8)?,
         r.get(9)?,
+        r.get(10)?,
     ))
 }
 
 fn step_from_raw(raw: RawStep) -> Result<AgentStepRow, StorageError> {
-    let (id, message_id, conversation_id, title, seq, kind, status, detail, started, finished) =
-        raw;
+    let (
+        id,
+        message_id,
+        conversation_id,
+        title,
+        seq,
+        kind,
+        status,
+        detail,
+        started,
+        finished,
+        agent,
+    ) = raw;
     Ok(AgentStepRow {
         id: AgentStepId(parse_uuid(&id)?),
         message_id: MessageId(parse_uuid(&message_id)?),
         conversation_id: ConversationId(parse_uuid(&conversation_id)?),
         conversation_title: title,
+        agent,
         seq,
         kind: parse_state(&kind)?,
         status: parse_state(&status)?,

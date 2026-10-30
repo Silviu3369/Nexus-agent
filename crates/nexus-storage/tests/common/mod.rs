@@ -1,10 +1,23 @@
 //! Support shared by the storage tests.
 
+/// Takes a database from the current schema back to version 23: version
+/// 24 only added the agents and the agent of each task.
+#[allow(dead_code)]
+pub fn undo_v24(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "ALTER TABLE tasks DROP COLUMN agent_id;
+         DROP TABLE agents;
+         DELETE FROM actors WHERE ref LIKE 'agent:%';
+         PRAGMA user_version = 23;",
+    )
+}
+
 /// Takes a database from the current schema back to version 22: version
 /// 23 only added the skills (the steps keep their wider CHECK list, which
 /// accepts every older row).
 #[allow(dead_code)]
 pub fn undo_v23(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    undo_v24(conn)?;
     conn.execute_batch(
         "DROP TABLE skill_files;
          DROP TABLE skills;

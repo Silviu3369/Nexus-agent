@@ -193,6 +193,7 @@ async fn mem01_a_project_fact_stays_in_its_project() {
             project_id: Some(side.project_id),
             idempotency_key: "s1".into(),
             text: "Salut".into(),
+            agent_id: None,
         })
         .await
         .unwrap();

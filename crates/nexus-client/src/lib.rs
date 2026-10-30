@@ -539,6 +539,24 @@ impl NexusClient {
         Ok(self.client.list_packs(context::current()).await??)
     }
 
+    pub async fn agents(&self) -> Result<Vec<nexus_protocol::AgentView>, CallError> {
+        Ok(self.client.list_agents(context::current()).await??)
+    }
+
+    pub async fn save_agent(
+        &self,
+        request: nexus_protocol::SaveAgentRequest,
+    ) -> Result<nexus_protocol::AgentView, CallError> {
+        Ok(self
+            .client
+            .save_agent(context::current(), request)
+            .await??)
+    }
+
+    pub async fn archive_agent(&self, id: nexus_protocol::AgentId) -> Result<(), CallError> {
+        Ok(self.client.archive_agent(context::current(), id).await??)
+    }
+
     pub async fn folders(&self) -> Result<Vec<nexus_protocol::FolderView>, CallError> {
         Ok(self.client.list_folders(context::current()).await??)
     }

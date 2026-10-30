@@ -70,6 +70,7 @@ async fn task(store: &Store, key: &str) -> ConversationId {
             NewExchange {
                 requester: nexus_storage::Requester::User,
                 pack: None,
+                agent: None,
                 conversation_id: None,
                 project_id: None,
                 idempotency_key: key.into(),

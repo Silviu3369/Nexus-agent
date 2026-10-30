@@ -80,6 +80,7 @@ async fn task(store: &Store) -> (ConversationId, MessageId) {
             NewExchange {
                 requester: nexus_storage::Requester::User,
                 pack: None,
+                agent: None,
                 conversation_id: None,
                 project_id: None,
                 idempotency_key: uuid::Uuid::new_v4().to_string(),

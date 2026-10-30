@@ -455,6 +455,7 @@ mod tests {
             read_hosts: Vec::new(),
             undone_at_ms: undone.then_some(at(day)),
             at_ms: at(day),
+            agent: None,
         }
     }
 

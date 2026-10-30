@@ -56,6 +56,7 @@ typed_id!(RegisterId);
 typed_id!(RecordId);
 typed_id!(FolderId);
 typed_id!(SkillId);
+typed_id!(AgentId);
 
 #[cfg(test)]
 mod tests {

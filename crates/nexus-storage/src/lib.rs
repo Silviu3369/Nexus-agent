@@ -4,6 +4,7 @@
 
 mod actions;
 mod actors;
+mod agents;
 mod automation;
 mod chat;
 mod data;
@@ -22,6 +23,7 @@ mod usage;
 
 pub use actions::CompensationRow;
 pub use actors::{Actor, ActorRow};
+pub use agents::{AgentRow, NewAgent};
 pub use automation::{AutomationRow, AutomationRunRow, NewAutomation};
 pub use chat::{
     ConnectionRow, Continuation, ConversationRow, DEFAULT_PERSONA_NAME, Deleted, Exchange,

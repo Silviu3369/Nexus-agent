@@ -16,63 +16,68 @@ use super::packs::FlowRules;
 use super::{Runtime, to_nexus_error};
 use crate::tools::registry::{self, RECORD_WRITE_ID};
 
+/// Who, besides the user, took something away for this reply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Limit {
+    /// The pack whose intake started the task (ADR-PACK-001).
+    Pack,
+    /// The agent the task was started with (ADR-AGENT-001).
+    Agent,
+}
+
 /// The rules in force for one reply.
 #[derive(Debug, Default)]
 pub(super) struct Permissions {
     rules: HashMap<String, PolicyRuleRow>,
-    /// A pack's rules for the flow the reply belongs to: they only take
-    /// away from the user's (ADR-PACK-001).
-    flow: Option<FlowRules>,
+    /// Rules of a pack or an agent for this reply: they only take away
+    /// from the user's.
+    limits: Vec<(Limit, FlowRules)>,
 }
 
 impl Permissions {
     fn from_rules(rules: Vec<PolicyRuleRow>) -> Self {
         Self {
             rules: rules.into_iter().map(|r| (r.tool_id.clone(), r)).collect(),
-            flow: None,
+            limits: Vec::new(),
         }
     }
 
-    /// The same rules, tightened by a pack's rules for the reply's flow.
-    pub fn within(self, flow: &FlowRules) -> Self {
-        Self {
-            flow: Some(flow.clone()),
-            ..self
-        }
+    /// The same rules, tightened by a pack's or an agent's.
+    pub fn within(mut self, by: Limit, rules: &FlowRules) -> Self {
+        self.limits.push((by, rules.clone()));
+        self
     }
 
-    /// The tool may be offered and used: neither the user nor the flow's
-    /// pack turned it off.
+    /// The tool may be offered and used: neither the user nor a pack or an
+    /// agent turned it off.
     pub fn allows(&self, tool_id: &str) -> bool {
         self.rules
             .get(tool_id)
             .is_none_or(|r| r.decision != PolicyDecision::Deny)
-            && !self.off_in_flow(tool_id)
+            && self.off_by(tool_id).is_none()
     }
 
-    /// The flow's pack turned the tool off (the user's rules may allow it).
-    pub fn off_in_flow(&self, tool_id: &str) -> bool {
-        self.flow
-            .as_ref()
-            .is_some_and(|f| f.turned_off.contains(&tool_id))
+    /// Who turned the tool off besides the user, if anyone (the user's
+    /// rules may allow it).
+    pub fn off_by(&self, tool_id: &str) -> Option<Limit> {
+        self.limits
+            .iter()
+            .find(|(_, r)| r.turned_off.contains(&tool_id))
+            .map(|(by, _)| *by)
     }
 
     /// How many register writes a reply makes without asking: the user's
-    /// number, or the flow's if it is lower.
+    /// number, or a pack's or an agent's if it is lower.
     pub fn record_threshold(&self) -> u32 {
         let users = self
             .rules
             .get(RECORD_WRITE_ID)
             .and_then(|r| r.max_auto)
             .unwrap_or(RECORD_WRITES_PER_TURN);
-        match self
-            .flow
-            .as_ref()
-            .and_then(|f| f.record_writes_without_asking)
-        {
-            Some(flow) => users.min(flow),
-            None => users,
-        }
+        self.limits
+            .iter()
+            .filter_map(|(_, r)| r.record_writes_without_asking)
+            .fold(users, u32::min)
     }
 
     /// The most register writes a reply makes, with the batch.
@@ -206,8 +211,8 @@ mod tests {
             turned_off: vec!["WebRead"],
             record_writes_without_asking: Some(2),
         };
-        let defaults = Permissions::default().within(&flow);
-        assert!(!defaults.allows("WebRead") && defaults.off_in_flow("WebRead"));
+        let defaults = Permissions::default().within(Limit::Pack, &flow);
+        assert!(!defaults.allows("WebRead") && defaults.off_by("WebRead") == Some(Limit::Pack));
         assert!(defaults.allows("ReadDocument"));
         assert_eq!(defaults.record_threshold(), 2, "fewer than the user's 10");
 
@@ -216,17 +221,32 @@ mod tests {
             rule("ReadDocument", PolicyDecision::Deny, None),
             rule(RECORD_WRITE_ID, PolicyDecision::Auto, Some(0)),
         ])
-        .within(&flow);
-        assert!(!users.allows("ReadDocument") && !users.off_in_flow("ReadDocument"));
+        .within(Limit::Pack, &flow);
+        assert!(!users.allows("ReadDocument") && users.off_by("ReadDocument").is_none());
         assert_eq!(users.record_threshold(), 0);
+
+        // An agent's rules and a pack's add up; each says what it took away.
+        let both = Permissions::default().within(Limit::Pack, &flow).within(
+            Limit::Agent,
+            &FlowRules {
+                turned_off: vec!["ListFiles"],
+                record_writes_without_asking: Some(5),
+            },
+        );
+        assert_eq!(both.off_by("ListFiles"), Some(Limit::Agent));
+        assert_eq!(both.off_by("WebRead"), Some(Limit::Pack));
+        assert_eq!(both.record_threshold(), 2, "the lowest number holds");
 
         // A flow that names no number keeps the user's.
         let open =
             Permissions::from_rules(vec![rule(RECORD_WRITE_ID, PolicyDecision::Auto, Some(25))])
-                .within(&FlowRules {
-                    turned_off: Vec::new(),
-                    record_writes_without_asking: None,
-                });
+                .within(
+                    Limit::Agent,
+                    &FlowRules {
+                        turned_off: Vec::new(),
+                        record_writes_without_asking: None,
+                    },
+                );
         assert_eq!(open.record_threshold(), 25);
     }
 }

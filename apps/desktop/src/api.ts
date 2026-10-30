@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { confirmedInWindows } from "./model/execution.ts";
 import type {
   AgentStepView,
+  AgentView,
   ApprovalId,
   ArtifactId,
   AutomationId,
@@ -52,6 +53,7 @@ import type {
   RegisterView,
   RunId,
   RunView,
+  SaveAgentRequest,
   SaveFolderRequest,
   SaveInboxRequest,
   SaveRecordRequest,
@@ -134,9 +136,15 @@ export const api = {
   getConversation: (conversationId: ConversationId) =>
     invoke<ConversationView>("get_conversation", { conversationId }),
   /** `projectId` places a new task; a follow-up stays in its task's project,
-   *  and `null` lets the Host use the active project. */
-  sendMessage: (conversationId: ConversationId | null, projectId: ProjectId | null, idempotencyKey: string, text: string) =>
-    invoke<SendMessageResponse>("send_message", { conversationId, projectId, idempotencyKey, text }),
+   *  and `null` lets the Host use the active project. `agentId` starts a new
+   *  task with one of your agents (`null`: Nexus); a follow-up keeps its own. */
+  sendMessage: (
+    conversationId: ConversationId | null,
+    projectId: ProjectId | null,
+    idempotencyKey: string,
+    text: string,
+    agentId: string | null = null,
+  ) => invoke<SendMessageResponse>("send_message", { conversationId, projectId, idempotencyKey, text, agentId }),
   cancelReply: (messageId: MessageId) => invoke<null>("cancel_reply", { messageId }),
   /** For good: the task, its messages and steps. Facts and notes stay. */
   deleteConversation: (conversationId: ConversationId) =>
@@ -193,6 +201,10 @@ export const api = {
   removeSkill: (skillId: string) => invoke<null>("remove_skill", { skillId }),
   /** The packs built into Nexus: their skills and the rules of their intake. */
   listPacks: () => invoke<PackView[]>("list_packs"),
+  /** Your agents (ADR-AGENT-001); Nexus, the default, is not among them. */
+  listAgents: () => invoke<AgentView[]>("list_agents"),
+  saveAgent: (request: SaveAgentRequest) => invoke<AgentView>("save_agent", { request }),
+  archiveAgent: (agentId: string) => invoke<null>("archive_agent", { agentId }),
   /** Folders you share with Nexus; documents are read only inside them. */
   listFolders: () => invoke<FolderView[]>("list_folders"),
   saveFolder: (request: SaveFolderRequest) => invoke<FolderView>("save_folder", { request }),

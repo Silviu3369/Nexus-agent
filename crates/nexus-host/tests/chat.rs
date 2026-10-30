@@ -180,6 +180,7 @@ async fn ai01_reply_streams_from_the_selected_model_with_persona_and_history() {
             project_id: None,
             idempotency_key: "m3".to_string(),
             text: "alt text".to_string(),
+            agent_id: None,
         })
         .await;
     assert!(conflict.is_err(), "a reused key with other text is refused");
@@ -315,6 +316,7 @@ async fn ai03_without_a_chosen_connection_and_model_nothing_is_sent_and_there_is
             project_id: None,
             idempotency_key: "a".to_string(),
             text: "Salut".to_string(),
+            agent_id: None,
         })
         .await
         .unwrap_err();
@@ -332,6 +334,7 @@ async fn ai03_without_a_chosen_connection_and_model_nothing_is_sent_and_there_is
             project_id: None,
             idempotency_key: "b".to_string(),
             text: "Salut".to_string(),
+            agent_id: None,
         })
         .await
         .unwrap_err();
@@ -350,6 +353,7 @@ async fn ai03_without_a_chosen_connection_and_model_nothing_is_sent_and_there_is
             project_id: None,
             idempotency_key: "c".to_string(),
             text: "Salut".to_string(),
+            agent_id: None,
         })
         .await
         .unwrap_err();
@@ -1053,6 +1057,7 @@ async fn a_restored_profile_does_not_contact_the_provider() {
             project_id: None,
             idempotency_key: "r".to_string(),
             text: "Salut".to_string(),
+            agent_id: None,
         })
         .await
         .unwrap_err();

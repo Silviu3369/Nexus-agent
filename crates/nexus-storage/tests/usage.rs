@@ -136,6 +136,7 @@ async fn migrating_to_v9_keeps_every_message() {
                 NewExchange {
                     requester: nexus_storage::Requester::User,
                     pack: None,
+                    agent: None,
                     conversation_id: None,
                     project_id: None,
                     idempotency_key: "m1".into(),

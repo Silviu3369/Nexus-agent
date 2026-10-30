@@ -65,7 +65,7 @@ export type ArtifactSummary = { artifact_id: ArtifactId; path: string; sha256: s
 
 export type RunFailure = { code: string; message: string }
 
-export type RunOrigin = { message_id: MessageId; conversation_id: ConversationId; conversation_title: string }
+export type RunOrigin = { message_id: MessageId; conversation_id: ConversationId; conversation_title: string; agent: string | null }
 
 /**
  * What a run does.
@@ -176,13 +176,13 @@ export type AgentStepStatus = "Running" | "Done" | "Failed"
  */
 export type AgentStepDetail = { kind: "ModelCall"; model: string; first_byte_ms: number | null; duration_ms: number | null; error: string | null; attempt: number | null; backup: boolean | null; memory_items: number | null; mcp_servers: string[] | null; mcp_tools: number | null; prompt_tokens: number | null; output_tokens: number | null } | { kind: "Fetch"; url: string; final_url: string | null; http_status: number | null; text_bytes: number | null; truncated: boolean | null; error: string | null } | { kind: "MemoryProposed"; content: string; scope: MemoryScope | null; memory_id: MemoryId | null; error: string | null } | { kind: "McpCall"; server: string; tool: string; arguments: string; result_chars: number | null; truncated: boolean | null; is_error: boolean | null; duration_ms: number | null; error: string | null; run_id: RunId | null } | { kind: "NoteProposed"; title: string; run_id: RunId | null; error: string | null } | { kind: "RecordsFound"; register: string; query: string; count: number | null; error: string | null } | { kind: "FilesListed"; folder: string; path: string; count: number | null; error: string | null } | { kind: "DocumentRead"; folder: string; path: string; format: string | null; chars: number | null; offset: number | null; truncated: boolean | null; error: string | null } | { kind: "SkillUsed"; skill: string; file: string | null; chars: number | null; error: string | null } | { kind: "DocumentProposed"; folder: string; file_name: string; run_id: RunId | null; error: string | null } | { kind: "RecordChanged"; register: string; action: string; title: string; fields: string[]; record_id: RecordId | null; change_id: number | null; undone: boolean; error: string | null }
 
-export type AgentStepView = { step_id: AgentStepId; message_id: MessageId; conversation_id: ConversationId; conversation_title: string; seq: number; status: AgentStepStatus; detail: AgentStepDetail; started_at_ms: number; finished_at_ms: number | null }
+export type AgentStepView = { step_id: AgentStepId; message_id: MessageId; conversation_id: ConversationId; conversation_title: string; agent: string | null; seq: number; status: AgentStepStatus; detail: AgentStepDetail; started_at_ms: number; finished_at_ms: number | null }
 
 export type ChatMessageView = { message_id: MessageId; role: ChatRole; text: string; status: ChatStatus; model: string | null; persona_version: number | null; failure: RunFailure | null; proposed_run_id: RunId | null; prompt_tokens: number | null; output_tokens: number | null; created_at_ms: number; steps: AgentStepView[]; turn: TurnView | null }
 
-export type ConversationSummary = { conversation_id: ConversationId; project_id: ProjectId | null; title: string; updated_at_ms: number }
+export type ConversationSummary = { conversation_id: ConversationId; project_id: ProjectId | null; title: string; agent: string | null; updated_at_ms: number }
 
-export type ConversationView = { conversation_id: ConversationId; project_id: ProjectId | null; title: string; requested_by: ActorView | null; messages: ChatMessageView[] }
+export type ConversationView = { conversation_id: ConversationId; project_id: ProjectId | null; title: string; requested_by: ActorView | null; agent: string | null; messages: ChatMessageView[] }
 
 export type SendMessageResponse = { conversation_id: ConversationId; user_message_id: MessageId; reply_message_id: MessageId }
 
@@ -245,7 +245,7 @@ export type RecordView = { record_id: RecordId; register_id: RegisterId; values:
 
 export type FieldChange = { key: string; before: string | null; after: string | null }
 
-export type RecordChangeView = { change_id: number; kind: RecordChangeKind; actor: RecordActor; at_ms: number; fields: FieldChange[]; conversation_id: ConversationId | null; read_hosts: string[]; undone: boolean; can_undo: boolean }
+export type RecordChangeView = { change_id: number; kind: RecordChangeKind; actor: RecordActor; at_ms: number; fields: FieldChange[]; conversation_id: ConversationId | null; agent: string | null; read_hosts: string[]; undone: boolean; can_undo: boolean }
 
 export type RecordDetailView = { record: RecordView; history: RecordChangeView[] }
 
@@ -278,6 +278,12 @@ export type SkillContentView = { skill: SkillView; files: SkillFileText[] }
 export type SkillFileText = { path: string; text: string }
 
 export type SetSkillEnabledRequest = { skill_id: SkillId; revision: number; enabled: boolean }
+
+export type AgentId = string
+
+export type AgentView = { agent_id: AgentId; name: string; description: string; instructions: string; tools_off: string[]; skills: string[]; mcp_servers: McpServerId[]; connection_id: ConnectionId | null; model: string | null; project_id: ProjectId | null; tasks: number; revision: number; created_at_ms: number; updated_at_ms: number }
+
+export type SaveAgentRequest = { agent_id: AgentId | null; revision: number; name: string; description: string; instructions: string; tools_off: string[]; skills: string[]; mcp_servers: McpServerId[]; connection_id: ConnectionId | null; model: string | null; project_id: ProjectId | null }
 
 export type PackView = { pack_id: string; name: string; version: number; description: string; registers: string[]; skills: PackSkillView[]; intake: PackFlowView | null }
 

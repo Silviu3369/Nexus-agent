@@ -166,6 +166,7 @@ async fn migrating_to_v23_keeps_every_step_and_accepts_the_new_one() {
             NewExchange {
                 requester: nexus_storage::Requester::User,
                 pack: None,
+                agent: None,
                 conversation_id: None,
                 project_id: None,
                 idempotency_key: "m".into(),

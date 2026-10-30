@@ -28,6 +28,7 @@ use crate::tools::registry;
 use crate::vault::SecretVault;
 
 mod acceptance;
+mod agents;
 mod automation;
 mod broker;
 mod chat;
@@ -917,6 +918,7 @@ impl Runtime {
                 message_id: o.message_id,
                 conversation_id: o.conversation_id,
                 conversation_title: o.conversation_title.clone(),
+                agent: o.agent.clone(),
             }),
             kind: if call.is_some() {
                 RunKind::McpCall

@@ -35,6 +35,7 @@ use zeroize::Zeroizing;
 use super::data_policy;
 use super::document_run::{self, DOC_TOOL};
 use super::files::{self, LIST_TOOL, MAX_LISTS, MAX_READS, READ_TOOL};
+use super::permissions::Limit;
 use super::record_batch::{BatchItem, BatchRequest};
 use super::records::{self, ADD_TOOL, FIND_TOOL, MAX_RECORD_READS, UPDATE_TOOL};
 use super::skills::{FILE_TOOL as SKILL_FILE_TOOL, MAX_SKILL_READS, USE_TOOL as SKILL_USE_TOOL};
@@ -476,6 +477,7 @@ impl Runtime {
                 conversation_id: c.id,
                 project_id: c.project_id,
                 title: c.title,
+                agent: c.agent,
                 updated_at_ms: c.updated_at_ms,
             })
             .collect())
@@ -518,6 +520,7 @@ impl Runtime {
             project_id: conversation.project_id,
             title: conversation.title,
             requested_by: requested_by.as_ref().map(super::actor_view),
+            agent: conversation.agent,
             messages: messages
                 .iter()
                 .map(|m| {
@@ -616,16 +619,46 @@ impl Runtime {
         if key.is_empty() || key.len() > 200 {
             return Err(invalid("idempotency key must be 1..=200 bytes"));
         }
-        let connection = self
-            .store
-            .active_connection()
-            .await
-            .map_err(to_nexus_error)?
-            .ok_or_else(|| invalid("choose an AI connection and model first"))?;
-        let model = connection
-            .model
-            .clone()
-            .ok_or_else(|| invalid("choose a model for this connection first"))?;
+        // The agent of a new task (ADR-AGENT-001); a follow-up keeps its
+        // conversation's.
+        let agent = match (request.conversation_id, request.agent_id) {
+            (Some(conversation), _) => self
+                .store
+                .conversation_agent(conversation)
+                .await
+                .map_err(to_nexus_error)?,
+            (None, Some(id)) => {
+                let agent = self.store.agent(id).await.map_err(to_nexus_error)?;
+                if agent.archived_at_ms.is_some() {
+                    return Err(invalid("this agent is archived; choose another"));
+                }
+                Some(agent)
+            }
+            (None, None) => None,
+        };
+        // The agent's own model, else the active one.
+        let (connection, model) = match agent
+            .as_ref()
+            .and_then(|a| a.connection_id.zip(a.model.clone()))
+        {
+            Some((id, model)) => (
+                self.store.connection(id).await.map_err(to_nexus_error)?,
+                model,
+            ),
+            None => {
+                let connection = self
+                    .store
+                    .active_connection()
+                    .await
+                    .map_err(to_nexus_error)?
+                    .ok_or_else(|| invalid("choose an AI connection and model first"))?;
+                let model = connection
+                    .model
+                    .clone()
+                    .ok_or_else(|| invalid("choose a model for this connection first"))?;
+                (connection, model)
+            }
+        };
         if !self.has_key(&connection) {
             return Err(NexusError::new(
                 ErrorCode::Unauthenticated,
@@ -634,10 +667,14 @@ impl Runtime {
         }
         self.check_daily_budget().await?;
         let persona = self.store.persona(now_ms()).await.map_err(to_nexus_error)?;
-        // A new task joins the project named, else the active one; a
-        // follow-up always stays in its own conversation's project.
+        // A new task joins its agent's project, else the project named,
+        // else the active one; a follow-up always stays in its own
+        // conversation's project.
         let project_id = match (request.conversation_id, request.project_id) {
             (Some(_), _) => None,
+            (None, _) if agent.as_ref().is_some_and(|a| a.project_id.is_some()) => {
+                agent.as_ref().and_then(|a| a.project_id)
+            }
             (None, Some(project)) => {
                 self.store.project(project).await.map_err(to_nexus_error)?;
                 Some(project)
@@ -657,6 +694,7 @@ impl Runtime {
                 NewExchange {
                     requester,
                     pack,
+                    agent: agent.as_ref().map(|a| a.id),
                     conversation_id: request.conversation_id,
                     project_id,
                     idempotency_key: key.to_string(),
@@ -974,7 +1012,7 @@ impl Runtime {
         let permissions = match budget.intake.as_deref() {
             None => permissions,
             Some(id) => match super::packs::by_id(id).and_then(|p| p.intake.as_ref()) {
-                Some(intake) => permissions.within(&intake.rules),
+                Some(intake) => permissions.within(Limit::Pack, &intake.rules),
                 None => {
                     return Err(NexusError::new(
                         ErrorCode::InternalFailure,
@@ -982,6 +1020,17 @@ impl Runtime {
                     ));
                 }
             },
+        };
+        // The agent the task was started with (ADR-AGENT-001) takes away
+        // what it does not use.
+        let agent = self
+            .store
+            .conversation_agent(conversation_id)
+            .await
+            .map_err(to_nexus_error)?;
+        let permissions = match &agent {
+            Some(a) => permissions.within(Limit::Agent, &super::agents::rules(a)),
+            None => permissions,
         };
         // What the connection in use may receive (ADR-PROVIDER-002).
         let data = self.store.data_settings().await.map_err(to_nexus_error)?;
@@ -996,6 +1045,9 @@ impl Runtime {
             } else {
                 crate::tools::registry::MCP_READ_ID
             }) && data_policy::may_use(allowed, data.class_of(Source::McpServer(o.server.id)))
+                && agent
+                    .as_ref()
+                    .is_none_or(|a| a.mcp_servers.contains(&o.server.id))
         });
         // The user's registers (job applications first), with their fields.
         let registers = match self.registers().await {
@@ -1009,14 +1061,23 @@ impl Runtime {
         let folders = self.shared_folders().await;
         // The skills the user turned on (ADR-PACK-001): only their names and
         // descriptions go in the instruction; each loads when it is used.
+        // An agent sees only the skills chosen for it; Nexus, all those on.
         let skills = if permissions.allows(crate::tools::registry::SKILL_ID) {
-            self.enabled_skills().await
+            let mut skills = self.enabled_skills().await;
+            if let Some(a) = &agent {
+                skills.retain(|s| a.skills.contains(&s.name));
+            }
+            skills
         } else {
             Vec::new()
         };
         let system_instruction = format!(
-            "{}{}{}{}{}{}",
+            "{}{}{}{}{}{}{}",
             system_instruction(persona),
+            agent
+                .as_ref()
+                .map(super::agents::agent_note)
+                .unwrap_or_default(),
             if mcp_offer.is_empty() { "" } else { MCP_NOTE },
             if registers.is_empty() {
                 String::new()
@@ -1201,9 +1262,13 @@ impl Runtime {
             // the other tools. Extra proposals past the budget are ignored.
             let mut handled: Vec<(&ToolCall, Value)> = Vec::new();
             for c in call.calls.iter().filter(|c| off(c)) {
-                let by_pack = super::broker::route(&c.name, &mcp_offer, writable)
-                    .is_some_and(|t| permissions.off_in_flow(t.id));
-                let error = if by_pack { OFF_IN_FLOW } else { TURNED_OFF };
+                let error = match super::broker::route(&c.name, &mcp_offer, writable)
+                    .and_then(|t| permissions.off_by(t.id))
+                {
+                    Some(Limit::Pack) => OFF_IN_FLOW,
+                    Some(Limit::Agent) => OFF_FOR_AGENT,
+                    None => TURNED_OFF,
+                };
                 handled.push((c, json!({ "error": error })));
             }
             for proposal in call
@@ -2414,6 +2479,7 @@ fn step_view(row: &AgentStepRow) -> AgentStepView {
         message_id: row.message_id,
         conversation_id: row.conversation_id,
         conversation_title: row.conversation_title.clone(),
+        agent: row.agent.clone(),
         seq: row.seq,
         status: match row.status {
             AgentStepStatus::Running => nexus_protocol::AgentStepStatus::Running,
@@ -2627,6 +2693,7 @@ struct AwaitingCall {
 /// What the model is told about a tool the user turned off.
 const TURNED_OFF: &str = "The user turned this tool off in Nexus's Permissions; do not use it, and tell the user if the task needs it.";
 const OFF_IN_FLOW: &str = "Tasks of this kind cannot use this tool (the rules of the Nexus pack that started the task); do not use it, and tell the user if the task needs it.";
+const OFF_FOR_AGENT: &str = "The user set up this agent without this tool; do not use it, and tell the user if the task needs it.";
 
 /// The skill a pack's intake gives the tasks it starts.
 fn intake_skill(pack: &str) -> Option<&'static super::packs::PackSkill> {

@@ -4,6 +4,7 @@
 import { useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { api, describeError } from "../api";
+import { AgentSelect } from "../components/AgentSelect";
 import { deriveCore } from "../model/execution.ts";
 import { seconds } from "../model/format.ts";
 import { useDerived, useNexus, useNexusActions, useNow } from "../state/store";
@@ -11,14 +12,17 @@ import { MicIcon, PaperclipIcon, PauseIcon, SendIcon, StopIcon } from "../icons"
 import { useGoTo } from "./nav";
 
 export function CommandBar() {
-  const { composing, connections, projects } = useNexus();
-  const { focusRun, pending, ready, activeProject } = useDerived();
+  const { composing, connections, projects, agents } = useNexus();
+  const { focusRun, pending, ready, activeProject, agentName } = useDerived();
   const { follow, refresh, setComposing } = useNexusActions();
   const goTo = useGoTo();
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The agent new tasks start with; Nexus unless the user picks one.
+  const [agentId, setAgentId] = useState<string | null>(null);
+  const agent = agents?.find((a) => a.agent_id === agentId) ?? null;
   // One key per intent: a retry after a lost answer is the same request.
   const intentKey = useRef<string>(crypto.randomUUID());
   const now = useNow(focusRun?.status === "running" ? 250 : 1000);
@@ -33,7 +37,7 @@ export function CommandBar() {
     setBusy(true);
     setError(null);
     try {
-      const sent = await api.sendMessage(null, activeProject?.project_id ?? null, intentKey.current, text);
+      const sent = await api.sendMessage(null, activeProject?.project_id ?? null, intentKey.current, text, agent?.agent_id ?? null);
       intentKey.current = crypto.randomUUID();
       setText("");
       setComposing(false);
@@ -81,12 +85,22 @@ export function CommandBar() {
         <span className="command-state-text">{stateText}</span>
       </div>
       <div className="command-input">
+        {agents && agents.length > 0 && (
+          <AgentSelect
+            className="command-project"
+            agents={agents}
+            defaultName={agentName}
+            value={agent?.agent_id ?? null}
+            onChange={setAgentId}
+          />
+        )}
         {projects && projects.length > 1 && (
           <select
             className="command-project"
             aria-label="Project for new tasks"
-            title="New tasks go to this project"
-            value={activeProject?.project_id ?? ""}
+            title={agent?.project_id ? "This agent's tasks go to its own project" : "New tasks go to this project"}
+            disabled={agent?.project_id != null}
+            value={agent?.project_id ?? activeProject?.project_id ?? ""}
             onChange={(e) => void chooseProject(e.currentTarget.value)}
           >
             {projects.map((p) => (
@@ -98,7 +112,7 @@ export function CommandBar() {
         )}
         <input
           aria-label="Give Nexus a task"
-          placeholder={ready ? "Give Nexus a task…" : "Choose an AI connection and model first"}
+          placeholder={ready ? `Give ${agent?.name ?? "Nexus"} a task…` : "Choose an AI connection and model first"}
           value={text}
           maxLength={16000}
           disabled={!ready}

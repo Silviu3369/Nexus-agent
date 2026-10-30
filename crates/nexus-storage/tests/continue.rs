@@ -57,6 +57,7 @@ async fn exchange(store: &Store, conversation: Option<ConversationId>, key: &str
             NewExchange {
                 requester: nexus_storage::Requester::User,
                 pack: None,
+                agent: None,
                 conversation_id: conversation,
                 project_id: None,
                 idempotency_key: key.into(),

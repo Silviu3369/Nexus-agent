@@ -4,7 +4,7 @@
 
 use nexus_core::{FailureCause, MessageRole, MessageStatus, RunState, TaskOrigin, ThinkingLevel};
 use nexus_protocol::{
-    AutomationId, ConnectionId, ConversationId, MessageId, ProjectId, RunId, TaskId,
+    AgentId, AutomationId, ConnectionId, ConversationId, MessageId, ProjectId, RunId, TaskId,
 };
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::json;
@@ -43,6 +43,8 @@ pub struct ConversationRow {
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
     pub project_id: Option<ProjectId>,
+    /// The agent its task was started with (`None`: the default agent).
+    pub agent: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -94,6 +96,9 @@ pub struct NewExchange {
     pub requester: Requester,
     /// The pack or flow it belongs to (an intake's register), if any.
     pub pack: Option<String>,
+    /// The agent a new conversation's task is started with (`None`: the
+    /// default agent); ignored for a follow-up.
+    pub agent: Option<AgentId>,
 }
 
 /// Who asks for a conversation's task (ADR-IDENTITY-001): the user, an
@@ -300,6 +305,11 @@ impl Store {
             let row = load_connection(&tx, id)?;
             tx.execute(
                 "UPDATE messages SET connection_id = NULL WHERE connection_id = ?1",
+                [id.to_string()],
+            )?;
+            // An agent that used it goes back to the active model.
+            tx.execute(
+                "UPDATE agents SET connection_id = NULL, model = NULL WHERE connection_id = ?1",
                 [id.to_string()],
             )?;
             tx.execute(
@@ -571,7 +581,14 @@ impl Store {
                 [conversation_id.to_string()],
                 |r| r.get(0),
             )?;
-            let task = agent_task(&tx, conversation_id, new.requester, new.pack.as_deref(), now)?;
+            let task = agent_task(
+                &tx,
+                conversation_id,
+                new.requester,
+                new.pack.as_deref(),
+                new.agent,
+                now,
+            )?;
             let run = RunId::new();
             tx.execute(
                 "INSERT INTO runs (id, task_id, state, revision, created_at_ms, updated_at_ms, kind)
@@ -862,8 +879,10 @@ impl Store {
     pub async fn conversations(&self, limit: u32) -> Result<Vec<ConversationRow>, StorageError> {
         self.call(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, title, created_at_ms, updated_at_ms, project_id FROM conversations
-                 ORDER BY updated_at_ms DESC, id LIMIT ?1",
+                &format!(
+                    "SELECT id, title, created_at_ms, updated_at_ms, project_id, {AGENT_NAME} FROM conversations c
+                     ORDER BY updated_at_ms DESC, id LIMIT ?1"
+                ),
             )?;
             let rows = stmt
                 .query_map([limit], raw_conversation)?
@@ -883,7 +902,10 @@ impl Store {
             let tx = conn.transaction()?;
             let conversation = tx
                 .query_row(
-                    "SELECT id, title, created_at_ms, updated_at_ms, project_id FROM conversations WHERE id = ?1",
+                    &format!(
+                        "SELECT id, title, created_at_ms, updated_at_ms, project_id, {AGENT_NAME}
+                         FROM conversations c WHERE id = ?1"
+                    ),
                     [conversation_id.to_string()],
                     raw_conversation,
                 )
@@ -1306,14 +1328,24 @@ fn load_message_at(
     .transpose()
 }
 
-type RawConversation = (String, String, i64, i64, Option<String>);
+/// The name of the agent a conversation `c`'s task was started with.
+pub(crate) const AGENT_NAME: &str = "(SELECT a.name FROM tasks t JOIN agents a ON a.id = t.agent_id WHERE t.conversation_id = c.id LIMIT 1)";
+
+type RawConversation = (String, String, i64, i64, Option<String>, Option<String>);
 
 fn raw_conversation(r: &rusqlite::Row<'_>) -> rusqlite::Result<RawConversation> {
-    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+    Ok((
+        r.get(0)?,
+        r.get(1)?,
+        r.get(2)?,
+        r.get(3)?,
+        r.get(4)?,
+        r.get(5)?,
+    ))
 }
 
 fn conversation_from_raw(raw: RawConversation) -> Result<ConversationRow, StorageError> {
-    let (id, title, created_at_ms, updated_at_ms, project_id) = raw;
+    let (id, title, created_at_ms, updated_at_ms, project_id, agent) = raw;
     Ok(ConversationRow {
         id: ConversationId(parse_uuid(&id)?),
         title,
@@ -1324,6 +1356,7 @@ fn conversation_from_raw(raw: RawConversation) -> Result<ConversationRow, Storag
             .map(parse_uuid)
             .transpose()?
             .map(ProjectId),
+        agent,
     })
 }
 
@@ -1334,6 +1367,7 @@ fn agent_task(
     conversation: ConversationId,
     requester: Requester,
     pack: Option<&str>,
+    agent: Option<AgentId>,
     now: i64,
 ) -> Result<TaskId, StorageError> {
     let found: Option<String> = tx
@@ -1355,8 +1389,8 @@ fn agent_task(
     let id = TaskId::new();
     tx.execute(
         "INSERT INTO tasks (id, project_id, idempotency_key, request_json, request_sha256, created_at_ms,
-                            origin, conversation_id, pack, requested_by)
-         VALUES (?1, ?2, ?3, ?4, '', ?5, ?6, ?7, ?8, ?9)",
+                            origin, conversation_id, pack, requested_by, agent_id)
+         VALUES (?1, ?2, ?3, ?4, '', ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             id.to_string(),
             project,
@@ -1366,7 +1400,8 @@ fn agent_task(
             requester.origin().as_str(),
             conversation.to_string(),
             pack,
-            crate::actors::id_of(tx, requester.actor())?
+            crate::actors::id_of(tx, requester.actor())?,
+            agent.map(|a| a.to_string())
         ],
     )?;
     Ok(id)

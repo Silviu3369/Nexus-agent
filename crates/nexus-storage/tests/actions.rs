@@ -67,6 +67,7 @@ async fn exchange(store: &Store, conversation: Option<ConversationId>, key: &str
                 title: None,
                 requester: nexus_storage::Requester::User,
                 pack: None,
+                agent: None,
             },
             2,
         )

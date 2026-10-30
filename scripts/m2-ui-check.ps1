@@ -864,6 +864,31 @@ try {
   Click-Button $win "Remove now"
   Check ($null -ne (Wait-Contains $win "No skill yet")) "the skill is removed"
 
+  # --- agents: one of your own, picked for a new task, then archived ---
+  Click-Button $win "Agents"
+  Check ($null -ne (Wait-Contains $win "No agent yet")) "there is no agent of your own until you create one"
+  Click-Button $win "New agent"
+  Set-Field $win "Agent name" "UI Helpdesk"
+  Set-Field $win "What it is for" "Tickets at work"
+  Set-Field $win "Agent instructions" "Answer with the ticket number first."
+  Check ($null -ne (Find-Check $win "Read public web pages")) "the agent's tools can be chosen"
+  Check ($null -ne (Wait-Contains $win "they grant no permissions")) "the form says instructions grant nothing"
+  Click-Button $win "Create agent"
+  Check ($null -ne (Wait-Contains $win "Tickets at work")) "the new agent is listed"
+  Click-Button $win "Overview"
+  Select-Option $win "Agent for new tasks" "UI Helpdesk"
+  Set-Field $win "Give Nexus a task" "Reset the MFA of a colleague"
+  Click-Button $win "Run" 20
+  Check (Wait-Text $win "Ticket first, from the helpdesk agent." 20) "the agent answers its task"
+  Click-Button $win "Tasks"
+  $agentTask = Wait-Like $win "Reset the MFA of a colleague"
+  if ($agentTask) { Invoke-Element $agentTask }
+  Check ($null -ne (Wait-Contains $win "Agent: UI Helpdesk")) "the task names its agent"
+  Click-Button $win "Agents"
+  Click-Button $win "Archive"
+  Click-Button $win "Archive now"
+  Check ($null -ne (Wait-Contains $win "No agent yet")) "an archived agent is no longer listed"
+
   # --- removing the connection removes its key ---
   Click-Button $win "Models"
   Check (Wait-Text $win "No backup model.") "there is no backup model unless one is chosen"
