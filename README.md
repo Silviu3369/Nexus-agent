@@ -1,95 +1,98 @@
 # Nexus
 
-Platformă AI personală pentru Windows, proiectată pentru extindere. Nexus va reuni un asistent personal, un agent de programare și operații controlate pe PC.
+A local-first personal AI agent for Windows. You give it tasks in a desktop app; it works with the AI model you choose, reads what you share with it, keeps track of your work, and asks before it changes anything outside itself.
 
-**Stack stabilit:** Rust pentru Core/Host/PC Agent și coordonarea executorilor; TypeScript + React pentru dashboard; Tauri pentru aplicația desktop; Three.js pentru vizualizarea interactivă opțională; SQLite pentru datele locale. Python și PowerShell au roluri specializate, controlate.
+Nexus is built for one Windows user and runs on your own PC. Its state lives in a local SQLite database; API keys live in Windows Credential Manager; nothing runs in the cloud except the AI provider calls you set up.
 
-## Starea curentă
+**Stack:** Rust (domain core, a Host process, Windows integration), TypeScript + React (dashboard), Tauri (desktop shell), SQLite (state), Three.js (an optional animated view).
 
-M0 e închis, iar M1 e complet tehnic. În dashboard scrii o notă, vezi exact ce se va scrie și unde, aprobi sau refuzi, iar Nexus creează fișierul și îl verifică prin hash. Sarcinile supraviețuiesc închiderii ferestrei și căderii Host-ului, fără să se dubleze. Butonul „Fă backup" face o copie consistentă. Ea se poate restaura doar într-un profil nou, unde nimic nu se execută automat.
+## What it does today
 
-M2 e în lucru. În tabul Chat vorbești cu Gemini (Google AI Studio) prin cheia ta, ținută doar în seiful Windows (Credential Manager). Modelul și persona le alegi în Setări. Când modelul propune o notă, aceasta așteaptă aprobarea ta exact ca în M1. Totul e verificat față de un server Gemini controlat. Apelul real către Google se verifică după ce introduci o cheie în aplicație.
+- **Tasks with an AI model.** Every task shows its steps live: model calls, pages read, documents read, tools used. Providers: Google Gemini (tested against the real API), OpenAI, Anthropic and DeepSeek (adapters tested against fakes). You can set a backup model for outages, a daily token budget and cost estimates.
+- **Approvals you can trust.** Anything that changes something outside Nexus is proposed first, with the exact content and destination, and confirmed in a native Windows dialog, not just in the web view. Approvals are bound to a hash of the exact action, used once, and expire.
+- **An independent Host.** The agent runs in its own process. Closing the window does not stop accepted work; a crash or restart does not repeat an effect: intent is stored before the effect and reconciled after an interruption.
+- **Your files and documents.** Share folders with Nexus; it reads text, Word, PDF and Excel files (long ones in parts) and can write Word documents into a folder you allow, after your approval.
+- **Registers.** Tables Nexus keeps for you, such as job applications, with history, undo, Excel import and export, and measured results.
+- **An inbox.** Put a document in a folder and Nexus records it on its own, as a task you can follow, under stricter rules than your own tasks.
+- **Memory and projects.** Facts the agent proposes are kept only after you approve them, per project.
+- **Skills.** Import skills in the open [Agent Skills](https://agentskills.io/specification) format (`SKILL.md`, from a folder or a `.zip`). A skill starts off; you read it, then turn it on. Its scripts never run, and it grants no permissions.
+- **Agents.** Create specialised agents, each with its own instructions, skills, tools, model and project. An agent can only use less than your permissions, never more.
+- **Packs.** Built-in, declarative bundles for a workflow. The Jobs pack brings the job applications register and the instructions for new job ads in the inbox.
+- **MCP.** Connect remote MCP servers over HTTPS. Read-only tools run directly; tools that change things ask for approval on every call.
+- **Automations.** Scheduled instructions that run as ordinary tasks.
+- **Permissions and data rules.** Turn any tool off; decide how many register changes run without asking. Each AI connection states what data it may receive (public, your own, other people's), and the Host enforces it before every call.
+- **Backup.** A consistent backup, restorable only into a new profile, where nothing runs until you check it.
 
-**Planul și starea implementării au o singură sursă:** [PLAN_NEXUS_RO.md](docs/PLAN_NEXUS_RO.md).
+## What it does not do (yet)
 
-## Dezvoltare
+- No installer: you build it from source (below).
+- No operations on your PC beyond the files you share, no browser control, no code execution. Skill scripts never run.
+- No email or chat channels, and no local models.
+- Windows only, one user.
 
-Cerințe pe Windows: Rust stable (`x86_64-pc-windows-msvc`), MSVC Build Tools 2022, WebView2, Node.js LTS și pnpm.
+## Build and run
+
+Requirements on Windows: Rust stable (`x86_64-pc-windows-msvc`), MSVC Build Tools 2022, WebView2, Node.js LTS and pnpm.
 
 ```powershell
 pnpm install
 
-# Dashboard în mod dezvoltare; Host-ul trebuie construit lângă el,
-# ca butonul „Pornește Hostul” să-l găsească.
+# Release executables (no installer): target\release\desktop.exe and nexus-host.exe
+cargo build -p nexus-host --release --locked
+pnpm --filter @nexus/desktop tauri build --no-bundle
+```
+
+Start `target\release\desktop.exe` and press **Start Host**. In **Models**, add an AI connection with your own API key (for example a free Google AI Studio key) and choose a model. Then give Nexus a task from the command bar.
+
+For development:
+
+```powershell
+# Dashboard in development mode; the Host is built next to it so that
+# "Start Host" finds it.
 cargo build -p nexus-host
 pnpm --filter @nexus/desktop tauri dev
 
-# Verificări
+# Checks
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 pnpm --filter @nexus/desktop build
 
-# Executabile release (fără installer): target\release\desktop.exe și nexus-host.exe
-cargo build -p nexus-host --release --locked
-pnpm --filter @nexus/desktop tauri build --no-bundle
-
-# Verificare independentă a unui Host pornit
+# A running Host, checked from outside
 cargo run -p nexus-client --example health
 
-# Fluxul M1 prin fereastra reală, într-un profil temporar (după build-ul release).
-# -Bin <dosar> folosește alt dosar cu desktop.exe + nexus-host.exe, dacă
-# target\release\nexus-host.exe e blocat de un Host pornit.
-powershell -ExecutionPolicy Bypass -File scripts\m1-ui-check.ps1
-
-# Chatul M2 prin fereastra reală, față de serverele de test Gemini și MCP
-# (Google și niciun server MCP real nu sunt apelate):
-# Host debug + falsul de test, plus desktop.exe release.
+# The real window, end to end, in a temporary profile, against test fakes
+# (no real AI provider or MCP server is called). -Bin <folder> uses another
+# folder with desktop.exe and nexus-host.exe.
 cargo build -p nexus-host --locked
 cargo build -p nexus-host --example fake_gemini_server --locked
+powershell -ExecutionPolicy Bypass -File scripts\m1-ui-check.ps1
 powershell -ExecutionPolicy Bypass -File scripts\m2-ui-check.ps1
 
-# Restaurarea unui backup într-un profil NOU (offline; nu atinge profilul curent)
-target\release\nexus-host.exe restore <dosar-backup> <dosar-profil-nou>
+# Restore a backup into a NEW profile (offline; the current profile is untouched)
+target\release\nexus-host.exe restore <backup-folder> <new-profile-folder>
 ```
 
-Un profil restaurat pornește în pauză: vezi istoricul, dar nimic nu se execută. Ca să-l activezi după ce l-ai verificat, șterge `restored.json` din el.
+A restored profile starts paused: you can read its history, but nothing runs. To activate it after checking it, delete `restored.json` from it.
 
-`NEXUS_PROFILE_DIR` mută profilul (bază de date, note, token, log) într-un alt director, cu propriul pipe. Așa nu se atinge `%LOCALAPPDATA%\Nexus`. Testele și scriptul de mai sus îl folosesc.
+`NEXUS_PROFILE_DIR` moves the profile (database, notes, pairing token, log) to another folder, with its own pipe, leaving `%LOCALAPPDATA%\Nexus` untouched. The tests and the scripts above use it.
 
-Tipurile TypeScript din `packages/contracts` sunt generate din Rust. După o schimbare de contract: `$env:NEXUS_UPDATE_BINDINGS="1"; cargo test -p desktop`. Testul eșuează dacă fișierul generat a rămas în urmă.
+The TypeScript types in `packages/contracts` are generated from Rust. After a contract change: `$env:NEXUS_UPDATE_BINDINGS="1"; cargo test -p desktop`. The test fails if the generated file is behind.
 
-`NEXUS_GEMINI_BASE_URL` (doar în build-ul debug al Host-ului) trimite cererile Gemini la un server de test pe `http://127.0.0.1:<port>`. Build-ul release îl ignoră și vorbește doar cu `https://generativelanguage.googleapis.com`.
+`NEXUS_GEMINI_BASE_URL` and `NEXUS_ALLOW_LOOPBACK_MCP=1` point a debug Host at local test servers; release builds ignore both and talk only to the real HTTPS endpoints.
 
-`NEXUS_ALLOW_LOOPBACK_MCP=1` (tot doar în build-ul debug) permite un server MCP de test pe `http://127.0.0.1:<port>`. Build-ul release îl ignoră și acceptă doar servere MCP `https://` la adrese publice.
+Local data (database, pairing token, Host log in `logs\nexus-host.log`) stays in `%LOCALAPPDATA%\Nexus`, never in the repo. API keys stay in Credential Manager under `Nexus/<profile-hash>/…`, never in files.
 
-Datele locale (tokenul de pairing și log-ul Host-ului, `logs\nexus-host.log`) stau în `%LOCALAPPDATA%\Nexus`, niciodată în repo. Cheile API stau în Credential Manager, sub `Nexus/<hash-profil>/…`, nu în fișiere.
+## Documents
 
-## Documente
+The design documents are in Romanian.
 
-| Document | Utilizare |
+| Document | Content |
 | --- | --- |
-| [AGENTS.md](AGENTS.md) | Reguli concise pentru agentul care lucrează în proiect. |
-| [Predare](docs/PREDARE_RO.md) | Context, stare verificată, autorizații și primul pas. |
-| [Planul activ](docs/PLAN_NEXUS_RO.md) | Etape, dependențe, rezultate și criterii de acceptare. |
-| [Arhitectura](docs/ARHITECTURA_NEXUS_RO.md) | Componente, procese, date și decizii tehnice. |
-| [Contractele](docs/CONTRACTE_NEXUS_RO.md) | Tipuri, operații, stări, compatibilitate și comportamentul la erori. |
-| [Securitate și validare](docs/SECURITATE_SI_VALIDARE_RO.md) | Limite de încredere și probe obligatorii. |
-| [Prompt de pornire](docs/PROMPT_START_RO.md) | Text pe care utilizatorul îl poate trimite pentru a autoriza implementarea. |
-
-Pentru prima preluare se citesc AGENTS.md, predarea și planul. Celelalte documente se consultă pentru etapa executată, fără recitirea întregului pachet înaintea fiecărei modificări.
-
-## Primul rezultat urmărit
-
-O aplicație desktop reală comunică cu un Host Rust separat. Utilizatorul cere crearea unei note într-un spațiu Nexus dedicat, vede conținutul propus, aprobă operația, iar Nexus creează și verifică fișierul. Sarcina, aprobarea și rezultatul persistă. Reconectarea dashboardului și repornirea Hostului nu dublează operația.
-
-Acest flux este local și verificabil fără chei API sau servicii plătite. Modelele AI (M2) se conectează peste această fundație, prin aceeași aprobare.
-
-## Domeniu și control
-
-- Numele produsului este **Nexus**; AION nu este o denumire alternativă.
-- Produsul pornește cu un utilizator Windows, pregătit pentru extensii.
-- Nexus răspunde în limba în care i se vorbește; cererea explicită pentru altă limbă are prioritate.
-- Personalitatea, memoria, starea sarcinilor și drepturile sunt responsabilități separate.
-- Furnizorul AI și modelul sunt selectabile. Modelul folosit pentru a programa Nexus nu devine implicit furnizorul produsului.
-- Citirea documentației nu pornește implementarea, nu instalează software și nu autorizează publicarea.
+| [AGENTS.md](AGENTS.md) | Rules for the coding agent working in the project. |
+| [Plan](docs/PLAN_NEXUS_RO.md) | Milestones, current step and the progress journal. |
+| [Architecture](docs/ARHITECTURA_NEXUS_RO.md) | Components, processes, data and the decisions (ADRs). |
+| [Contracts](docs/CONTRACTE_NEXUS_RO.md) | Types, operations, states, compatibility and errors. |
+| [Security and validation](docs/SECURITATE_SI_VALIDARE_RO.md) | Trust boundaries and the required checks. |
+| [Product review](docs/REVIZUIRE_PRODUS_RO.md) | The product review the plan adopted. |
+| [Handoff](docs/PREDARE_RO.md) and [start prompt](docs/PROMPT_START_RO.md) | How the implementation was started. |
