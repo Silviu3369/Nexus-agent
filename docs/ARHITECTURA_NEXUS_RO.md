@@ -758,7 +758,7 @@ Revizuirea de produs cere, pentru un pilot: date de business doar la furnizori p
 
   Un al doilea flux (DocumentOps în M5, intake și email în M4) ar adăuga încă un set de cod special.
 - Revizuirea de produs cere pachete first-party declarative, versionate și fără cod: scheme, reguli, instrucțiuni, surse de intake, automatizări, permisiuni, metrici.
-- La 2026-10-25 ai decis ca instrucțiunile pachetelor să folosească formatul deschis Agent Skills: doar instrucțiuni, fără scripturi și fără permisiuni proprii. Ai deja două skill-uri în contul claude.ai: `cover-letters` și `ticket-replies`.
+- La 2026-10-25 ai decis ca instrucțiunile pachetelor să folosească formatul deschis Agent Skills: doar instrucțiuni, fără scripturi și fără permisiuni proprii. Ai deja două skill-uri în contul claude.ai: unul pentru scrisori de motivație și unul pentru helpdesk.
 - **Formatul, din [specificație](https://agentskills.io/specification), verificat la 2026-10-28:**
   - un skill e un folder cu `SKILL.md`;
   - antetul are `name` (1–64 caractere, litere mici, cifre și cratime, egal cu numele folderului) și `description` (1–1024 caractere: ce face și când se folosește);
@@ -806,7 +806,7 @@ Revizuirea de produs cere, pentru un pilot: date de business doar la furnizori p
    - import, citire, pornire și oprire;
    - `use_skill` și `read_skill_file`;
    - pasul în Activitate.
-   - Caz real: importi `cover-letters` și îi ceri o scrisoare de motivație pentru un anunț TopJobs din folderul Jobs.
+   - Caz real: importi skill-ul tău de scrisori și îi ceri o scrisoare de motivație pentru un anunț din folderul Jobs.
 2. **Pachetul Jobs:**
    - manifestul;
    - evidența și instrucțiunea inboxului mutate în pachet;
@@ -854,8 +854,8 @@ Revizuirea de produs cere, pentru un pilot: date de business doar la furnizori p
   - în Tools → Skills: importul, textul complet, „Turn on” activ abia după „Read skill” pe aceeași revizie, oprirea și ștergerea;
   - în Activitate: „Used skill …”.
 - **Cele două skill-uri ale tale:** le-am copiat, neschimbate, din folderul pe care Claude îl folosește în sesiune, în `Documents\Nexus skills\`. Ambele trec de cititor:
-  - `cover-letters`: descriere de 544 de caractere, instrucțiuni de 7.762;
-  - `ticket-replies`: descriere de 776, instrucțiuni de 11.485.
+  - skill-ul de scrisori: descriere de 544 de caractere, instrucțiuni de 7.762;
+  - skill-ul de helpdesk: descriere de 776, instrucțiuni de 11.485.
 - **Rămân pașii 2 și 3:** pachetul Jobs, apoi cifrele din Results configurate de pachet.
 
 **Implementare, pasul 2 (2026-10-30): pachetul Jobs.**
